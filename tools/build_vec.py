@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-build_vec.py — сборка ianna.rom для Вектор-06Ц.
+build_vec.py [--demo] — сборка ROM для Вектор-06Ц.
   1. трансляция модулей MSX2 (Z80 -> i8080) с overrides
   2. нарезка игрового цикла из ianna.asm
-  3. переменные vars.asm (музыка урезана)
-  4. склейка в build/ianna_vec.asm и zasm --8080 (гейт: только i8080-опкоды)
-  5. образ квазидиска (build_edd.py) уже собран отдельно
+  3. переменные vars.asm (музыка урезана, string_area по $0200)
+  4. склейка в build/ianna[_demo]_vec.asm и zasm --8080 (гейт: только i8080-опкоды)
+Раскладка образа: $0100 jp; $0200 vars+vec_vars; [DEMO: $1600 данные]; код.
+Результат: build/ianna.rom (квазидиск, + build/ianna.edd) или build/ianna_demo.rom.
 """
-import subprocess, sys, pathlib, re, os
+import subprocess, sys, pathlib, re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = ROOT / 'ref/msx2/src'
@@ -16,15 +17,16 @@ VEC = ROOT / 'src/vec'
 ZASM = ROOT / 'tools/bin/sjasm'
 TRANS = ROOT / 'tools/z80to8080.py'
 OVR = ROOT / 'tools/overrides.py'
+DEMO = '--demo' in sys.argv
+sys.path.insert(0, str(ROOT / 'tools/data'))
+from build_edd import STRING_AREA_KVAZ, STRING_AREA_DEMO
+VARS_ADDR = STRING_AREA_DEMO if DEMO else STRING_AREA_KVAZ
 
 def run(cmd, **kw):
-    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
-    return r
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
-def translate(src, dst, report=False):
-    cmd = [sys.executable, str(TRANS), str(src), str(dst), '--overrides', str(OVR)]
-    if report: cmd.append('--report')
-    r = run(cmd)
+def translate(src, dst):
+    r = run([sys.executable, str(TRANS), str(src), str(dst), '--overrides', str(OVR)])
     if r.returncode != 0:
         print(r.stdout, r.stderr); sys.exit(f'трансляция {src} упала')
     if r.stdout.strip():
@@ -41,15 +43,20 @@ def slice_ianna():
     out += ['; ---- Div16_8 (840-857) ----'] + rng(840, 857)
     out += ['; ---- таблицы (1006-1079) ----'] + rng(1006, 1079)
     text = '\n'.join(out) + '\n'
-    # Вектор: сначала ждём кадр, потом рисуем прямо в экран (нет теневой страницы)
     old = '\tcall RedrawScreen_part1\n\tcall waitforVBlank\n\tcall RedrawScreen_part2\n'
-    assert old in text, 'mainloop: не нашёл последовательность part1/wait/part2'
+    assert old in text
     text = text.replace(old, '\tcall waitforVBlank\t; ВЕКТОР: ждём кадр ДО отрисовки\n\tcall RedrawScreen_part1\n\tcall RedrawScreen_part2\n')
-    # random: ld a,r (Z80-only) -> счётчик кадров
     assert 'ld      a,r' in text
     text = text.replace('ld      a,r', 'ld a,(FrameCounter)\t; ВЕКТОР: вместо ld a,r')
-    # tilespal: INCBIN "test.plt" -> путь относительно build/
-    text = text.replace('INCBIN "test.plt"', 'incbin "../ref/msx2/src/test.plt"')
+    text = re.sub(r'^blackpal: db 0.*\n\s+db 0.*\n', 'blackpal:\n', text, flags=re.M)
+    text = text.replace('tilespal:  INCBIN "test.plt"', 'tilespal:\t; палитра Вектора — vec_palette')
+    if DEMO:
+        i = text.index('enemy_info:'); j = text.index('enemy_info_demon:')
+        j = text.index('\n', text.index('DB', text.index('DB', text.index('DB', text.index('DB', text.index('DB', j)+1)+1)+1)+1))  # конец 5 строк demon
+        text = text[:i] + 'enemy_info:\t; ДЕМО: таблиц врагов нет\n' + text[j+1:]
+        old = 'LEVEL_OFFSET: dw $8000, $8000'
+        assert old in text
+        text = text.replace(old, 'LEVEL_OFFSET: dw DEMO_LEVEL_ADDR, $8000')
     (TR / 'ianna_main_src.asm').write_text(text)
 
 def make_vars():
@@ -57,18 +64,22 @@ def make_vars():
     text = text.replace('music_addr: ds 4096', 'music_addr: ds 2')
     text = text.replace('music_sfx:  ds 1100', 'music_sfx:  ds 2')
     text = text.replace('MUSIC_CODE: ds 2000', 'MUSIC_CODE: ds 2')
-    # string_list ссылается на строки меню, которых нет
+    # string_area: 1536 хватает (1362 макс. в уровне 1); OBJECT_DATA остаётся на границе страницы
+    text = text.replace('string_area: ds 2048', 'string_area: ds 512' if DEMO else 'string_area: ds 1536')
+    # неиспользуемые буферы VDP-команд (кроме vdpCmdSprite: там NY для drawSprite) и палитры
+    text = re.sub(r'^(tileDat|fgtileDat|dirtyTileDat|cmdDat|charDat|charDat2|charDat3|fillDat|vdpCmdWeapon|lineMoveDat|vdpCopyDat|scoreDat): ds 15', r'\1: ds 0', text, flags=re.M)
+    text = text.replace('currentPal: ds 32', 'currentPal: ds 0')
     text = re.sub(r'string_list: dw string_1, string_2, string_3, string_4_1', 'string_list: dw 0,0,0,0', text)
     text = re.sub(r'string_list_es: dw string_1, string_2, string_3_es, string_4_1', 'string_list_es: dw 0,0,0,0', text)
+    text = f'\torg ${VARS_ADDR:04X}\t; vars наверху ОЗУ; string_area = ${VARS_ADDR:04X} (указатели скриптов уровня перенесены сюда)\n' + text
     (TR / 'vars_src.asm').write_text(text)
 
 def consts_from(path):
-    """выдернуть все строки с EQU (константы vdp.asm/sprites.asm)"""
     out = []
     for l in (SRC / path).read_text(encoding='utf-8', errors='replace').split('\n'):
         if re.search(r'\bequ\b', l, re.I) and not l.strip().startswith(';'):
-            l = re.sub(r'#([0-9A-Fa-f]+)', r'$\1', l)                      # #f800 -> $f800
-            l = re.sub(r'(?<![A-Za-z0-9_$])([01]+)[Bb]\b', r'%\1', l)      # 0101B -> %0101
+            l = re.sub(r'#([0-9A-Fa-f]+)', r'$\1', l)
+            l = re.sub(r'(?<![A-Za-z0-9_$])([01]+)[Bb]\b', r'%\1', l)
             out.append(l)
     return '\n'.join(out) + '\n'
 
@@ -80,22 +91,51 @@ def main():
         translate(SRC / f'{m}.asm', TR / f'{m}.asm')
     translate(TR / 'ianna_main_src.asm', TR / 'ianna_main.asm')
     translate(TR / 'vars_src.asm', TR / 'vars.asm')
-    order = [VEC / 'vec_boot.asm', TR / 'vdp_consts.asm', TR / 'ianna_main.asm', TR / 'tiles.asm', TR / 'drawsprite.asm',
-             TR / 'entities.asm', TR / 'scripts.asm', TR / 'objects.asm', TR / 'depack.asm',
-             VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm', VEC / 'vec_stubs.asm', VEC / 'z80rt.asm',
-             ROOT / 'build/gen_data.asm', TR / 'vars.asm', VEC / 'vec_vars.asm']
-    parts = []
+    data = ROOT / ('build/demo_data.asm' if DEMO else 'build/gen_data.asm')
+    order = [VEC / 'vec_boot.asm', TR / 'vdp_consts.asm']
+    if DEMO:
+        order.append(data)              # org $0200
+    order += [VEC / 'vec_main.asm', TR / 'ianna_main.asm', TR / 'tiles.asm', TR / 'drawsprite.asm',
+              TR / 'entities.asm', TR / 'scripts.asm', TR / 'objects.asm', TR / 'depack.asm',
+              VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm', VEC / 'vec_stubs.asm']
+    if not DEMO:
+        order.append(data)
+    # z80rt: только используемые хелперы
+    used = set()
+    for f in order:
+        if f.suffix == '.asm':
+            used |= set(re.findall(r'\bcall\s+(z_\w+)', f.read_text(encoding='utf-8', errors='replace')))
+    rt = (VEC / 'z80rt.asm').read_text(encoding='utf-8', errors='replace')
+    blocks = re.split(r'(?m)^(?=z_\w+:)', rt)
+    keep = [blocks[0]]; kept = set()
+    for b in blocks[1:]:
+        name = re.match(r'z_\w+', b).group(0)
+        parent = next((k for k in kept if name.startswith(k + '_')), None)   # подметка (z_ldir_l) идёт с родителем
+        if name in used or parent:
+            keep.append(b); kept.add(name)
+    (TR / 'z80rt_used.asm').write_text(''.join(keep))
+    order.append(TR / 'z80rt_used.asm')
+    order += [TR / 'vars.asm', VEC / 'vec_vars.asm']   # org VARS_ADDR
+    parts = [f'DEMO\tequ {1 if DEMO else 0}\n']
     for f in order:
         parts.append(f'\n; ======== {f.name} ========\n')
         parts.append(f.read_text(encoding='utf-8', errors='replace'))
-    (ROOT / 'build/ianna_vec.asm').write_text(''.join(parts))
-    r = run([str(ZASM), '--8080', '-uwy', 'ianna_vec.asm', 'ianna_vec.lst', 'ianna.rom'], cwd=ROOT / 'build')
+    name = 'ianna_demo' if DEMO else 'ianna'
+    (ROOT / f'build/{name}_vec.asm').write_text(''.join(parts))
+    r = run([str(ZASM), '--8080', '-uwy', f'{name}_vec.asm', f'{name}_vec.lst', f'{name}.rom'], cwd=ROOT / 'build')
     errs = [l for l in (r.stdout + r.stderr).split('\n') if l.strip()]
     print('\n'.join(errs[-40:]))
-    rom = ROOT / 'build/ianna.rom'
+    rom = ROOT / f'build/{name}.rom'
     if rom.exists() and r.returncode == 0:
         size = rom.stat().st_size
-        print(f'OK: build/ianna.rom {size} Б, конец = ${0x100+size:04X} (граница VRAM $8000)')
+        if size + 0x100 > 0x8000:
+            print(f'ПЕРЕПОЛНЕНИЕ: конец образа ${0x100+size:04X} > $8000'); return 1
+        lst = (ROOT / f'build/{name}_vec.lst').read_text(errors='replace')
+        m = re.search(r'^string_area\s+=\s+\$([0-9A-F]{4})', lst, re.M)
+        assert m and int(m.group(1), 16) == VARS_ADDR, 'string_area не по VARS_ADDR!'
+        m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
+        assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'
+        print(f'OK: build/{name}.rom {size} Б, конец = ${0x100+size:04X} (граница VRAM $8000, свободно {0x8000-0x100-size} Б)')
         return 0
     return 1
 

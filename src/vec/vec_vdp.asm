@@ -1,7 +1,7 @@
 ; vec_vdp.asm — платформенный слой Вектор-06Ц вместо vdp.asm MSX2.
 ; Интерфейс тот же, что у VDP-процедур оригинала (drawTile, drawFGTile,
-; drawSprite, setROM2, setDisplayPage, TransferDirtyTiles...), реализация —
-; прямой вывод в 4 плоскости с pop-блитом из квазидиска.
+; drawSprite, setROM2, setDisplayPage...), реализация — прямой вывод в 4
+; плоскости pop-блитом. Источник данных: квазидиск (DEMO=0) или ROM (DEMO=1).
 ;
 ; Экран: MSX y=0..191 -> строка Вектора y+32 -> L = 255-(y+32) = 223-y.
 ;        MSX x=0..255 -> колонка H = база_плоскости + (x>>3). Бит7 = левый пиксель.
@@ -24,7 +24,6 @@ Y_TOP_L		equ 223		; L для MSX y=0
 ;   1        -> закрыть все окна (обычная память)
 ;   2..21    -> запомнить банк спрайтов (используется drawSprite)
 ;   22..39   -> страница уровня/тайлов: LEVEL -> открыть окно карты уровня
-;   прочее   -> ничего
 setROM2:
 setROM2_DI:
 	ld (ROMBank1),a
@@ -32,15 +31,20 @@ setROM2_DI:
 	jp z,setrom_close
 	cp 22
 	jp c,setrom_sprite
-	; уровень или тайлы: чётные (22,24..) = карта, нечётные = тайлы (в VRAM не нужны)
 	and 1
 	ret nz			; тайлы: ничего не делаем
+    if DEMO
+	ret			; карта уровня в ROM
+    else
 	ld a,KV_WIN_LEVEL
 	out (KV_PORT),a
 	ret
+    endif
 setrom_close:
+    if !DEMO
 	xor a
 	out (KV_PORT),a
+    endif
 	ret
 setrom_sprite:
 	ld (vec_sprite_bank),a
@@ -48,27 +52,18 @@ setrom_sprite:
 
 ; ---------------------------------------------------------------------------
 ; Заглушки двойной буферизации: на Векторе рисуем сразу в экран.
-setDisplayPage:
-	ret
 ; TransferDirtyTiles остаётся оригинальный (tiles.asm): CopyTile — заглушка,
 ; а обнуление ndirtyrects в его хвосте нам и нужно.
+setDisplayPage:
 CopyTile:
-	ret
 copyPage:
-	ret
 VDPcmd:
 VDPcmd_DI:
-	ret
 waitVDP:
-	ret
 fillArea:
-	ret
 VDP_SetPalette:
-	ret
 initVDPBuffers:
-	ret
 unpackVRAM:
-	ret
 fadeMSX2:
 fadeinMSX2:
 	ret
@@ -88,13 +83,28 @@ cls_l:
 
 ; ---------------------------------------------------------------------------
 ; drawTile: A = номер тайла, B = X (px, кратно 16), C = Y (px, кратно 16)
-; Тайл фона: 128 Б в странице 0 квазидиска по адресу $8000 + A*128:
-;   for p in 0..3: for col in 0..1: 16 строк сверху вниз (DCR L).
+; Тайл фона 128 Б: for p in 0..3: for col in 0..1: 16 строк сверху вниз.
+; ВНУТРИ стекового блита нельзя call/ret (стек подменён).
 drawTile:
 	push hl
 	push de
 	push bc
-	; SP-адрес тайла: $8000 + A*128 -> старший = $80 + (A>>1), младший = (A&1)*128
+    if DEMO
+	; адрес = DEMO_TILES_BASE + lut[A]*128
+	ld l,a
+	ld h,demo_tile_lut/256
+	ld a,(hl)
+	ld l,0
+	rrca			; CY = бит0, A>>1 в младших 7 битах
+	jp nc,dt_a0
+	ld l,$80
+dt_a0:
+	and $7f
+	ld h,a
+	ld de,DEMO_TILES_BASE
+	add hl,de
+    else
+	; адрес = $8000 + A*128 (страница 0)
 	ld d,a
 	rrca
 	and $7f
@@ -102,35 +112,39 @@ drawTile:
 	ld h,a
 	ld a,d
 	and 1
-	rrca			; 1 -> $80
+	rrca
 	ld l,a
+    endif
 	ld (vec_tile_src),hl
-	; адрес экрана: D = H колонки 0 плоскости 0, E = L верхней строки
 	ld a,b
 	rrca
 	rrca
 	rrca
 	and $1f
 	add a,$80
-	ld d,a
+	ld d,a			; D = H колонки 0 плоскости 0
 	ld a,Y_TOP_L
 	sub c
-	ld e,a
-	; --- стековый блит (DI: ISR пушит в стек) ---
+	ld e,a			; E = L верхней строки
 	di
 	ld hl,0
 	add hl,sp
 	ld (vec_sp_save),hl
 	ld hl,(vec_tile_src)
 	ld sp,hl
+    if !DEMO
 	ld a,KV_STACK_P0
 	out (KV_PORT),a
+    endif
 	ld a,4
 	ld (vec_plane_cnt),a
 dt_plane:
 	ld h,d
 	ld l,e
-	; колонка 0: 8 pop = 16 строк (C = верхняя из пары)
+	ld a,2
+	ld (vec_col_cnt),a
+dt_col:
+	; 8 pop = 16 строк
 	pop bc
 	ld (hl),c
 	dec l
@@ -170,49 +184,12 @@ dt_plane:
 	ld (hl),c
 	dec l
 	ld (hl),b
-	; колонка 1
 	inc h
 	ld l,e
-	pop bc
-	ld (hl),c
-	dec l
-	ld (hl),b
-	dec l
-	pop bc
-	ld (hl),c
-	dec l
-	ld (hl),b
-	dec l
-	pop bc
-	ld (hl),c
-	dec l
-	ld (hl),b
-	dec l
-	pop bc
-	ld (hl),c
-	dec l
-	ld (hl),b
-	dec l
-	pop bc
-	ld (hl),c
-	dec l
-	ld (hl),b
-	dec l
-	pop bc
-	ld (hl),c
-	dec l
-	ld (hl),b
-	dec l
-	pop bc
-	ld (hl),c
-	dec l
-	ld (hl),b
-	dec l
-	pop bc
-	ld (hl),c
-	dec l
-	ld (hl),b
-	; следующая плоскость: H = D + $20
+	ld a,(vec_col_cnt)
+	dec a
+	ld (vec_col_cnt),a
+	jp nz,dt_col
 	ld a,d
 	add a,$20
 	ld d,a
@@ -220,9 +197,10 @@ dt_plane:
 	dec a
 	ld (vec_plane_cnt),a
 	jp nz,dt_plane
-	; --- конец стекового блита ---
+    if !DEMO
 	ld a,KV_OFF
 	out (KV_PORT),a
+    endif
 	ld hl,(vec_sp_save)
 	ld sp,hl
 	ei
@@ -233,24 +211,21 @@ dt_plane:
 
 ; ---------------------------------------------------------------------------
 ; drawFGTile: A = номер тайла (≠0), B = X, C = Y. Передний тайл с маской:
-; 256 Б в странице 1 квазидиска по адресу fg_tile_lut[A] (0 = тайла нет в наборе):
+; 256 Б по адресу FG_TILES_BASE + (lut[A]-1)*256; lut[A]=0 -> тайла нет.
 ;   for p: for col: 16 строк сверху вниз: [data, mask]
 drawFGTile:
 	push hl
 	push de
 	push bc
 	ld l,a
-	ld h,0
-	add hl,hl
-	ld de,fg_tile_lut
-	add hl,de
-	ld e,(hl)
-	inc hl
-	ld d,(hl)
-	ld a,d
-	or e
-	jp z,dft_exit		; тайла нет в наборе уровня
-	ex de,hl
+	ld h,fg_tile_lut/256
+	ld a,(hl)
+	or a
+	jp z,dft_exit
+	dec a
+	add a,FG_TILES_BASE/256
+	ld h,a
+	ld l,0
 	ld (vec_tile_src),hl
 	ld a,b
 	rrca
@@ -268,207 +243,37 @@ drawFGTile:
 	ld (vec_sp_save),hl
 	ld hl,(vec_tile_src)
 	ld sp,hl
+    if !DEMO
 	ld a,KV_STACK_P1
 	out (KV_PORT),a
+    endif
 	ld a,4
 	ld (vec_plane_cnt),a
 dft_plane:
 	ld h,d
 	ld l,e
-	; колонка 0, 16 строк: pop bc -> C=data, B=mask
-	pop bc
+	ld a,2
+	ld (vec_col_cnt),a
+dft_col:
+	ld a,16
+	ld (vec_row_cnt),a
+dft_row:
+	pop bc			; C=data, B=mask
 	ld a,(hl)
 	and b
 	or c
 	ld (hl),a
 	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	; колонка 1
+	ld a,(vec_row_cnt)
+	dec a
+	ld (vec_row_cnt),a
+	jp nz,dft_row
 	inc h
 	ld l,e
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	dec l
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
+	ld a,(vec_col_cnt)
+	dec a
+	ld (vec_col_cnt),a
+	jp nz,dft_col
 	ld a,d
 	add a,$20
 	ld d,a
@@ -476,8 +281,10 @@ dft_plane:
 	dec a
 	ld (vec_plane_cnt),a
 	jp nz,dft_plane
+    if !DEMO
 	ld a,KV_OFF
 	out (KV_PORT),a
+    endif
 	ld hl,(vec_sp_save)
 	ld sp,hl
 	ei
@@ -492,16 +299,18 @@ dft_exit:
 ; B = X (px, кратно 8), C = Y (px), HL = «адрес спрайта» MSX ($8000 + n*384).
 ; Высота: (vdpCmdSprite+VDP_NY) строк (клиппинг по низу), выставляется
 ; DrawSpriteList перед вызовом.
-; Данные: страница квазидиска по банку (vec_sprite_bank: 2 -> стр.0, 3 -> стр.1),
-; адрес = (HL*2) & $FFFF = n*768: for p: for col 0..2: rows 31..0: [data,mask].
-; Вывод снизу вверх (INR L); клиппинг = пропустить первые (32-NY) строк
-; каждой колонки-плоскости: SP += skip*2, вход в развёрнутый блок со смещением.
+; Кадр 384 Б: for col 0..2: for row 31..0: [p0,p1,p2,p3] (снизу вверх).
+; Маска = ~(p0|p1|p2|p3) считается на лету. Вывод снизу вверх (INR L);
+; клиппинг: пропустить первые (32-NY) строк каждой колонки (SP += skip*4).
+; Источник: DEMO -> DEMO_FRAMES_BASE + (HL-$8000); квазидиск -> страница по банку, HL-$8000.
 drawSprite:
 	push af
-	; физический адрес данных = HL*2
-	add hl,hl
-	ld (vec_spr_src),hl
-	; порт квазидиска по банку
+	ld de,-$8000
+	add hl,de		; смещение кадра n*384
+    if DEMO
+	ld de,DEMO_FRAMES_BASE
+	add hl,de
+    else
 	ld a,(vec_sprite_bank)
 	sub 2
 	and 3
@@ -509,19 +318,27 @@ drawSprite:
 	rlca
 	or KV_STACK_P0
 	ld (vec_spr_port),a
-	; строки: NY, skip = 32-NY
+    endif
+	; NY, skip*4
 	ld a,(vdpCmdSprite+VDP_NY)
-	ld e,a			; E = NY
+	ld (vec_spr_ny),a
+	ld e,a
 	ld a,32
 	sub e
-	ld (vec_spr_skip),a	; skip
+	add a,a
+	add a,a
+	ld (vec_spr_skip),a
+	ld e,a
+	ld d,0
+	add hl,de		; старт SP = кадр + skip*4
+	ld (vec_spr_src),hl
 	; L нижней выводимой строки = 223 - (C + NY - 1)
-	ld a,c
-	add a,e
+	ld a,(vec_spr_ny)
+	add a,c
 	dec a
-	ld d,a
+	ld e,a
 	ld a,Y_TOP_L
-	sub d
+	sub e
 	ld (vec_spr_lbot),a
 	; H колонки 0 плоскости 0
 	ld a,b
@@ -535,738 +352,179 @@ drawSprite:
 	or a
 	jp nz,drawSprite_mirror
 ; ---- прямой ----
-	; вход в развёрнутый блок: ds_blk + skip*6
-	ld a,(vec_spr_skip)
-	ld l,a
-	ld h,0
-	ld d,h
-	ld e,l
-	add hl,hl		; *2
-	add hl,de		; *3
-	add hl,hl		; *6
-	ld de,ds_blk
-	add hl,de
-	ld (ds_jmp+1),hl
-	; SP стартовый = src + skip*2
-	ld a,(vec_spr_skip)
-	add a,a
-	ld e,a
-	ld d,0
-	ld hl,(vec_spr_src)
-	add hl,de
-	ld (vec_spr_src),hl
-	ld a,12
-	ld (vec_plane_cnt),a	; 12 колонко-плоскостей
 	ld a,3
 	ld (vec_col_cnt),a
-	ld a,(vec_spr_hcol)
-	ld d,a
-	ld a,(vec_spr_lbot)
-	ld e,a
 	di
 	ld hl,0
 	add hl,sp
 	ld (vec_sp_save),hl
 	ld hl,(vec_spr_src)
 	ld sp,hl
+    if !DEMO
 	ld a,(vec_spr_port)
 	out (KV_PORT),a
-ds_cp:
-	ld h,d
-	ld l,e
-ds_jmp:
-	jp 0			; -> ds_blk + skip*6 (самомодификация)
-ds_blk:
-	; 32 блока по 6 байт: pop de / ld a,(hl) / and d / or e / ld (hl),a / inc l
-	; (DE здесь — данные! D/E экрана восстанавливаются после блока из ячеек)
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	pop de
-	ld a,(hl)
-	and d
-	or e
-	ld (hl),a
-	inc l
-	; конец колонко-плоскости: следующая колонка (H+1) или плоскость (H+$1E)
+    endif
+ds_col:
 	ld a,(vec_spr_hcol)
-	ld d,a
+	ld h,a
 	ld a,(vec_spr_lbot)
-	ld e,a
-	ld a,(vec_col_cnt)
+	ld l,a
+	ld a,(vec_spr_ny)
+	ld (vec_row_cnt),a
+ds_row:
+	pop de			; E=p0, D=p1
+	pop bc			; C=p2, B=p3
+	ld a,e
+	or d
+	or c
+	or b
+	cpl
+	ld (vec_spr_mask),a
+	and (hl)		; плоскость 0
+	or e
+	ld (hl),a
+	ld a,h
+	add a,$20
+	ld h,a
+	ld a,(vec_spr_mask)
+	and (hl)		; плоскость 1
+	or d
+	ld (hl),a
+	ld a,h
+	add a,$20
+	ld h,a
+	ld a,(vec_spr_mask)
+	and (hl)		; плоскость 2
+	or c
+	ld (hl),a
+	ld a,h
+	add a,$20
+	ld h,a
+	ld a,(vec_spr_mask)
+	and (hl)		; плоскость 3
+	or b
+	ld (hl),a
+	ld a,h
+	sub $60
+	ld h,a
+	inc l
+	ld a,(vec_row_cnt)
 	dec a
-	ld (vec_col_cnt),a
-	jp z,ds_next_plane
-	inc d
-	ld a,d
-	ld (vec_spr_hcol),a
-	jp ds_skipsp
-ds_next_plane:
-	ld a,3
-	ld (vec_col_cnt),a
-	ld a,d
-	add a,$1e		; -2 колонки + $20 плоскость
-	ld d,a
-	ld (vec_spr_hcol),a
-ds_skipsp:
-	; SP += skip*2 (пропуск нижних строк следующей колонко-плоскости)
+	ld (vec_row_cnt),a
+	jp nz,ds_row
+	; следующая колонка: SP += skip*4, H+1
 	ld a,(vec_spr_skip)
-	add a,a
 	ld l,a
 	ld h,0
 	add hl,sp
 	ld sp,hl
-	ld a,(vec_plane_cnt)
+	ld a,(vec_spr_hcol)
+	inc a
+	ld (vec_spr_hcol),a
+	ld a,(vec_col_cnt)
 	dec a
-	ld (vec_plane_cnt),a
-	jp nz,ds_cp
+	ld (vec_col_cnt),a
+	jp nz,ds_col
 	jp ds_done
 ; ---- зеркальный ----
-; Колонки данных 0,1,2 выводятся в экранные колонки x+2, x+1, x+0;
-; байты данных и маски разворачиваются таблицей rev256 (страница, H=hi(rev256)).
-; Регистры в блоке: DE = экранный адрес, HL = таблица (H=hi rev256), BC = data/mask.
+; Колонки данных 0,1,2 -> экранные колонки x+2, x+1, x+0; байты через rev256.
 drawSprite_mirror:
-	ld a,(vec_spr_skip)
-	ld l,a
-	ld h,0
-	ld d,h
-	ld e,l
-	add hl,hl		; *2
-	add hl,de		; *3
-	add hl,hl		; *6
-	add hl,hl		; *12
-	ld de,dsm_blk
-	add hl,de
-	ld (dsm_jmp+1),hl
-	ld a,(vec_spr_skip)
-	add a,a
-	ld e,a
-	ld d,0
-	ld hl,(vec_spr_src)
-	add hl,de
-	ld (vec_spr_src),hl
-	ld a,12
-	ld (vec_plane_cnt),a
+	ld a,(vec_spr_hcol)
+	add a,2
+	ld (vec_spr_hcol),a
 	ld a,3
 	ld (vec_col_cnt),a
-	ld a,(vec_spr_hcol)
-	add a,2			; зеркало: первая колонка данных -> правая колонка экрана
-	ld (vec_spr_hcol),a
 	di
 	ld hl,0
 	add hl,sp
 	ld (vec_sp_save),hl
 	ld hl,(vec_spr_src)
 	ld sp,hl
+    if !DEMO
 	ld a,(vec_spr_port)
 	out (KV_PORT),a
-dsm_cp:
+    endif
+dsm_col:
 	ld a,(vec_spr_hcol)
 	ld d,a
 	ld a,(vec_spr_lbot)
-	ld e,a
+	ld e,a			; DE = экран
+	ld a,(vec_spr_ny)
+	ld (vec_row_cnt),a
+dsm_row:
 	ld h,rev256/256
-dsm_jmp:
-	jp 0
-dsm_blk:
-	; 32 блока по 12 байт:
-	; pop bc / ld l,c / ld c,(hl) / ld l,b / ld b,(hl) / ex de,hl / ld a,(hl) / and b / or c / ld (hl),a / inc l / ex de,hl
-	pop bc
+	pop bc			; C=p0, B=p1
 	ld l,c
 	ld c,(hl)
 	ld l,b
 	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
+	ld a,c
+	ld (vec_spr_p01),a
+	ld a,b
+	ld (vec_spr_p01+1),a
+	pop bc			; C=p2, B=p3
 	ld l,c
 	ld c,(hl)
 	ld l,b
 	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
+	ld hl,(vec_spr_p01)	; L=p0, H=p1
+	ld a,l
+	or h
+	or c
+	or b
+	cpl
+	ld (vec_spr_mask),a
+	ex de,hl		; HL = экран, E=p0, D=p1
+	and (hl)		; плоскость 0
+	or e
+	ld (hl),a
+	ld a,h
+	add a,$20
+	ld h,a
+	ld a,(vec_spr_mask)
+	and (hl)		; плоскость 1
+	or d
+	ld (hl),a
+	ld a,h
+	add a,$20
+	ld h,a
+	ld a,(vec_spr_mask)
+	and (hl)		; плоскость 2
 	or c
 	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
+	ld a,h
+	add a,$20
+	ld h,a
+	ld a,(vec_spr_mask)
+	and (hl)		; плоскость 3
+	or b
 	ld (hl),a
+	ld a,h
+	sub $60
+	ld h,a
 	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ex de,hl
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc l
-	ex de,hl
-	; конец колонко-плоскости: экранная колонка влево (H-1) или плоскость (+$20+2)
-	ld a,(vec_col_cnt)
+	ex de,hl		; DE = экран (следующая строка)
+	ld a,(vec_row_cnt)
 	dec a
-	ld (vec_col_cnt),a
-	jp z,dsm_next_plane
-	ld a,(vec_spr_hcol)
-	dec a
-	ld (vec_spr_hcol),a
-	jp dsm_skipsp
-dsm_next_plane:
-	ld a,3
-	ld (vec_col_cnt),a
-	ld a,(vec_spr_hcol)
-	add a,$22
-	ld (vec_spr_hcol),a
-dsm_skipsp:
+	ld (vec_row_cnt),a
+	jp nz,dsm_row
 	ld a,(vec_spr_skip)
-	add a,a
 	ld l,a
 	ld h,0
 	add hl,sp
 	ld sp,hl
-	ld a,(vec_plane_cnt)
+	ld a,(vec_spr_hcol)
 	dec a
-	ld (vec_plane_cnt),a
-	jp nz,dsm_cp
+	ld (vec_spr_hcol),a
+	ld a,(vec_col_cnt)
+	dec a
+	ld (vec_col_cnt),a
+	jp nz,dsm_col
 ds_done:
+    if !DEMO
 	ld a,KV_OFF
 	out (KV_PORT),a
+    endif
 	ld hl,(vec_sp_save)
 	ld sp,hl
 	ei

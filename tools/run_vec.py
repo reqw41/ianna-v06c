@@ -52,10 +52,15 @@ def render(vram, pal, path, scale=2):
            + chunk(b'IDAT', zlib.compress(bytes(raw), 6)) + chunk(b'IEND', b''))
     pathlib.Path(path).write_bytes(png)
 
+DEMO = '--demo' in sys.argv
+if DEMO: sys.argv.remove('--demo')
+ROM_NAME = 'ianna_demo' if DEMO else 'ianna'
+
 def make_cpu(keys):
     cpu = I8080()
-    cpu.load_edd(ROOT / 'build/ianna.edd')
-    rom = (ROOT / 'build/ianna.rom').read_bytes()
+    if not DEMO:
+        cpu.load_edd(ROOT / 'build/ianna.edd')
+    rom = (ROOT / f'build/{ROM_NAME}.rom').read_bytes()
     cpu.mem[0x100:0x100+len(rom)] = rom
     cpu.pc = 0x100
     cur = [0xFF]
@@ -77,6 +82,19 @@ def make_cpu(keys):
     cpu.in_handler = in_handler
     return cpu
 
+def run_frames(cpu, n, budget=13000):
+    """кадр = до HALT или ~13000 инструкций (~60К тактов), затем RST7 если EI —
+    как на железе: прерывание приходит и в busy-loop (wait_till_read)."""
+    for _ in range(n):
+        c = 0
+        while not cpu.halted and c < budget:
+            cpu.step(); c += 1
+        cpu.halted = False
+        if cpu.ie:
+            cpu.ie = False
+            cpu.push(cpu.pc)
+            cpu.pc = 0x38
+
 def dump_state(cpu, sym):
     ent = sym.get('ENTITY_DATA'); spd = sym.get('SPDATA')
     if ent is None: return
@@ -93,7 +111,7 @@ def main():
     frames = int(sys.argv[1]) if len(sys.argv) > 1 else 60
     route = sys.argv[2] if len(sys.argv) > 2 else 'none'
     out = sys.argv[3] if len(sys.argv) > 3 else str(ROOT / 'build/frame.png')
-    sym = load_syms(ROOT / 'build/ianna_vec.lst')
+    sym = load_syms(ROOT / f'build/{ROM_NAME}_vec.lst')
     keys = set()
     cpu = make_cpu(keys)
     segs = [(k, int(n)) for k, n in (s.split(':') for s in route.split(','))] if ':' in route else [(route, frames)]
@@ -101,7 +119,7 @@ def main():
     try:
         for k, n in segs:
             keys.clear(); keys.update(x for x in k.split('+') if x != 'none')
-            cpu.run_frames(n, max_per=6_000_000)
+            run_frames(cpu, n)
             total += n
             if cpu.halted is False and cpu.icount and False: pass
     except Exception as ex:
