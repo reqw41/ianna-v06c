@@ -183,6 +183,12 @@ def build_kvaz():
         pages[3][0x2000 + w*192: 0x2000 + (w+1)*192] = column_blob(armas, w*32, 3, 0, 16)
     for k, x0 in enumerate((128, 152)):
         pages[3][0x2400 + k*288: 0x2400 + (k+1)*288] = column_blob(armas, x0, 3, 0, 24)
+    # страница 3: музыка уровня 1 по $C980 и эффекты по $D980 — РОВНО как music_addr/music_sfx на MSX
+    # (внутри .mus абсолютные указатели под эти адреса); читаются через окно $A000-$DFFF (пул — ниже $C800)
+    mus = (SRC / 'music-level1.mus').read_bytes(); sfx = (SRC / 'iannafx.mus').read_bytes()
+    assert len(mus) <= 0x1000 and len(sfx) <= 0x0680
+    pages[3][0xC980:0xC980+len(mus)] = mus
+    pages[3][0xD980:0xD980+len(sfx)] = sfx
     level = (SRC / 'level1.map').read_bytes()
     fg = sorted(set().union(*(set(s[160:320]) for s in screens_of(level))) - {0})
     for i, t in enumerate(fg):

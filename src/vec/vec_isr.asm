@@ -34,6 +34,39 @@ isr_pal:
 	ld hl,(FrameCounter)
 	inc hl
 	ld (FrameCounter),hl
+    if !DEMO
+	; --- музыка: как в ISR оригинала (mzk_subroutine -> MUSIC_Play), но данные в квазидиске ---
+	ld a,(music_playing)
+	or a
+	jp z,isr_nomusic
+	; сохранить ячейки эмуляции Z80 (главный код мог быть прерван внутри хелпера)
+	ld hl,z_ix
+	ld de,vec_zsave
+	ld b,18
+isr_zs:
+	ld a,(hl)
+	ld (de),a
+	inc hl
+	inc de
+	dec b
+	jp nz,isr_zs
+	ld a,KV_WIN_MUSIC
+	out (KV_PORT),a
+	call MUSIC_Play
+	ld a,(vec_kv_shadow)
+	out (KV_PORT),a
+	ld hl,vec_zsave
+	ld de,z_ix
+	ld b,18
+isr_zr:
+	ld a,(hl)
+	ld (de),a
+	inc hl
+	inc de
+	dec b
+	jp nz,isr_zr
+isr_nomusic:
+    endif
 	pop hl
 	pop de
 	pop bc

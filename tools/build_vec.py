@@ -83,6 +83,36 @@ def make_score_font():
     ft = (SRC / 'font.asm').read_text(encoding='utf-8', errors='replace')
     (TR / 'font_src.asm').write_text(ft)
 
+def make_music():
+    mu = (SRC / 'music.asm').read_text(encoding='utf-8', errors='replace')
+    mu = mu.replace('INCLUDE "music_sfx.sym"', '; ВЕКТОР: песни лежат в странице 3 квазидиска (окно $A000-$DFFF, адреса как на MSX), эффекты по $D980\nMUSIC_WIN\tequ $C980\nSFX_WIN\tequ $D980\n'
+                    + '\n'.join(f'{n}\tequ MUSIC_WIN' for n in ['music0','music1','music3','music4','music5','music6','music7','music8','music_gameover','music_intro','music_menu','music_end','music_credits']))
+    old = '''\tex de, hl
+\tld de, music_addr\t\t
+\tcall depack
+\tld hl, SFX_ADDR
+\tld de, music_sfx
+\tcall depack
+\tld de, music_addr
+\tcall atInit
+\tld de, music_sfx
+\tcall atSfxInit'''
+    assert old in mu, 'music.asm: не нашёл блок depack'
+    mu = mu.replace(old, '''\tex de, hl\t\t; HL = адрес песни (в окне)
+\tex de, hl
+\tcall atInit\t\t; ВЕКТОР: без распаковки — песня уже в квазидиске
+\tld de, SFX_WIN
+\tcall atSfxInit''')
+    mu = mu.replace('atInit: equ MUSIC_CODE\natPlay: equ MUSIC_CODE + 3\natStop: equ MUSIC_CODE + 6\natSfxInit: equ MUSIC_CODE + 9\natSfxPlay: equ MUSIC_CODE + 12\natSfxStop: equ MUSIC_CODE + 15',
+                    '; ВЕКТОР: плеер ассемблируется на месте, точки входа — его метки (atInit/atPlay/atStop/atSfxInit/atSfxPlay/atSfxStopAll)')
+    mu = mu.replace('\tcall atSfxStop\n', '\tcall atSfxStopAll\n')
+    (TR / 'music_src.asm').write_text(mu)
+    pl = (SRC / 'ArkosTrackerPlayer_CPC_MSX.asm').read_text(encoding='utf-8', errors='replace')
+    pl = pl.replace('org $DDCC', '; ВЕКТОР: org снят — плеер на месте в коде')
+    pl = pl.replace('out (#a0),a', 'out ($15),a\t; AY Вектора: выбор регистра').replace('out (#a1),a', 'out ($14),a\t; AY Вектора: данные')
+    assert 'out (#a' not in pl
+    (TR / 'arkos_src.asm').write_text(pl)
+
 def make_vars():
     text = (SRC / 'vars.asm').read_text(encoding='utf-8', errors='replace')
     text = text.replace('music_addr: ds 4096', 'music_addr: ds 2')
@@ -101,7 +131,7 @@ def make_vars():
 def consts_from(path):
     out = []
     for l in (SRC / path).read_text(encoding='utf-8', errors='replace').split('\n'):
-        if re.search(r'\bequ\b', l, re.I) and not l.strip().startswith(';'):
+        if re.search(r'\bequ\b', l, re.I) and not l.strip().startswith(';') and 'MUSIC_CODE' not in l:
             l = re.sub(r'#([0-9A-Fa-f]+)', r'$\1', l)
             l = re.sub(r'(?<![A-Za-z0-9_$])([01]+)[Bb]\b', r'%\1', l)
             out.append(l)
@@ -109,13 +139,16 @@ def consts_from(path):
 
 def main():
     TR.mkdir(parents=True, exist_ok=True)
-    slice_ianna(); make_vars(); make_score_font()
+    slice_ianna(); make_vars(); make_score_font(); make_music()
     (TR / 'vdp_consts.asm').write_text('; константы из vdp.asm/sprites.asm/music.asm/input.asm\n' + consts_from('vdp.asm') + consts_from('sprites.asm') + consts_from('music.asm') + consts_from('input.asm'))
     for m in ['tiles', 'drawsprite', 'entities', 'scripts', 'objects', 'depack']:
         translate(SRC / f'{m}.asm', TR / f'{m}.asm')
     translate(TR / 'ianna_main_src.asm', TR / 'ianna_main.asm')
     translate(TR / 'score_src.asm', TR / 'score.asm')
     translate(TR / 'font_src.asm', TR / 'font.asm')
+    if not DEMO:
+        translate(TR / 'music_src.asm', TR / 'music.asm')
+        translate(TR / 'arkos_src.asm', TR / 'arkos.asm')
     translate(TR / 'vars_src.asm', TR / 'vars.asm')
     data = ROOT / ('build/demo_data.asm' if DEMO else 'build/gen_data.asm')
     order = [VEC / 'vec_boot.asm', TR / 'vdp_consts.asm']
@@ -123,7 +156,7 @@ def main():
         order.append(data)              # org $0200
     order += [VEC / 'vec_main.asm', TR / 'ianna_main.asm', TR / 'tiles.asm', TR / 'drawsprite.asm',
               TR / 'entities.asm', TR / 'scripts.asm', TR / 'objects.asm', TR / 'depack.asm',
-              TR / 'score.asm', TR / 'font.asm',
+              TR / 'score.asm', TR / 'font.asm'] + ([TR / 'music.asm', TR / 'arkos.asm'] if not DEMO else []) + [
               VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm', VEC / 'vec_stubs.asm']
     if not DEMO:
         order.append(data)

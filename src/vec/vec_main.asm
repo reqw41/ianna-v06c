@@ -25,6 +25,7 @@ vec_start:
 	call initROMbanks
 	call initVDPBuffers
 	call InitTiles
+	call MUSIC_Init
 	; переменные как в main оригинала
 	xor a
 	ld (language),a

@@ -1,12 +1,14 @@
 ; vec_stubs.asm — заглушки модулей MSX2, которых в тесте движка нет:
 ; музыка/эффекты, панель счёта, шрифт, меню, пауза.
 
+    if DEMO
 MUSIC_Init:
 MUSIC_Stop:
 MUSIC_Load:
 MUSIC_Play:
 FX_Play:
 	ret
+    endif
 	ret
 	ret
 ; menu / pause

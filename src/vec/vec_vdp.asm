@@ -22,6 +22,7 @@ KV_STK_P2	equ $18
 KV_STK_P3	equ $1C
 KV_WIN_LEVEL	equ $61		; окна $8000-$DFFF -> страница 1 (карта уровня)
 KV_POOL_WIN	equ $23		; окно $A000-$DFFF -> страница 3 (пул)
+KV_WIN_MUSIC	equ $23		; окно $A000-$DFFF -> страница 3 (музыка по $C980, эффекты по $D980)
 POOL_BASE	equ $A000
 P3_FONT		equ $0000
 P3_PANEL	equ $1000
@@ -37,18 +38,29 @@ setROM2_DI:
 	jp z,setrom_close
 	cp 22
 	jp c,setrom_sprite
+	cp MUSIC_ROM_PAGE
+	jp z,setrom_music
 	and 1
 	ret nz
     if DEMO
 	ret
     else
 	ld a,KV_WIN_LEVEL
+	ld (vec_kv_shadow),a
 	out (KV_PORT),a
 	ret
     endif
+setrom_music:
+    if !DEMO
+	ld a,KV_WIN_MUSIC
+	ld (vec_kv_shadow),a
+	out (KV_PORT),a
+    endif
+	ret
 setrom_close:
     if !DEMO
 	xor a
+	ld (vec_kv_shadow),a
 	out (KV_PORT),a
     endif
 	ret
@@ -1174,7 +1186,7 @@ vpb_x:
 	cp $ff
 	jp nz,vpb_x_next
 	ld a,(vec_slot_next)
-	cp 128
+	cp 80			; слоты 0..79 = $A000-$C7FF; выше $C980 — музыка
 	jp nc,vpb_overflow
 	ld (hl),a
 	inc a

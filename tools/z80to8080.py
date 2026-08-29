@@ -417,9 +417,16 @@ class Translator:
                 return seq(body,op)+w
         # --- переходы ---
         if op=='jr':
-            return pre+['\tjp '+', '.join(norm_expr(x) for x in args)+cmt]
+            a2=[norm_expr(x) for x in args]
+            if '$' in a2[-1]:
+                # jr на $+n перескакивает через следующие инструкции; jp на байт длиннее jr,
+                # поэтому цель = $+n+1 (верно, пока пропускаемые инструкции той же длины на i8080)
+                a2[-1]=a2[-1].replace('$','$+1')
+            return pre+['\tjp '+', '.join(a2)+cmt]
         if op=='djnz':
-            return seq(["dec b", f"jp nz,{norm_expr(args[0])}"],'djnz')+warn('djnz: dec b меняет Z/S/P',{'z','s','p'})
+            tgt=norm_expr(args[0])
+            if '$' in tgt: tgt=tgt.replace('$','$-1')   # '$' относился к самому djnz = адресу 'dec b'
+            return seq(["dec b", f"jp nz,{tgt}"],'djnz')+warn('djnz: dec b меняет Z/S/P',{'z','s','p'})
         # --- блочные ---
         if op=='ldir': return seq(["call z_ldir"],'ldir')
         if op=='ldi':  return seq(["call z_ldi"],'ldi')
