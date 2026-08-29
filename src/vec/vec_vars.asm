@@ -49,11 +49,14 @@ vec_fill_color:	db 0
 vec_fill_xr:	db 0
 vec_fill_mask:	db 0
 vec_fill_hgt:	db 0
-vec_kv_shadow:	db 0		; текущее значение порта $10 вне блитов (для ISR)
-vec_zsave:	ds 18
+vec_kv_shadow:	db 0
+vec_bud_frame:	db 0		; бюджет DI: кадр (мл. байт FrameCounter) и потрачено (x256 тактов)
+vec_bud_used:	db 0		; текущее значение порта $10 вне блитов (для ISR)
+vec_bud_halts:	dw 0		; счётчик halt в vec_budget (статистика)
+vec_zsave:	ds 18		; сохранение z_ix..z_hl2 на время плеера в ISR
 ply_sd_cnt:	db 0		; Arkos: сдвиг частоты (4k) вместо самомодификации jr
 ply_hd_cnt:	db 0
-ply_sd_loop:	db 0		; сохранение z_ix..z_hl2 на время плеера в ISR
+ply_sd_loop:	db 0
 
 ; --- стек: до ближайшей границы страницы (минимум ~200 Б) ---
 	ds 200

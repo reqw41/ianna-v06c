@@ -270,12 +270,55 @@ vec_stk_leave:
 	ei
 	ret
 
+
+; ---------------------------------------------------------------------------
+; БЮДЖЕТ DI НА КАДР. На Векторе прерывание от кадра НЕ защёлкивается: если в момент
+; обратного хода включён DI, оно теряется (RTL MiSTer: int сбрасывается при inte=0; Emu80 —
+; так же; vector06js держит запрос). Стековые блиты идут под DI, поэтому перед каждым
+; блитом смотрим, сколько времени прошло с последнего прерывания (таймер ВИ53, счётчик 0,
+; режим 0, 1.5 МГц, ISR перезагружает $FFFF), и если блит не успевает до следующего
+; обратного хода — `halt` до него. Без таймера (headless) счётчик читается $FFFF -> 0 тиков.
+; Вход: A = стоимость блита в единицах 256 тактов (= 128 тиков). Портит A и флаги.
+PIT_CTRL	equ $08
+PIT_C0		equ $0B		; счётчик 0 (адреса ВИ53 на Векторе переставлены: $0B,$0A,$09)
+VEC_BUDGET_LIMIT equ 211	; 27000 тиков / 128 (кадр ~29950 тиков)
+vec_budget:
+	push hl
+	ld l,a
+	xor a
+	out (PIT_CTRL),a	; latch счётчика 0
+	in a,(PIT_C0)
+	cpl
+	ld h,a			; H = мл. байт (FFFF-V)
+	in a,(PIT_C0)
+	cpl			; A = ст. байт (FFFF-V) = прошло тиков / 256
+	cp 128
+	jp nc,vbg_wait		; прошло > 32K тиков — заведомо поздно
+	add a,a			; *2 -> единицы по 128 тиков (без ст. бита)
+	ld h,a			; (H мл. байт больше не нужен: точность 128 тиков достаточна)
+	add a,l
+	jp c,vbg_wait
+	cp VEC_BUDGET_LIMIT
+	jp c,vbg_ok
+vbg_wait:
+	ld hl,(vec_bud_halts)	; статистика: сколько раз ждали кадр
+	inc hl
+	ld (vec_bud_halts),hl
+	halt			; следующий VBlank (вне блита, EI); ISR перезагрузит таймер
+vbg_ok:
+	pop hl
+	ret
+
 ; ---------------------------------------------------------------------------
 ; drawTile: A = тайл, B = X px, C = Y px
 drawTile:
 	push hl
 	push de
 	push bc
+	push af
+	ld a,9
+	call vec_budget
+	pop af
     if DEMO
 	ld l,a
 	ld h,demo_tile_lut/256
@@ -409,6 +452,10 @@ drawFGTile:
 	push hl
 	push de
 	push bc
+	push af
+	ld a,11
+	call vec_budget
+	pop af
 	ld l,a
 	ld h,fg_tile_lut/256
 	ld a,(hl)
@@ -566,6 +613,10 @@ dft_exit:
 ; HL = адрес MSX ($8000 + n*384). Высота NY = (vdpCmdSprite+VDP_NY).
 ; Кадр 384 Б: for col 0..2: for row 31..0: [p0,p1,p2,p3]; маска на лету.
 drawSprite:
+	push af
+	ld a,105
+	call vec_budget
+	pop af
 	push af
 	ld de,-$8000
 	add hl,de
@@ -1276,6 +1327,10 @@ vpf_x:
 	jp z,vpf_x_next
 	ld (hl),$ff		; слот выведен — больше не выводить (пересечения прямоугольников)
 	push bc
+	push af
+	ld a,9
+	call vec_budget
+	pop af
 	call vec_pool_addr
 	ld (vec_blit_src),hl
 	ld a,c

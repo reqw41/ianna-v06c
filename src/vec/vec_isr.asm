@@ -7,6 +7,10 @@ vec_isr:
 	push bc
 	push de
 	push hl
+	; --- таймер ВИ53 счётчик 0 := $FFFF (отсчёт времени от VBlank для vec_budget) ---
+	ld a,$FF
+	out ($0B),a
+	out ($0B),a
 	; --- палитра (латч по лучу: пишем в VBlank, сразу после входа в ISR) ---
 	ld hl,vec_palette
 	ld c,0
