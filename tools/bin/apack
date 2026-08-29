@@ -1,0 +1,3 @@
+#!/bin/sh
+# apack-совместимая обёртка: apack in out -> apultra (формат aPLib)
+exec "$(dirname "$0")/apultra" "$1" "$2"

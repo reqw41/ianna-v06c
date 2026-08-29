@@ -1,0 +1,13 @@
+build/
+ref/msx2/
+ref/zx/
+ref/msx2_rom/
+ref/doc_txt/
+ref/preview/
+tools/pasmo-src/
+tools/apultra/
+tools/fill16k
+tools/bin/sjasm
+tools/data/__pycache__/
+__pycache__/
+tests/*.bin

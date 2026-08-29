@@ -1,0 +1,5 @@
+Este fichero ZIP contiene:
+
+- RW_IANNA_CPC_v10.rom: Este fichero es una ROM para volcar en un Cartucho Dandanator.
+
+
