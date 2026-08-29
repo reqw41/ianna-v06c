@@ -53,6 +53,10 @@ vec_kv_shadow:	db 0
 vec_bud_frame:	db 0		; бюджет DI: кадр (мл. байт FrameCounter) и потрачено (x256 тактов)
 vec_bud_used:	db 0		; текущее значение порта $10 вне блитов (для ISR)
 vec_bud_halts:	dw 0		; счётчик halt в vec_budget (статистика)
+; --- кэш панели («по изменению»): что уже стоит в VRAM панели, $FF = неизвестно ---
+vec_pc_char:	ds 128		; символы, ряды 20..23 x 32 колонки (код 0..63)
+vec_pc_onoff:	ds 32		; drawScoreOnOff по колонке: 1 = выкл, 2 = вкл
+vec_pc_meter:	ds 64		; шкалы draw_meter по колонке: [0] Y цветной части, [1] высота пустой
 vec_zsave:	ds 18		; сохранение z_ix..z_hl2 на время плеера в ISR
 ply_sd_cnt:	db 0		; Arkos: сдвиг частоты (4k) вместо самомодификации jr
 ply_hd_cnt:	db 0

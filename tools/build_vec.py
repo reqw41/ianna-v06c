@@ -41,7 +41,12 @@ def slice_ianna():
     out += ['; ---- RedrawScreen / RunScripts / CheckGravities (608-716) ----'] + rng(608, 716)
     out += ['; ---- waitforVBlank (247-306) ----'] + rng(247, 306)
     out += ['; ---- IndCall / random / Mul8x8 / Div8 (780-838) ----'] + rng(780, 838)
-    out += ['; ---- Div16_8 (840-857) ----'] + rng(840, 857)
+    out += ['; ---- Div16_8 (840-857): ВЕКТОР — нативное деление сдвигами вместо цикла вычитаний (до 255 итераций по ~60 тактов) ----',
+            '; HL = floor(HL / C), DE и BC целы (оригинал портил B). C = 0 в оригинале недостижим (там ret z с push de на стеке).',
+            'Div16_8:', '\tpush de', '\tpush bc', '\tld a,c', '\tor a', '\tjp z,div168_z', '\tld e,c', '\tld b,16', '\txor a\t\t; остаток',
+            'div168_l:', '\tadd hl,hl', '\trla', '\tjp c,div168_s\t; остаток >= 256 > C', '\tcp e', '\tjp c,div168_n',
+            'div168_s:', '\tsub e', '\tinc l\t\t; бит частного (бит 0 после add hl,hl = 0)',
+            'div168_n:', '\tdec b', '\tjp nz,div168_l', 'div168_z:', '\tpop bc', '\tpop de', '\tret']
     out += ['; ---- ENCODE / HEX_TO_TEXT (893-970) ----'] + rng(893, 970)
     out += ['; ---- таблицы (1006-1079) ----'] + rng(1006, 1079)
     text = '\n'.join(out) + '\n'
@@ -143,6 +148,12 @@ def main():
     (TR / 'vdp_consts.asm').write_text('; константы из vdp.asm/sprites.asm/music.asm/input.asm\n' + consts_from('vdp.asm') + consts_from('sprites.asm') + consts_from('music.asm') + consts_from('input.asm'))
     for m in ['tiles', 'drawsprite', 'entities', 'scripts', 'objects', 'depack']:
         translate(SRC / f'{m}.asm', TR / f'{m}.asm')
+    # ряды панели (>= 10) DrawTile/DrawFGTile никогда не рисуют (cp 11 / ret nc) — не копить
+    # пустые прямоугольники: каждый стоил обход 16x2 тайлов с двумя z_exx на тайл
+    t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
+    old = 'InvalidateSTiles:\n\tpush de'
+    assert old in t
+    (TR / 'tiles.asm').write_text(t.replace(old, 'InvalidateSTiles:\n\tld a,c\t; ВЕКТОР: ряды панели не рисуются — прямоугольник не нужен\n\tcp 10\n\tret nc\n\tpush de'))
     translate(TR / 'ianna_main_src.asm', TR / 'ianna_main.asm')
     translate(TR / 'score_src.asm', TR / 'score.asm')
     translate(TR / 'font_src.asm', TR / 'font.asm')

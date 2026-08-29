@@ -91,7 +91,11 @@ cls_l:
 	ld a,b
 	or c
 	jp nz,cls_l
+    if !DEMO
+	jp vec_pc_reset		; панели на экране нет — кэш «неизвестно»
+    else
 	ret
+    endif
 
 ; ---------------------------------------------------------------------------
 ; Таблица банков MSX -> (порт стека, старший байт базы) для кадров спрайтов.
@@ -1397,6 +1401,30 @@ drawChar:
 	push bc
 	sub 32
 	and 63
+	ld e,a			; E = код символа 0..63
+	; кэш по ячейкам (ряды 20..23): тот же символ уже в VRAM — не рисуем.
+	; Оригинал перерисовывает панель в каждом кадре ожидания (waitforVBlank), для VDP это
+	; дёшево, для нас — стековый блит 4x8x4 на символ.
+	ld a,c
+	sub 20
+	cp 4
+	jp nc,dc_draw
+	rrca
+	rrca
+	rrca			; ряд*32
+	add a,b
+	ld l,a
+	ld h,0
+	push de
+	ld de,vec_pc_char
+	add hl,de
+	pop de
+	ld a,(hl)
+	cp e
+	jp z,dc_skip
+	ld (hl),e
+dc_draw:
+	ld a,e
 	; src = P3_FONT + A*32
 	ld l,a
 	ld h,0
@@ -1422,6 +1450,11 @@ drawChar:
 	ld a,4
 	ld (vec_bl_pops),a
 	jp vec_panel_blit
+dc_skip:
+	pop bc
+	pop de
+	pop hl
+	ret
     endif
 ; drawWeapon: A = X источника (оружие*32), B = X px, C = Y px; 24x16
 drawWeapon:
@@ -1431,6 +1464,7 @@ drawWeapon:
 	push hl
 	push de
 	push bc
+	call vec_pc_inv3	; картинка ложится на ячейки символов — их кэш сбросить
 	rrca
 	rrca
 	rrca
@@ -1464,6 +1498,26 @@ drawScoreOnOff:
 	push hl
 	push de
 	push bc
+	inc a			; 1 = выкл, 2 = вкл (0/$FF = неизвестно)
+	ld e,a
+	ld a,b
+	rrca
+	rrca
+	rrca
+	and $1f			; колонка
+	ld l,a
+	ld h,0
+	push de
+	ld de,vec_pc_onoff
+	add hl,de
+	pop de
+	ld a,(hl)
+	cp e
+	jp z,dc_skip		; та же картинка уже в VRAM
+	ld (hl),e
+	call vec_pc_inv3	; 24x24 накрывает ячейки цифр — их кэш сбросить
+	ld a,e
+	dec a
 	ld hl,P3_ONOFF
 	or a
 	jp z,dso_0
@@ -1513,6 +1567,7 @@ vec_load_panel:
     if DEMO
 	ret
     else
+	call vec_pc_reset
 	push hl
 	push de
 	push bc
@@ -1526,9 +1581,116 @@ vec_load_panel:
 	ld e,Y_TOP_L-160
 	jp vec_panel_blit
     endif
+; vec_pc_reset: весь кэш панели = $FF («неизвестно»). Портит A, HL, B.
+vec_pc_reset:
+    if !DEMO
+	ld hl,vec_pc_char
+	ld b,128+32+64
+vpr_l:
+	ld (hl),$ff
+	inc hl
+	dec b
+	jp nz,vpr_l
+    endif
+	ret
+; vec_pc_inv3: сбросить кэш символов под картинкой 3x3 ячейки: B = X px, C = Y px.
+; Бережёт все регистры, кроме A.
+vec_pc_inv3:
+	push bc
+	push de
+	push hl
+	ld a,c
+	rrca
+	rrca
+	rrca
+	and $1f
+	sub 20
+	ld c,a			; ряд относительно 20 (вне 0..3 — пропуск)
+	ld a,b
+	rrca
+	rrca
+	rrca
+	and $1f
+	ld b,a			; колонка
+	ld d,3
+vpi_r:
+	ld a,c
+	cp 4
+	jp nc,vpi_next
+	rrca
+	rrca
+	rrca			; ряд*32
+	add a,b
+	ld l,a
+	ld h,0
+	ld e,d
+	ld de,vec_pc_char
+	add hl,de
+	ld d,3
+	ld (hl),$ff
+	inc hl
+	ld (hl),$ff
+	inc hl
+	ld (hl),$ff
+vpi_next:
+	inc c
+	dec d
+	jp nz,vpi_r
+	pop hl
+	pop de
+	pop bc
+	ret
 ; fillArea / fillArea_slow: A = цвет, B = X px, C = Y px, D = ширина px, E = высота px
+; Единственный клиент в игре — draw_meter (шкалы панели): цветная часть (цвет != $11) со строки
+; 190-n высотой n и пустая ($11) со строки 169 высотой 21-n. Кэш по колонке: цветная — ключ Y,
+; пустая — ключ высота. Полная пустая (21) или полная цветная (Y=169) накрывает соседа — его ключ
+; сбрасываем, иначе после «энергия 0 -> прежняя» цветная часть посчиталась бы уже нарисованной.
 fillArea:
 fillArea_slow:
+	push hl
+	push de
+	push bc
+	push af
+	ld (vec_fill_color),a
+	ld a,b
+	rrca
+	rrca
+	rrca
+	and $1f
+	add a,a
+	ld l,a
+	ld h,0
+	push de			; E (высота) нужен ниже как ключ пустой части
+	ld de,vec_pc_meter
+	add hl,de		; HL -> [Y цветной], [высота пустой]
+	pop de
+	ld a,(vec_fill_color)
+	cp $11
+	jp z,fa_blank
+	ld a,c			; цветная: ключ Y
+	cp (hl)
+	jp z,fa_skip
+	ld (hl),a
+	cp 169			; полная — пустой части не будет, её ключ сбросить
+	jp nz,fa_go
+	inc hl
+	ld (hl),$ff
+	jp fa_go
+fa_blank:
+	inc hl
+	ld a,e			; пустая: ключ высота
+	cp (hl)
+	jp z,fa_skip
+	ld (hl),a
+	cp 21
+	jp nz,fa_go
+	dec hl
+	ld (hl),$ff
+fa_go:
+	pop af
+	pop bc
+	pop de
+	pop hl
 	push hl
 	push de
 	push bc
@@ -1649,6 +1811,12 @@ fa_plane_next:
 	cp b
 	jp nc,fa_col
 fa_exit:
+	pop bc
+	pop de
+	pop hl
+	ret
+fa_skip:
+	pop af
 	pop bc
 	pop de
 	pop hl
