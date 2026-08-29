@@ -27,6 +27,28 @@ vec_spr_lbot:	db 0
 vec_spr_hcol:	db 0
 vec_spr_mask:	db 0
 vec_spr_p01:	dw 0
+vec_spr_dir:	db 0
+vec_spr_cx:	db 0
+vec_spr_ybot:	db 0
+vec_spr_row:	db 0
+vec_rows_left:	db 0
+vec_seg_cnt:	db 0
+vec_blit_src:	dw 0
+vec_blit_ret:	dw 0
+vec_bl_cols:	db 0
+vec_bl_pops:	db 0
+vec_pool_on:	db 0
+vec_slot_next:	db 0
+vec_tmp_sx:	db 0
+vec_tmp_sx1:	db 0
+vec_tmp_sy:	db 0
+vec_tmp_nx:	db 0
+vec_tmp_ny:	db 0
+vec_tmp_row16:	db 0
+vec_fill_color:	db 0
+vec_fill_xr:	db 0
+vec_fill_mask:	db 0
+vec_fill_hgt:	db 0
 
 ; --- стек: до ближайшей границы страницы (минимум ~200 Б) ---
 	ds 200
@@ -34,4 +56,7 @@ vec_spr_p01:	dw 0
 vec_stack_top:
 ; --- таблица разворота байта: ровно страница ---
 rev256:
+	ds 256
+; --- таблица слотов пула (160 супертайлов, индекс = (y&$F0)|x), страница ---
+vec_slot_tab:
 	ds 256

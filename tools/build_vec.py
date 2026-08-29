@@ -39,13 +39,24 @@ def slice_ianna():
     out += ['; ---- ianna.asm: game / mainloop (144-239) ----'] + rng(144, 239)
     out += ['; ---- InitVariables..LoadScreen (308-606) ----'] + rng(308, 606)
     out += ['; ---- RedrawScreen / RunScripts / CheckGravities (608-716) ----'] + rng(608, 716)
-    out += ['; ---- IndCall / random / Mul8x8 (780-822) ----'] + rng(780, 822)
+    out += ['; ---- waitforVBlank (247-306) ----'] + rng(247, 306)
+    out += ['; ---- IndCall / random / Mul8x8 / Div8 (780-838) ----'] + rng(780, 838)
     out += ['; ---- Div16_8 (840-857) ----'] + rng(840, 857)
+    out += ['; ---- ENCODE / HEX_TO_TEXT (893-970) ----'] + rng(893, 970)
     out += ['; ---- таблицы (1006-1079) ----'] + rng(1006, 1079)
     text = '\n'.join(out) + '\n'
-    old = '\tcall RedrawScreen_part1\n\tcall waitforVBlank\n\tcall RedrawScreen_part2\n'
-    assert old in text
-    text = text.replace(old, '\tcall waitforVBlank\t; ВЕКТОР: ждём кадр ДО отрисовки\n\tcall RedrawScreen_part1\n\tcall RedrawScreen_part2\n')
+    if not DEMO:
+        # буферный рендер: part1 собирает в пул, part2 выбрасывает в VRAM
+        old = 'RedrawScreen_part1:\n\tcall RedrawInvTiles'
+        assert old in text; text = text.replace(old, 'RedrawScreen_part1:\n\tcall vec_pool_begin\t; ВЕКТОР: слоты пула\n\tcall RedrawInvTiles')
+        old = 'RedrawScreen:\n\tcall RedrawInvTiles'
+        assert old in text; text = text.replace(old, 'RedrawScreen:\n\tcall vec_pool_begin\t; ВЕКТОР: слоты пула\n\tcall RedrawInvTiles')
+        old = '\tcall TransferDirtyTiles\t; Transfer dirty tiles to main screen'
+        assert old in text; text = text.replace(old, '\tcall vec_pool_flush\t; ВЕКТОР: пул -> VRAM сверху вниз')
+    else:
+        old = '\tcall RedrawScreen_part1\n\tcall waitforVBlank\n\tcall RedrawScreen_part2\n'
+        assert old in text
+        text = text.replace(old, '\tcall waitforVBlank\t; ВЕКТОР: ждём кадр ДО отрисовки\n\tcall RedrawScreen_part1\n\tcall RedrawScreen_part2\n')
     assert 'ld      a,r' in text
     text = text.replace('ld      a,r', 'ld a,(FrameCounter)\t; ВЕКТОР: вместо ld a,r')
     text = re.sub(r'^blackpal: db 0.*\n\s+db 0.*\n', 'blackpal:\n', text, flags=re.M)
@@ -58,6 +69,19 @@ def slice_ianna():
         assert old in text
         text = text.replace(old, 'LEVEL_OFFSET: dw DEMO_LEVEL_ADDR, $8000')
     (TR / 'ianna_main_src.asm').write_text(text)
+
+def make_score_font():
+    sc = (SRC / 'score.asm').read_text(encoding='utf-8', errors='replace')
+    sc = sc.replace('scorearea: INCBIN "marcador.SR5.plet1"', 'scorearea:')
+    sc = sc.replace('WEAPON_SPRITES: INCBIN "armas.SR5.plet1"', 'WEAPON_SPRITES:')
+    old = 'load_scorearea:\n\tld hl, scorearea\n\tld de, $D000\n\tcall unpackVRAM'
+    assert old in sc; sc = sc.replace(old, 'load_scorearea:\n\tcall vec_load_panel\t; ВЕКТОР: картинка панели из квазидиска')
+    if DEMO:
+        # в демо панели нет: все процедуры score остаются, но рисуют в пустоту (drawChar и пр. — ret)
+        pass
+    (TR / 'score_src.asm').write_text(sc)
+    ft = (SRC / 'font.asm').read_text(encoding='utf-8', errors='replace')
+    (TR / 'font_src.asm').write_text(ft)
 
 def make_vars():
     text = (SRC / 'vars.asm').read_text(encoding='utf-8', errors='replace')
@@ -85,11 +109,13 @@ def consts_from(path):
 
 def main():
     TR.mkdir(parents=True, exist_ok=True)
-    slice_ianna(); make_vars()
+    slice_ianna(); make_vars(); make_score_font()
     (TR / 'vdp_consts.asm').write_text('; константы из vdp.asm/sprites.asm/music.asm/input.asm\n' + consts_from('vdp.asm') + consts_from('sprites.asm') + consts_from('music.asm') + consts_from('input.asm'))
     for m in ['tiles', 'drawsprite', 'entities', 'scripts', 'objects', 'depack']:
         translate(SRC / f'{m}.asm', TR / f'{m}.asm')
     translate(TR / 'ianna_main_src.asm', TR / 'ianna_main.asm')
+    translate(TR / 'score_src.asm', TR / 'score.asm')
+    translate(TR / 'font_src.asm', TR / 'font.asm')
     translate(TR / 'vars_src.asm', TR / 'vars.asm')
     data = ROOT / ('build/demo_data.asm' if DEMO else 'build/gen_data.asm')
     order = [VEC / 'vec_boot.asm', TR / 'vdp_consts.asm']
@@ -97,6 +123,7 @@ def main():
         order.append(data)              # org $0200
     order += [VEC / 'vec_main.asm', TR / 'ianna_main.asm', TR / 'tiles.asm', TR / 'drawsprite.asm',
               TR / 'entities.asm', TR / 'scripts.asm', TR / 'objects.asm', TR / 'depack.asm',
+              TR / 'score.asm', TR / 'font.asm',
               VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm', VEC / 'vec_stubs.asm']
     if not DEMO:
         order.append(data)

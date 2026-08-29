@@ -1,29 +1,35 @@
 ; vec_vdp.asm — платформенный слой Вектор-06Ц вместо vdp.asm MSX2.
-; Интерфейс тот же, что у VDP-процедур оригинала (drawTile, drawFGTile,
-; drawSprite, setROM2, setDisplayPage...), реализация — прямой вывод в 4
-; плоскости pop-блитом. Источник данных: квазидиск (DEMO=0) или ROM (DEMO=1).
+; Интерфейс тот же, что у VDP-процедур оригинала; реализация — pop-блит
+; из квазидиска (DEMO=0) или ROM (DEMO=1).
 ;
-; Экран: MSX y=0..191 -> строка Вектора y+32 -> L = 255-(y+32) = 223-y.
-;        MSX x=0..255 -> колонка H = база_плоскости + (x>>3). Бит7 = левый пиксель.
-; Плоскости: $80,$A0,$C0,$E0 (старший байт), палитра idx = p0<<3|p1<<2|p2<<1|p3.
+; Экран: MSX y -> строка Вектора y+32 -> L = 223-y; x -> H = база плоскости + (x>>3).
+; Плоскости $80,$A0,$C0,$E0; палитра idx = p0<<3|p1<<2|p2<<1|p3.
 ;
-; Квазидиск (порт $10): бит4 = стековый режим, биты 2-3 = страница стека;
-; в стековом режиме POP читает страницу квазидиска, обычные записи идут в VRAM.
-; На время стековых блитов прерывания запрещены (ISR пушит в стек!).
+; Порт $10: б0-1 страница окон, б2-3 страница стека, б4 стек, б5 окно $A000-$DFFF,
+; б6 окно $8000-$9FFF, б7 окно $E000-$FFFF. В стековом режиме POP читает квазидиск,
+; обычные записи идут в ОЗУ/VRAM. Во время стековых блитов — DI, без call/ret.
+;
+; РЕНДЕР БЕЗ МЕРЦАНИЯ (DEMO=0): RedrawScreen_part1 собирает dirty-супертайлы не в VRAM,
+; а в ПУЛ — страница 3 квазидиска $A000-$DFFF через ОКНО (128 слотов по 128 Б, формат
+; тайла: [p][col][row]); RedrawScreen_part2 (vec_pool_flush) выбрасывает слоты в VRAM
+; стеком, строками сверху вниз. Супертайлы без слота (панель, переполнение) рисуются
+; напрямую. Окно открывается только внутри буферных блитов (панель рисуется между ними).
 
 KV_PORT		equ $10
-KV_STACK_P0	equ $10		; стек -> страница 0
-KV_STACK_P1	equ $14		; стек -> страница 1
-KV_WIN_LEVEL	equ $61		; окна $8000-$9FFF (б6) + $A000-$DFFF (б5), страница 1 (карта уровня)
-KV_OFF		equ $00
-
-Y_TOP_L		equ 223		; L для MSX y=0
+KV_STK_P0	equ $10
+KV_STK_P1	equ $14
+KV_STK_P2	equ $18
+KV_STK_P3	equ $1C
+KV_WIN_LEVEL	equ $61		; окна $8000-$DFFF -> страница 1 (карта уровня)
+KV_POOL_WIN	equ $23		; окно $A000-$DFFF -> страница 3 (пул)
+POOL_BASE	equ $A000
+P3_FONT		equ $0000
+P3_PANEL	equ $1000
+P3_WEAPON	equ $2000
+P3_ONOFF	equ $2400
+Y_TOP_L		equ 223
 
 ; ---------------------------------------------------------------------------
-; setROM2: A = «ROM-страница» MSX. Семантика на Векторе:
-;   1        -> закрыть все окна (обычная память)
-;   2..21    -> запомнить банк спрайтов (используется drawSprite)
-;   22..39   -> страница уровня/тайлов: LEVEL -> открыть окно карты уровня
 setROM2:
 setROM2_DI:
 	ld (ROMBank1),a
@@ -32,9 +38,9 @@ setROM2_DI:
 	cp 22
 	jp c,setrom_sprite
 	and 1
-	ret nz			; тайлы: ничего не делаем
+	ret nz
     if DEMO
-	ret			; карта уровня в ROM
+	ret
     else
 	ld a,KV_WIN_LEVEL
 	out (KV_PORT),a
@@ -50,17 +56,12 @@ setrom_sprite:
 	ld (vec_sprite_bank),a
 	ret
 
-; ---------------------------------------------------------------------------
-; Заглушки двойной буферизации: на Векторе рисуем сразу в экран.
-; TransferDirtyTiles остаётся оригинальный (tiles.asm): CopyTile — заглушка,
-; а обнуление ndirtyrects в его хвосте нам и нужно.
 setDisplayPage:
 CopyTile:
 copyPage:
 VDPcmd:
 VDPcmd_DI:
 waitVDP:
-fillArea:
 VDP_SetPalette:
 initVDPBuffers:
 unpackVRAM:
@@ -68,7 +69,6 @@ fadeMSX2:
 fadeinMSX2:
 	ret
 
-; cls: очистить все 4 плоскости
 cls:
 	ld hl,$8000
 	ld bc,$8000
@@ -82,69 +82,65 @@ cls_l:
 	ret
 
 ; ---------------------------------------------------------------------------
-; drawTile: A = номер тайла, B = X (px, кратно 16), C = Y (px, кратно 16)
-; Тайл фона 128 Б: for p in 0..3: for col in 0..1: 16 строк сверху вниз.
-; ВНУТРИ стекового блита нельзя call/ret (стек подменён).
-drawTile:
-	push hl
-	push de
-	push bc
-    if DEMO
-	; адрес = DEMO_TILES_BASE + lut[A]*128
-	ld l,a
-	ld h,demo_tile_lut/256
-	ld a,(hl)
-	ld l,0
-	rrca			; CY = бит0, A>>1 в младших 7 битах
-	jp nc,dt_a0
-	ld l,$80
-dt_a0:
-	and $7f
-	ld h,a
-	ld de,DEMO_TILES_BASE
-	add hl,de
-    else
-	; адрес = $8000 + A*128 (страница 0)
-	ld d,a
-	rrca
-	and $7f
-	add a,$80
-	ld h,a
-	ld a,d
-	and 1
-	rrca
-	ld l,a
-    endif
-	ld (vec_tile_src),hl
+; Таблица банков MSX -> (порт стека, старший байт базы) для кадров спрайтов.
+; банк 2 варвар общий -> стр.0 $0000; 3 прыжки -> стр.1 $0000;
+; 7 скелет, 8 орк, 9 мумия, 12 камень -> стр.2 по $4000; остальные -> стр.0 (мусор, но безопасно)
+vec_bank_tab:
+	db KV_STK_P0,$00, KV_STK_P1,$00		; 2,3
+	db KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00	; 4,5,6 (оружие — пока нет)
+	db KV_STK_P2,$00, KV_STK_P2,$40, KV_STK_P2,$80	; 7,8,9
+	db KV_STK_P0,$00, KV_STK_P0,$00			; 10,11
+	db KV_STK_P2,$C0				; 12
+	db KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00	; 13..21
+
+; ---------------------------------------------------------------------------
+; Слот пула для супертайла: B=x px, C=y px -> A = слот или $FF (панель/нет)
+vec_slot_for_bc:
+	ld a,c
+	cp 160
+	jp nc,vsf_none
 	ld a,b
 	rrca
 	rrca
 	rrca
-	and $1f
-	add a,$80
-	ld d,a			; D = H колонки 0 плоскости 0
-	ld a,Y_TOP_L
-	sub c
-	ld e,a			; E = L верхней строки
-	di
-	ld hl,0
-	add hl,sp
-	ld (vec_sp_save),hl
-	ld hl,(vec_tile_src)
-	ld sp,hl
-    if !DEMO
-	ld a,KV_STACK_P0
-	out (KV_PORT),a
-    endif
+	rrca
+	and $0f
+	ld l,a
+	ld a,c
+	and $f0
+	or l
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld a,(hl)
+	ret
+vsf_none:
+	ld a,$ff
+	ret
+; A = слот -> HL = адрес в пуле ($A000 + slot*128)
+vec_pool_addr:
+	ld l,a
+	rrca
+	and $7f
+	add a,POOL_BASE/256
+	ld h,a
+	ld a,l
+	and 1
+	rrca
+	ld l,a
+	ret
+
+; ---------------------------------------------------------------------------
+; Общий стековый блит 128 Б «формат тайла» -> VRAM: SP уже установлен, порт выведен,
+; D = H колонки 0 плоскости 0, E = L верхней строки. Возврат: jp (vec_blit_ret).
+vec_blit128_vram:
 	ld a,4
 	ld (vec_plane_cnt),a
-dt_plane:
+vb_plane:
 	ld h,d
 	ld l,e
 	ld a,2
 	ld (vec_col_cnt),a
-dt_col:
-	; 8 pop = 16 строк
+vb_col:
 	pop bc
 	ld (hl),c
 	dec l
@@ -189,44 +185,178 @@ dt_col:
 	ld a,(vec_col_cnt)
 	dec a
 	ld (vec_col_cnt),a
-	jp nz,dt_col
+	jp nz,vb_col
 	ld a,d
 	add a,$20
 	ld d,a
 	ld a,(vec_plane_cnt)
 	dec a
 	ld (vec_plane_cnt),a
-	jp nz,dt_plane
-    if !DEMO
-	ld a,KV_OFF
+	jp nz,vb_plane
+	ld hl,(vec_blit_ret)
+	jp (hl)
+
+; Универсальный блит колонок [p][col][row] -> VRAM для панели: SP установлен, порт выведен,
+; D/E = dest, vec_bl_cols = колонок, vec_bl_pops = строк/2. Возврат jp (vec_blit_ret).
+vec_blit_cols:
+	ld a,4
+	ld (vec_plane_cnt),a
+vbc_plane:
+	ld a,(vec_bl_cols)
+	ld (vec_col_cnt),a
+	ld h,d
+	ld l,e
+vbc_col:
+	ld a,(vec_bl_pops)
+	ld (vec_row_cnt),a
+vbc_row:
+	pop bc
+	ld (hl),c
+	dec l
+	ld (hl),b
+	dec l
+	ld a,(vec_row_cnt)
+	dec a
+	ld (vec_row_cnt),a
+	jp nz,vbc_row
+	inc h
+	ld l,e
+	ld a,(vec_col_cnt)
+	dec a
+	ld (vec_col_cnt),a
+	jp nz,vbc_col
+	ld a,d
+	add a,$20
+	ld d,a
+	ld a,(vec_plane_cnt)
+	dec a
+	ld (vec_plane_cnt),a
+	jp nz,vbc_plane
+	ld hl,(vec_blit_ret)
+	jp (hl)
+
+; Вход в стековый режим: HL = источник (SP), A = байт порта. Сохраняет SP, DI.
+; (это обычная процедура: вызывается ДО подмены SP)
+vec_stk_enter:
+	di
+	ex de,hl
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ex de,hl
+	ld sp,hl
 	out (KV_PORT),a
-    endif
+	ret			; ВНИМАНИЕ: ret по подменённому стеку недопустим — поэтому см. макро-вызов ниже
+; Поэтому используем не call, а inline: см. STK_BEGIN в процедурах.
+
+; Выход: закрыть порт, вернуть SP, EI
+vec_stk_leave:
+	xor a
+	out (KV_PORT),a
 	ld hl,(vec_sp_save)
 	ld sp,hl
 	ei
-	pop bc
-	pop de
-	pop hl
 	ret
 
 ; ---------------------------------------------------------------------------
-; drawFGTile: A = номер тайла (≠0), B = X, C = Y. Передний тайл с маской:
-; 256 Б по адресу FG_TILES_BASE + (lut[A]-1)*256; lut[A]=0 -> тайла нет.
-;   for p: for col: 16 строк сверху вниз: [data, mask]
-drawFGTile:
+; drawTile: A = тайл, B = X px, C = Y px
+drawTile:
 	push hl
 	push de
 	push bc
+    if DEMO
 	ld l,a
-	ld h,fg_tile_lut/256
+	ld h,demo_tile_lut/256
 	ld a,(hl)
-	or a
-	jp z,dft_exit
-	dec a
-	add a,FG_TILES_BASE/256
-	ld h,a
 	ld l,0
-	ld (vec_tile_src),hl
+	rrca
+	jp nc,dt_a0
+	ld l,$80
+dt_a0:
+	and $7f
+	ld h,a
+	ld de,DEMO_TILES_BASE
+	add hl,de
+    else
+	ld d,a
+	rrca
+	and $7f
+	add a,$80
+	ld h,a
+	ld a,d
+	and 1
+	rrca
+	ld l,a
+    endif
+	ld (vec_blit_src),hl
+    if !DEMO
+	ld a,(vec_pool_on)
+	or a
+	jp z,dt_direct
+	call vec_slot_for_bc
+	cp $ff
+	jp z,dt_direct
+	call vec_pool_addr
+	ex de,hl		; DE = слот в окне
+	di
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ld hl,(vec_blit_src)
+	ld sp,hl
+	ld a,KV_POOL_WIN|KV_STK_P0
+	out (KV_PORT),a
+	ex de,hl		; HL = dest
+	ld a,8
+	ld (vec_row_cnt),a
+dtb_loop:
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	ld a,(vec_row_cnt)
+	dec a
+	ld (vec_row_cnt),a
+	jp nz,dtb_loop
+	jp dt_end
+    endif
+dt_direct:
 	ld a,b
 	rrca
 	rrca
@@ -241,10 +371,136 @@ drawFGTile:
 	ld hl,0
 	add hl,sp
 	ld (vec_sp_save),hl
-	ld hl,(vec_tile_src)
+	ld hl,(vec_blit_src)
 	ld sp,hl
     if !DEMO
-	ld a,KV_STACK_P1
+	ld a,KV_STK_P0
+	out (KV_PORT),a
+    endif
+	ld hl,dt_end
+	ld (vec_blit_ret),hl
+	jp vec_blit128_vram
+dt_end:
+	xor a
+	out (KV_PORT),a
+	ld hl,(vec_sp_save)
+	ld sp,hl
+	ei
+	pop bc
+	pop de
+	pop hl
+	ret
+
+; ---------------------------------------------------------------------------
+; drawFGTile: A = тайл (≠0), B, C. Передний тайл [p][col][row]:[data,mask], 256 Б
+drawFGTile:
+	push hl
+	push de
+	push bc
+	ld l,a
+	ld h,fg_tile_lut/256
+	ld a,(hl)
+	or a
+	jp z,dft_exit
+	dec a
+	add a,FG_TILES_BASE/256
+	ld h,a
+	ld l,0
+	ld (vec_blit_src),hl
+    if !DEMO
+	ld a,(vec_pool_on)
+	or a
+	jp z,dft_direct
+	call vec_slot_for_bc
+	cp $ff
+	jp z,dft_direct
+	call vec_pool_addr
+	ex de,hl
+	di
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ld hl,(vec_blit_src)
+	ld sp,hl
+	ld a,KV_POOL_WIN|KV_STK_P1
+	out (KV_PORT),a
+	ex de,hl
+	ld a,16
+	ld (vec_row_cnt),a
+dftb_loop:
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	ld a,(vec_row_cnt)
+	dec a
+	ld (vec_row_cnt),a
+	jp nz,dftb_loop
+	jp dft_end
+    endif
+dft_direct:
+	ld a,b
+	rrca
+	rrca
+	rrca
+	and $1f
+	add a,$80
+	ld d,a
+	ld a,Y_TOP_L
+	sub c
+	ld e,a
+	di
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ld hl,(vec_blit_src)
+	ld sp,hl
+    if !DEMO
+	ld a,KV_STK_P1
 	out (KV_PORT),a
     endif
 	ld a,4
@@ -258,7 +514,7 @@ dft_col:
 	ld a,16
 	ld (vec_row_cnt),a
 dft_row:
-	pop bc			; C=data, B=mask
+	pop bc
 	ld a,(hl)
 	and b
 	or c
@@ -281,10 +537,9 @@ dft_row:
 	dec a
 	ld (vec_plane_cnt),a
 	jp nz,dft_plane
-    if !DEMO
-	ld a,KV_OFF
+dft_end:
+	xor a
 	out (KV_PORT),a
-    endif
 	ld hl,(vec_sp_save)
 	ld sp,hl
 	ei
@@ -295,31 +550,34 @@ dft_exit:
 	ret
 
 ; ---------------------------------------------------------------------------
-; drawSprite: как в оригинале — A = направление (0: прямо, 1: зеркало),
-; B = X (px, кратно 8), C = Y (px), HL = «адрес спрайта» MSX ($8000 + n*384).
-; Высота: (vdpCmdSprite+VDP_NY) строк (клиппинг по низу), выставляется
-; DrawSpriteList перед вызовом.
-; Кадр 384 Б: for col 0..2: for row 31..0: [p0,p1,p2,p3] (снизу вверх).
-; Маска = ~(p0|p1|p2|p3) считается на лету. Вывод снизу вверх (INR L);
-; клиппинг: пропустить первые (32-NY) строк каждой колонки (SP += skip*4).
-; Источник: DEMO -> DEMO_FRAMES_BASE + (HL-$8000); квазидиск -> страница по банку, HL-$8000.
+; drawSprite: A = направление (0 прямо / 1 зеркало), B = X px (кратно 8), C = Y px,
+; HL = адрес MSX ($8000 + n*384). Высота NY = (vdpCmdSprite+VDP_NY).
+; Кадр 384 Б: for col 0..2: for row 31..0: [p0,p1,p2,p3]; маска на лету.
 drawSprite:
 	push af
 	ld de,-$8000
-	add hl,de		; смещение кадра n*384
+	add hl,de
     if DEMO
 	ld de,DEMO_FRAMES_BASE
 	add hl,de
     else
+	push hl
 	ld a,(vec_sprite_bank)
 	sub 2
-	and 3
-	rlca
-	rlca
-	or KV_STACK_P0
+	and $1f
+	add a,a
+	ld l,a
+	ld h,0
+	ld de,vec_bank_tab
+	add hl,de
+	ld a,(hl)
 	ld (vec_spr_port),a
+	inc hl
+	ld d,(hl)
+	ld e,0
+	pop hl
+	add hl,de
     endif
-	; NY, skip*4
 	ld a,(vdpCmdSprite+VDP_NY)
 	ld (vec_spr_ny),a
 	ld e,a
@@ -330,28 +588,39 @@ drawSprite:
 	ld (vec_spr_skip),a
 	ld e,a
 	ld d,0
-	add hl,de		; старт SP = кадр + skip*4
+	add hl,de
 	ld (vec_spr_src),hl
-	; L нижней выводимой строки = 223 - (C + NY - 1)
 	ld a,(vec_spr_ny)
 	add a,c
 	dec a
+	ld (vec_spr_ybot),a	; нижняя строка (MSX y)
 	ld e,a
 	ld a,Y_TOP_L
 	sub e
-	ld (vec_spr_lbot),a
-	; H колонки 0 плоскости 0
+	ld (vec_spr_lbot),a	; L нижней строки
 	ld a,b
 	rrca
 	rrca
 	rrca
 	and $1f
+	ld (vec_spr_cx),a	; колонка экрана 0..31
 	add a,$80
 	ld (vec_spr_hcol),a
 	pop af
+	ld (vec_spr_dir),a
+    if !DEMO
+	; буферный путь: пул включён и все супертайлы спрайта имеют слоты
+	ld a,(vec_pool_on)
+	or a
+	jp z,ds_direct
+	call vec_spr_slots_ok
+	jp nc,ds_direct
+	jp drawSprite_pool
+    endif
+ds_direct:
+	ld a,(vec_spr_dir)
 	or a
 	jp nz,drawSprite_mirror
-; ---- прямой ----
 	ld a,3
 	ld (vec_col_cnt),a
 	di
@@ -372,36 +641,36 @@ ds_col:
 	ld a,(vec_spr_ny)
 	ld (vec_row_cnt),a
 ds_row:
-	pop de			; E=p0, D=p1
-	pop bc			; C=p2, B=p3
+	pop de
+	pop bc
 	ld a,e
 	or d
 	or c
 	or b
 	cpl
 	ld (vec_spr_mask),a
-	and (hl)		; плоскость 0
+	and (hl)
 	or e
 	ld (hl),a
 	ld a,h
 	add a,$20
 	ld h,a
 	ld a,(vec_spr_mask)
-	and (hl)		; плоскость 1
+	and (hl)
 	or d
 	ld (hl),a
 	ld a,h
 	add a,$20
 	ld h,a
 	ld a,(vec_spr_mask)
-	and (hl)		; плоскость 2
+	and (hl)
 	or c
 	ld (hl),a
 	ld a,h
 	add a,$20
 	ld h,a
 	ld a,(vec_spr_mask)
-	and (hl)		; плоскость 3
+	and (hl)
 	or b
 	ld (hl),a
 	ld a,h
@@ -412,7 +681,6 @@ ds_row:
 	dec a
 	ld (vec_row_cnt),a
 	jp nz,ds_row
-	; следующая колонка: SP += skip*4, H+1
 	ld a,(vec_spr_skip)
 	ld l,a
 	ld h,0
@@ -425,9 +693,7 @@ ds_row:
 	dec a
 	ld (vec_col_cnt),a
 	jp nz,ds_col
-	jp ds_done
-; ---- зеркальный ----
-; Колонки данных 0,1,2 -> экранные колонки x+2, x+1, x+0; байты через rev256.
+	jp vec_stk_leave
 drawSprite_mirror:
 	ld a,(vec_spr_hcol)
 	add a,2
@@ -448,12 +714,12 @@ dsm_col:
 	ld a,(vec_spr_hcol)
 	ld d,a
 	ld a,(vec_spr_lbot)
-	ld e,a			; DE = экран
+	ld e,a
 	ld a,(vec_spr_ny)
 	ld (vec_row_cnt),a
 dsm_row:
 	ld h,rev256/256
-	pop bc			; C=p0, B=p1
+	pop bc
 	ld l,c
 	ld c,(hl)
 	ld l,b
@@ -462,48 +728,48 @@ dsm_row:
 	ld (vec_spr_p01),a
 	ld a,b
 	ld (vec_spr_p01+1),a
-	pop bc			; C=p2, B=p3
+	pop bc
 	ld l,c
 	ld c,(hl)
 	ld l,b
 	ld b,(hl)
-	ld hl,(vec_spr_p01)	; L=p0, H=p1
+	ld hl,(vec_spr_p01)
 	ld a,l
 	or h
 	or c
 	or b
 	cpl
 	ld (vec_spr_mask),a
-	ex de,hl		; HL = экран, E=p0, D=p1
-	and (hl)		; плоскость 0
+	ex de,hl
+	and (hl)
 	or e
 	ld (hl),a
 	ld a,h
 	add a,$20
 	ld h,a
 	ld a,(vec_spr_mask)
-	and (hl)		; плоскость 1
+	and (hl)
 	or d
 	ld (hl),a
 	ld a,h
 	add a,$20
 	ld h,a
 	ld a,(vec_spr_mask)
-	and (hl)		; плоскость 2
+	and (hl)
 	or c
 	ld (hl),a
 	ld a,h
 	add a,$20
 	ld h,a
 	ld a,(vec_spr_mask)
-	and (hl)		; плоскость 3
+	and (hl)
 	or b
 	ld (hl),a
 	ld a,h
 	sub $60
 	ld h,a
 	inc l
-	ex de,hl		; DE = экран (следующая строка)
+	ex de,hl
 	ld a,(vec_row_cnt)
 	dec a
 	ld (vec_row_cnt),a
@@ -520,12 +786,803 @@ dsm_row:
 	dec a
 	ld (vec_col_cnt),a
 	jp nz,dsm_col
-ds_done:
+	jp vec_stk_leave
+
     if !DEMO
-	ld a,KV_OFF
+; ---- проверка слотов под спрайт: CY=1 если все супертайлы (cx..cx+2, ybot-ny+1..ybot) имеют слот
+vec_spr_slots_ok:
+	ld a,(vec_spr_ybot)
+	cp 160
+	jp nc,vss_no
+	ld a,(vec_spr_cx)
+	rrca
+	and $0f
+	ld (vec_tmp_sx),a	; sx0
+	ld a,(vec_spr_cx)
+	add a,2
+	rrca
+	and $0f
+	ld (vec_tmp_sx1),a	; sx1
+	ld a,(vec_spr_ybot)
+	and $f0
+	ld c,a			; sy1*16
+	ld a,(vec_spr_ny)
+	ld b,a
+	ld a,(vec_spr_ybot)
+	sub b
+	inc a
+	and $f0
+	ld b,a			; sy0*16
+vss_y:
+	ld a,(vec_tmp_sx)
+vss_x:
+	or b
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld a,(hl)
+	cp $ff
+	jp z,vss_no
+	ld a,l
+	and $0f
+	ld l,a
+	ld a,(vec_tmp_sx1)
+	cp l
+	jp z,vss_ynext
+	ld a,l
+	inc a
+	jp vss_x
+vss_ynext:
+	ld a,b
+	cp c
+	jp z,vss_yes
+	add a,16
+	ld b,a
+	jp vss_y
+vss_yes:
+	scf
+	ret
+vss_no:
+	or a
+	ret
+
+; ---- спрайт в пул. Колонка экрана cx (0..31); слот супертайла (cx>>1, row>>4);
+; адрес = $A000 + slot*128 + (cx&1)*16 + (row&15); плоскости +32 (в пределах страницы).
+drawSprite_pool:
+	ld a,(vec_spr_dir)
+	or a
+	jp nz,dsp_mirror
+	ld a,3
+	ld (vec_col_cnt),a
+	di
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ld hl,(vec_spr_src)
+	ld sp,hl
+	ld a,(vec_spr_port)
+	or KV_POOL_WIN
 	out (KV_PORT),a
-    endif
+dsp_col:
+	ld a,(vec_spr_ny)
+	ld (vec_rows_left),a
+	ld a,(vec_spr_ybot)
+	ld (vec_spr_row),a
+dsp_seg:
+	; слот и адрес сегмента
+	ld a,(vec_spr_cx)
+	rrca
+	and $0f
+	ld l,a
+	ld a,(vec_spr_row)
+	and $f0
+	or l
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld a,(hl)
+	ld l,a
+	rrca
+	and $7f
+	add a,POOL_BASE/256
+	ld h,a
+	ld a,l
+	and 1
+	rrca
+	ld l,a
+	ld a,(vec_spr_cx)
+	and 1
+	rlca
+	rlca
+	rlca
+	rlca
+	add a,l
+	ld l,a
+	ld a,(vec_spr_row)
+	and 15
+	add a,l
+	ld l,a			; HL = адрес плоскости 0 нижней строки сегмента
+	; n = min(rows_left, (row&15)+1)
+	ld a,(vec_spr_row)
+	and 15
+	inc a
+	ld b,a
+	ld a,(vec_rows_left)
+	cp b
+	jp nc,dsp_n_ok
+	ld b,a
+dsp_n_ok:
+	ld a,b
+	ld (vec_seg_cnt),a
+	ld a,(vec_rows_left)
+	sub b
+	ld (vec_rows_left),a
+	ld a,(vec_spr_row)
+	sub b
+	ld (vec_spr_row),a
+dsp_row:
+	pop de
+	pop bc
+	ld a,e
+	or d
+	or c
+	or b
+	cpl
+	ld (vec_spr_mask),a
+	and (hl)
+	or e
+	ld (hl),a
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,(vec_spr_mask)
+	and (hl)
+	or d
+	ld (hl),a
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,(vec_spr_mask)
+	and (hl)
+	or c
+	ld (hl),a
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,(vec_spr_mask)
+	and (hl)
+	or b
+	ld (hl),a
+	ld a,l
+	sub 96+1		; назад на плоскость 0 и строкой выше
+	ld l,a
+	ld a,(vec_seg_cnt)
+	dec a
+	ld (vec_seg_cnt),a
+	jp nz,dsp_row
+	ld a,(vec_rows_left)
+	or a
+	jp nz,dsp_seg
+	; следующая колонка
+	ld a,(vec_spr_skip)
+	ld l,a
+	ld h,0
+	add hl,sp
+	ld sp,hl
+	ld a,(vec_spr_cx)
+	inc a
+	ld (vec_spr_cx),a
+	ld a,(vec_col_cnt)
+	dec a
+	ld (vec_col_cnt),a
+	jp nz,dsp_col
+	jp vec_stk_leave
+dsp_mirror:
+	ld a,(vec_spr_cx)
+	add a,2
+	ld (vec_spr_cx),a
+	ld a,3
+	ld (vec_col_cnt),a
+	di
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ld hl,(vec_spr_src)
+	ld sp,hl
+	ld a,(vec_spr_port)
+	or KV_POOL_WIN
+	out (KV_PORT),a
+dspm_col:
+	ld a,(vec_spr_ny)
+	ld (vec_rows_left),a
+	ld a,(vec_spr_ybot)
+	ld (vec_spr_row),a
+dspm_seg:
+	ld a,(vec_spr_cx)
+	rrca
+	and $0f
+	ld l,a
+	ld a,(vec_spr_row)
+	and $f0
+	or l
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld a,(hl)
+	ld l,a
+	rrca
+	and $7f
+	add a,POOL_BASE/256
+	ld h,a
+	ld a,l
+	and 1
+	rrca
+	ld l,a
+	ld a,(vec_spr_cx)
+	and 1
+	rlca
+	rlca
+	rlca
+	rlca
+	add a,l
+	ld l,a
+	ld a,(vec_spr_row)
+	and 15
+	add a,l
+	ld l,a
+	ex de,hl		; DE = адрес в пуле
+	ld a,(vec_spr_row)
+	and 15
+	inc a
+	ld b,a
+	ld a,(vec_rows_left)
+	cp b
+	jp nc,dspm_n_ok
+	ld b,a
+dspm_n_ok:
+	ld a,b
+	ld (vec_seg_cnt),a
+	ld a,(vec_rows_left)
+	sub b
+	ld (vec_rows_left),a
+	ld a,(vec_spr_row)
+	sub b
+	ld (vec_spr_row),a
+dspm_row:
+	ld h,rev256/256
+	pop bc
+	ld l,c
+	ld c,(hl)
+	ld l,b
+	ld b,(hl)
+	ld a,c
+	ld (vec_spr_p01),a
+	ld a,b
+	ld (vec_spr_p01+1),a
+	pop bc
+	ld l,c
+	ld c,(hl)
+	ld l,b
+	ld b,(hl)
+	ld hl,(vec_spr_p01)
+	ld a,l
+	or h
+	or c
+	or b
+	cpl
+	ld (vec_spr_mask),a
+	ex de,hl
+	and (hl)
+	or e
+	ld (hl),a
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,(vec_spr_mask)
+	and (hl)
+	or d
+	ld (hl),a
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,(vec_spr_mask)
+	and (hl)
+	or c
+	ld (hl),a
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,(vec_spr_mask)
+	and (hl)
+	or b
+	ld (hl),a
+	ld a,l
+	sub 96+1
+	ld l,a
+	ex de,hl
+	ld a,(vec_seg_cnt)
+	dec a
+	ld (vec_seg_cnt),a
+	jp nz,dspm_row
+	ld a,(vec_rows_left)
+	or a
+	jp nz,dspm_seg
+	ld a,(vec_spr_skip)
+	ld l,a
+	ld h,0
+	add hl,sp
+	ld sp,hl
+	ld a,(vec_spr_cx)
+	dec a
+	ld (vec_spr_cx),a
+	ld a,(vec_col_cnt)
+	dec a
+	ld (vec_col_cnt),a
+	jp nz,dspm_col
+	jp vec_stk_leave
+
+; ---------------------------------------------------------------------------
+; vec_pool_begin — вызывается в начале RedrawScreen_part1 / RedrawScreen:
+; раздать слоты пула dirty-супертайлам (строки 0..9). Переполнение (>128) -> прямой режим.
+vec_pool_begin:
+	ld hl,vec_slot_tab
+	ld b,0
+vpb_clr:
+	ld (hl),$ff
+	inc l
+	dec b
+	jp nz,vpb_clr
+	xor a
+	ld (vec_slot_next),a
+	ld (vec_pool_on),a
+	ld a,(ndirtyrects)
+	or a
+	ret z
+	ld c,a
+	ld de,tiles_dirty
+vpb_rect:
+	ld a,(de)		; xs
+	ld (vec_tmp_sx),a
+	inc de
+	ld a,(de)		; ys
+	ld (vec_tmp_sy),a
+	inc de
+	ld a,(de)		; nx
+	ld (vec_tmp_nx),a
+	inc de
+	ld a,(de)		; ny
+	ld (vec_tmp_ny),a
+	inc de
+	push de
+	push bc
+vpb_y:
+	ld a,(vec_tmp_sy)
+	cp 10
+	jp nc,vpb_rect_done	; панель — без слотов
+	rlca
+	rlca
+	rlca
+	rlca
+	ld (vec_tmp_row16),a
+	ld a,(vec_tmp_nx)
+	ld b,a
+	ld a,(vec_tmp_sx)
+	ld c,a
+vpb_x:
+	ld a,(vec_tmp_row16)
+	or c
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld a,(hl)
+	cp $ff
+	jp nz,vpb_x_next
+	ld a,(vec_slot_next)
+	cp 128
+	jp nc,vpb_overflow
+	ld (hl),a
+	inc a
+	ld (vec_slot_next),a
+vpb_x_next:
+	inc c
+	dec b
+	jp nz,vpb_x
+	ld a,(vec_tmp_sy)
+	inc a
+	ld (vec_tmp_sy),a
+	ld a,(vec_tmp_ny)
+	dec a
+	ld (vec_tmp_ny),a
+	jp nz,vpb_y
+vpb_rect_done:
+	pop bc
+	pop de
+	dec c
+	jp nz,vpb_rect
+	ld a,1
+	ld (vec_pool_on),a
+	ret
+vpb_overflow:
+	pop bc
+	pop de
+	ld hl,vec_slot_tab
+	ld b,0
+vpb_clr2:
+	ld (hl),$ff
+	inc l
+	dec b
+	jp nz,vpb_clr2
+	xor a
+	ld (vec_pool_on),a
+	ret
+
+; vec_pool_flush — вместо TransferDirtyTiles в RedrawScreen_part2: слоты -> VRAM,
+; строками супертайлов сверху вниз (0..9), затем ndirtyrects=0.
+vec_pool_flush:
+	ld a,(vec_pool_on)
+	or a
+	jp z,vpf_done
+	xor a
+	ld (vec_tmp_sy),a	; текущая строка
+vpf_yloop:
+	ld a,(ndirtyrects)
+	ld c,a
+	ld de,tiles_dirty
+vpf_rect:
+	ld a,(de)
+	ld (vec_tmp_sx),a
+	inc de
+	ld a,(de)
+	ld b,a			; ys
+	inc de
+	ld a,(de)
+	ld (vec_tmp_nx),a
+	inc de
+	ld a,(de)		; ny
+	inc de
+	add a,b
+	ld l,a			; ys+ny
+	ld a,(vec_tmp_sy)
+	cp b
+	jp c,vpf_next		; y < ys
+	cp l
+	jp nc,vpf_next		; y >= ys+ny
+	; строка y внутри прямоугольника: колонки xs..xs+nx-1
+	push de
+	push bc
+	ld a,(vec_tmp_nx)
+	ld b,a
+	ld a,(vec_tmp_sx)
+	ld c,a
+vpf_x:
+	ld a,(vec_tmp_sy)
+	rlca
+	rlca
+	rlca
+	rlca
+	or c
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld a,(hl)
+	cp $ff
+	jp z,vpf_x_next
+	ld (hl),$ff		; слот выведен — больше не выводить (пересечения прямоугольников)
+	push bc
+	call vec_pool_addr
+	ld (vec_blit_src),hl
+	ld a,c
+	add a,a
+	add a,$80
+	ld d,a
+	ld a,(vec_tmp_sy)
+	rlca
+	rlca
+	rlca
+	rlca
+	ld b,a
+	ld a,Y_TOP_L
+	sub b
+	ld e,a
+	di
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ld hl,(vec_blit_src)
+	ld sp,hl
+	ld a,KV_STK_P3
+	out (KV_PORT),a
+	ld hl,vpf_blit_ret
+	ld (vec_blit_ret),hl
+	jp vec_blit128_vram
+vpf_blit_ret:
+	xor a
+	out (KV_PORT),a
 	ld hl,(vec_sp_save)
 	ld sp,hl
 	ei
+	pop bc
+vpf_x_next:
+	inc c
+	dec b
+	jp nz,vpf_x
+	pop bc
+	pop de
+vpf_next:
+	dec c
+	jp nz,vpf_rect
+	ld a,(vec_tmp_sy)
+	inc a
+	ld (vec_tmp_sy),a
+	cp 10
+	jp nz,vpf_yloop
+vpf_done:
+	xor a
+	ld (ndirtyrects),a
+	ld (vec_pool_on),a
+	ret
+    endif
+
+; ---------------------------------------------------------------------------
+; ПАНЕЛЬ (страница 3 квазидиска; в DEMO панели нет)
+; drawChar: A = символ, B = X (символы), C = Y (символы)
+drawChar:
+    if DEMO
+	ret
+    else
+	push hl
+	push de
+	push bc
+	sub 32
+	and 63
+	; src = P3_FONT + A*32
+	ld l,a
+	ld h,0
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	ld (vec_blit_src),hl
+	ld a,b
+	add a,$80
+	ld d,a
+	ld a,c
+	rlca
+	rlca
+	rlca
+	ld c,a
+	ld a,Y_TOP_L
+	sub c
+	ld e,a
+	ld a,1
+	ld (vec_bl_cols),a
+	ld a,4
+	ld (vec_bl_pops),a
+	jp vec_panel_blit
+    endif
+; drawWeapon: A = X источника (оружие*32), B = X px, C = Y px; 24x16
+drawWeapon:
+    if DEMO
+	ret
+    else
+	push hl
+	push de
+	push bc
+	rrca
+	rrca
+	rrca
+	rrca
+	rrca
+	and 3			; номер оружия
+	ld l,a
+	ld h,0
+	ld d,h
+	ld e,l
+	add hl,hl		; *2
+	add hl,de		; *3
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl		; *192
+	ld de,P3_WEAPON
+	add hl,de
+	ld (vec_blit_src),hl
+	ld a,8
+	ld (vec_bl_pops),a
+	jp vec_panel_blit3
+    endif
+; drawScoreOnOff: A = 0 выкл / 1 вкл, B = X px, C = Y px; 24x24
+drawScoreOnOff:
+    if DEMO
+	ret
+    else
+	push hl
+	push de
+	push bc
+	ld hl,P3_ONOFF
+	or a
+	jp z,dso_0
+	ld hl,P3_ONOFF+288
+dso_0:
+	ld (vec_blit_src),hl
+	ld a,12
+	ld (vec_bl_pops),a
+vec_panel_blit3:
+	ld a,3
+	ld (vec_bl_cols),a
+	ld a,b
+	rrca
+	rrca
+	rrca
+	and $1f
+	add a,$80
+	ld d,a
+	ld a,Y_TOP_L
+	sub c
+	ld e,a
+vec_panel_blit:
+	di
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ld hl,(vec_blit_src)
+	ld sp,hl
+	ld a,KV_STK_P3
+	out (KV_PORT),a
+	ld hl,vpn_ret
+	ld (vec_blit_ret),hl
+	jp vec_blit_cols
+vpn_ret:
+	xor a
+	out (KV_PORT),a
+	ld hl,(vec_sp_save)
+	ld sp,hl
+	ei
+	pop bc
+	pop de
+	pop hl
+	ret
+    endif
+; vec_load_panel: картинка панели 256x32 -> строки 160..191
+vec_load_panel:
+    if DEMO
+	ret
+    else
+	push hl
+	push de
+	push bc
+	ld hl,P3_PANEL
+	ld (vec_blit_src),hl
+	ld a,32
+	ld (vec_bl_cols),a
+	ld a,16
+	ld (vec_bl_pops),a
+	ld d,$80
+	ld e,Y_TOP_L-160
+	jp vec_panel_blit
+    endif
+; fillArea / fillArea_slow: A = цвет, B = X px, C = Y px, D = ширина px, E = высота px
+fillArea:
+fillArea_slow:
+	push hl
+	push de
+	push bc
+	ld (vec_fill_color),a
+	ld a,e
+	ld (vec_fill_hgt),a
+	or a
+	jp z,fa_exit
+	ld a,d
+	or a
+	jp z,fa_exit
+	add a,b
+	dec a
+	ld (vec_fill_xr),a	; правый край
+fa_col:
+	; c0 = B&7; c1 = (xr в той же колонке) ? xr&7 : 7   (C = Y не трогаем!)
+	ld a,b
+	and 7
+	ld e,a			; E = c0
+	ld a,(vec_fill_xr)
+	ld d,a
+	xor b
+	and $f8
+	ld a,7
+	jp nz,fa_c1
+	ld a,d
+	and 7
+fa_c1:
+	ld d,a			; D = c1
+	; m1 = $FF >> c0
+	ld a,$ff
+	inc e
+fa_m1:
+	dec e
+	jp z,fa_m1d
+	or a
+	rra
+	jp fa_m1
+fa_m1d:
+	ld e,a			; E = m1
+	; m2 = $FF << (7-c1)
+	ld a,7
+	sub d
+	ld d,a
+	ld a,$ff
+	inc d
+fa_m2:
+	dec d
+	jp z,fa_m2d
+	add a,a
+	jp fa_m2
+fa_m2d:
+	and e
+	ld (vec_fill_mask),a
+	; адрес: H = $80 + (B>>3), L = 223 - C
+	ld a,b
+	rrca
+	rrca
+	rrca
+	and $1f
+	add a,$80
+	ld h,a
+	ld a,Y_TOP_L
+	sub c
+	ld l,a
+	push bc
+	ld a,4
+	ld (vec_plane_cnt),a
+fa_plane:
+	push hl
+	ld a,(vec_fill_hgt)
+	ld d,a
+	; бит плоскости p (p = 4 - plane_cnt) = бит (3-p) цвета = бит (plane_cnt-1)
+	ld a,(vec_plane_cnt)
+	ld e,a
+	ld a,(vec_fill_color)
+fa_bit:
+	dec e
+	jp z,fa_bitd
+	rrca
+	jp fa_bit
+fa_bitd:
+	and 1
+	jp z,fa_clear
+fa_set:
+	ld a,(vec_fill_mask)
+	or (hl)
+	ld (hl),a
+	dec l
+	dec d
+	jp nz,fa_set
+	jp fa_plane_next
+fa_clear:
+	ld a,(vec_fill_mask)
+	cpl
+	and (hl)
+	ld (hl),a
+	dec l
+	dec d
+	jp nz,fa_clear
+fa_plane_next:
+	pop hl
+	ld a,h
+	add a,$20
+	ld h,a
+	ld a,(vec_plane_cnt)
+	dec a
+	ld (vec_plane_cnt),a
+	jp nz,fa_plane
+	pop bc
+	; следующая байтовая колонка
+	ld a,b
+	or 7
+	inc a
+	jp z,fa_exit		; вышли за 255
+	ld b,a
+	ld a,(vec_fill_xr)
+	cp b
+	jp nc,fa_col
+fa_exit:
+	pop bc
+	pop de
+	pop hl
 	ret

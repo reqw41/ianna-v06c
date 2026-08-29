@@ -49,6 +49,7 @@ vec_start:
 	call InitEntities
 	call InitObjectTable
 	call InitPlayer
+	call LoadScoreWeapons
 	call LoadLevel
 	ld a,1
 	ld (show_passwd),a
@@ -58,24 +59,6 @@ vec_internal_loop:
 	xor a
 	ld (player_dead),a
 	jp vec_internal_loop
-
-; waitforVBlank: ждём, пока с последней перерисовки пройдёт frames_lock кадров.
-waitforVBlank:
-	push af
-	push hl
-wfv_loop:
-	ld a,(frames_noredraw)
-	ld hl,frames_lock
-	cp (hl)
-	jp nc,wfv_done
-	halt
-	jp wfv_loop
-wfv_done:
-	xor a
-	ld (frames_noredraw),a
-	pop hl
-	pop af
-	ret
 
 ; таблица разворота байта (для зеркальных спрайтов), выровнена на страницу
 vec_init_rev256:

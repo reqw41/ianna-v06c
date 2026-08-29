@@ -7,24 +7,7 @@ MUSIC_Load:
 MUSIC_Play:
 FX_Play:
 	ret
-; score.asm
-load_scorearea:
-draw_score_status:
-draw_score_inventory:
-draw_barbarian_state:
-draw_enemy_state:
-LoadScoreWeapons:
-draw_password:
-draw_gameover_string:
-update_score_energy:
-print_string_notification:
-draw_string_area:
 	ret
-; font.asm
-LoadFONT:
-LoadFONT_menu:
-print_string:
-print_string_menu:
 	ret
 ; menu / pause
 pause_menu:
@@ -42,7 +25,12 @@ initROMbanks:
 enableSLOT2:
 enableSLOT2_EI:
 	ret
-clean_scorearea:
-drawChar:
-force_inv_redraw:
+	ret
+; font/menu: шрифт меню и прозрачные символы не нужны
+FONT:
+menu_font:
+drawCharFront:
+drawCharTrans:
+drawCharTrans_Double:
+drawCharTrans_front:
 	ret

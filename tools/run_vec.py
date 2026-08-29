@@ -54,6 +54,10 @@ def render(vram, pal, path, scale=2):
 
 DEMO = '--demo' in sys.argv
 if DEMO: sys.argv.remove('--demo')
+START = None   # --start=sx,sy: стартовый экран уровня (патчится при входе в game)
+for a in list(sys.argv):
+    if a.startswith('--start='):
+        START = tuple(int(v) for v in a[8:].split(',')); sys.argv.remove(a)
 ROM_NAME = 'ianna_demo' if DEMO else 'ianna'
 
 def make_cpu(keys):
@@ -82,12 +86,15 @@ def make_cpu(keys):
     cpu.in_handler = in_handler
     return cpu
 
-def run_frames(cpu, n, budget=13000):
+_start_done = [False]
+def run_frames(cpu, n, budget=13000, sym=None):
     """кадр = до HALT или ~13000 инструкций (~60К тактов), затем RST7 если EI —
     как на железе: прерывание приходит и в busy-loop (wait_till_read)."""
     for _ in range(n):
         c = 0
         while not cpu.halted and c < budget:
+            if START and sym and not _start_done[0] and cpu.pc == sym['SaveCheckpoint']:
+                cpu.mem[sym['current_levelx']] = START[0]; cpu.mem[sym['current_levely']] = START[1]; _start_done[0] = True
             cpu.step(); c += 1
         cpu.halted = False
         if cpu.ie:
@@ -100,6 +107,11 @@ def dump_state(cpu, sym):
     if ent is None: return
     e = cpu.mem[ent:ent+12]
     print('  player entity: spr=%04x script=%d pos=%d energy=%d state=%d anim=%d' % (e[0] | (e[1] << 8), e[2], e[3], e[4], e[5], e[6]))
+    e1 = cpu.mem[ent+12:ent+24]
+    if e1[0] | e1[1]:
+        print('  enemy1 entity: spr=%04x script=%d pos=%d energy=%d state=%d anim=%d type=%02x' % (e1[0] | (e1[1] << 8), e1[2], e1[3], e1[4], e1[5], e1[6], e1[10]))
+        s1 = cpu.mem[spd+8:spd+16]
+        print('  sprite1: addr=%04x type=%02x x=%d y=%d' % (s1[0] | (s1[1] << 8), s1[2], s1[3], s1[4]))
     if spd:
         s = cpu.mem[spd:spd+8]
         print('  sprite0: addr=%04x type=%02x x=%d y=%d nx=%d ny=%d redraw=%d' % (s[0] | (s[1] << 8), s[2], s[3], s[4], s[5], s[6], s[7]))
@@ -119,7 +131,7 @@ def main():
     try:
         for k, n in segs:
             keys.clear(); keys.update(x for x in k.split('+') if x != 'none')
-            run_frames(cpu, n)
+            run_frames(cpu, n, sym=sym)
             total += n
             if cpu.halted is False and cpu.icount and False: pass
     except Exception as ex:

@@ -110,6 +110,22 @@ def sprite_frame_bytes(frame):
             out += bytes(pl[y][p][col] for p in range(4))
     return bytes(out)
 
+def column_blob(pixels_rows, x0, w_cols, y0, h):
+    """[p][col][row 0..h-1] — для стекового блита сверху вниз (DCR L). pixels_rows: список строк значений 0..15"""
+    out = bytearray()
+    for p in range(4):
+        for col in range(w_cols):
+            for y in range(h):
+                chunk = pixels_rows[y0+y][x0+col*8: x0+col*8+8]
+                b = 0
+                for k, v in enumerate(chunk):
+                    if (v >> (3-p)) & 1: b |= 0x80 >> k
+                out.append(b)
+    return bytes(out)
+
+def sr5_rows(sr5, h):
+    return [[(sr5[y*128+x//2] >> 4) if x % 2 == 0 else (sr5[y*128+x//2] & 15) for x in range(256)] for y in range(h)]
+
 def msx_palette(plt):
     out = []
     for i in range(16):
@@ -150,6 +166,23 @@ def build_kvaz():
         pages[0][i*384:(i+1)*384] = sprite_frame_bytes(fr)
     for i, fr in enumerate(b3):
         pages[1][i*384:(i+1)*384] = sprite_frame_bytes(fr)
+    # страница 2: враги уровня 1 — банки 7 скелет, 8 орк, 9 мумия, 12 камень (по $4000)
+    for i, name in enumerate(('sprite_esqueleto', 'sprite_orc', 'sprite_mummy', 'sprite_rollingstone')):
+        frames = parse_sprite_asm(SRC / f'{name}.asm')
+        assert len(frames)*384 <= 0x4000
+        for k, fr in enumerate(frames):
+            pages[2][i*0x4000 + k*384: i*0x4000 + (k+1)*384] = sprite_frame_bytes(fr)
+    # страница 3: шрифт $0000 (64 символа x 32 Б), панель $1000 (256x32), оружие $2000 (4 x 192), вкл/выкл $2400 (2 x 288)
+    font = sr5_rows(pletter_depack((SRC / 'font.SR5.plet1').read_bytes()), 16)
+    for c in range(64):
+        pages[3][c*32:(c+1)*32] = column_blob(font, (c % 32)*8, 1, (c // 32)*8, 8)
+    panel = sr5_rows(pletter_depack((SRC / 'marcador.SR5.plet1').read_bytes()), 32)
+    pages[3][0x1000:0x2000] = column_blob(panel, 0, 32, 0, 32)
+    armas = sr5_rows(pletter_depack((SRC / 'armas.SR5.plet1').read_bytes()), 24)
+    for w in range(4):
+        pages[3][0x2000 + w*192: 0x2000 + (w+1)*192] = column_blob(armas, w*32, 3, 0, 16)
+    for k, x0 in enumerate((128, 152)):
+        pages[3][0x2400 + k*288: 0x2400 + (k+1)*288] = column_blob(armas, x0, 3, 0, 24)
     level = (SRC / 'level1.map').read_bytes()
     fg = sorted(set().union(*(set(s[160:320]) for s in screens_of(level))) - {0})
     for i, t in enumerate(fg):
