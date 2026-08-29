@@ -128,7 +128,8 @@ def fg_lut_lines(fg):
     lut = [0]*256
     for i, t in enumerate(fg):
         lut[t] = i + 1
-    lines = ['; LUT передних тайлов: 0 = нет, иначе индекс+1 (адрес = FG_TILES_BASE + (i-1)*256)', 'fg_tile_lut:']
+    lines = ['; LUT передних тайлов: 0 = нет, иначе индекс+1 (адрес = FG_TILES_BASE + (i-1)*256); страница!',
+             '\tds ($ + 255) & $FF00 - $', 'fg_tile_lut:']
     for i in range(0, 256, 16):
         lines.append('\tdb ' + ', '.join(str(v) for v in lut[i:i+16]))
     return lines
@@ -232,7 +233,8 @@ def build_demo():
              f'DEMO_LEVEL_ADDR\tequ ${level_addr:04X}']
     for name, data in layout:
         lines.append(f'{name}:\n\tincbin "demo/{name}.bin"')
-    lines += palette_lines() + ['', '; LUT тайлов фона: номер -> индекс (адрес = DEMO_TILES_BASE + idx*128)', 'demo_tile_lut:']
+    lines += palette_lines() + ['', '; LUT тайлов фона: номер -> индекс (адрес = DEMO_TILES_BASE + idx*128); страница!',
+                                '\tds ($ + 255) & $FF00 - $', 'demo_tile_lut:']
     for i in range(0, 256, 16):
         lines.append('\tdb ' + ', '.join(str(v) for v in lut[i:i+16]))
     lines += [''] + fg_lut_lines(fg)
