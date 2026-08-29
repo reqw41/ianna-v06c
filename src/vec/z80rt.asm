@@ -580,6 +580,7 @@ z_ldi:
 ; exx: обмен BC,DE,HL с тенями. A и флаги сохраняются.
 z_exx:
 	push af
+	push hl			; исходный HL — на стек ДО обменов DE/BC (они портят HL как временный)
 	push de
 	ld hl,(z_de2)
 	ex (sp),hl
@@ -590,11 +591,10 @@ z_exx:
 	ex (sp),hl
 	ld (z_bc2),hl
 	pop bc
-	push hl
 	ld hl,(z_hl2)
-	ex (sp),hl
+	ex (sp),hl		; HL = исходный HL, (SP) = hl2
 	ld (z_hl2),hl
-	pop hl
+	pop hl			; HL = hl2
 	pop af
 	ret
 ; ex af,af'
