@@ -96,7 +96,7 @@ def parse_sprite_asm(path):
         assert len(vals) == 12, line
         row = []
         for b in vals:
-            row += [b >> 4, b & 15]
+            row += [b & 15, b >> 4]     # спрайты MSX2: МЛАДШИЙ ниббл = левый пиксель (см. rld в sendSpriteGfx)
         rows.append(row)
     assert len(rows) % 32 == 0, (path, len(rows))
     return [rows[i:i+32] for i in range(0, len(rows), 32)]
