@@ -85,9 +85,22 @@ for seg in ROUTE.split(','):
     keys.clear()
     for kk in k.split('+'):
         if kk!='none': keys.append(kk)
-    d0,l0,f0,a0=delivered,lost,mem[FC]|(mem[FC+1]<<8),mem[AT]
-    run(n)
-    d1,l1,f1,a1=delivered,lost,mem[FC]|(mem[FC+1]<<8),mem[AT]
-    dd=d1-d0; dl=l1-l0; da=(a1-a0)&0xFF
-    print(f'  {k:10s} {n:4d} кадров: прерываний доставлено {dd}, потеряно {dl} ({dl/n*100:.1f} %), тиков {da} -> {n/max(da,1):.2f} кадра/тик ({50*da/n:.1f} тик/с)')
+    d0,l0=delivered,lost
+    # тики считаем по входам в RunScripts; тики со сменой экрана (LoadScreen внутри) — отдельно
+    RS=sym['RunScripts']; LS=sym['LoadScreen']; end=cyc[0]+n*FRAME; tick_frames=[]; tstart=cyc[0]; seen_load=False
+    while cyc[0]<end:
+        pc=cpu.pc
+        if pc==LS: seen_load=True
+        if pc==RS:
+            tick_frames.append(((cyc[0]-tstart)/FRAME, seen_load)); tstart=cyc[0]; seen_load=False
+        if cpu.halted: cyc[0]=next_irq
+        else: cyc[0]+=CYC[mem[cpu.pc]]; cpu.step()
+        if cyc[0]>=next_irq:
+            next_irq+=FRAME
+            if cpu.ie: cpu.ie=False; cpu.halted=False; cpu.push(cpu.pc); cpu.pc=0x38; delivered+=1
+            else: lost+=1; lost_at[fn(cpu.pc)]+=1
+    d1,l1=delivered,lost; dd=d1-d0; dl=l1-l0
+    norm=[f for f,l in tick_frames[1:] if not l]; loads=[f for f,l in tick_frames[1:] if l]
+    avg=sum(norm)/max(len(norm),1)
+    print(f'  {k:10s} {n:4d} кадров: потеряно прерываний {dl} ({dl/n*100:.1f} %); обычных тиков {len(norm)}: {avg:.2f} кадра/тик ({50/max(avg,0.01):.1f} тик/с), доля тиков >5 кадров {sum(1 for f in norm if f>5.5)/max(len(norm),1)*100:.0f} %' + (f'; смен экрана {len(loads)}: {", ".join(f"{f:.0f}" for f in loads)} кадров' if loads else ''))
 if lost: print('  потери по функциям:', dict(lost_at.most_common(8)))
