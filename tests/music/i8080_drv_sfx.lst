@@ -1,0 +1,2677 @@
+                        ; --------------------------------------
+                        ; zasm: assemble "i8080_drv_sfx.asm"
+                        ; opts: --8080
+                        ; date: 2026-08-30 08:49:49
+                        ; --------------------------------------
+
+
+                        ; Стенд переведённого плеера Arkos на i8080: песня по $C980, эффекты по $D980 (обычная память).
+                        ; Каждый кадр: atPlay; out ($FF) = маркер кадра. Через 600 кадров halt.
+0100:                   	org $0100
+0100: C30301   [10]     	jp start
+0000:                   DEMO	equ 0
+000A:                   VDP_NY	equ 10
+0028:                   MUSIC_ROM_PAGE equ 40
+0103:                   start:
+0103: F3       [ 4]     	di
+0104: 31007F   [14]     	ld sp,$7F00
+0107: 1180C9   [24]     	ld de,$C980
+010A: CD4009   [41]     	call atInit
+010D: 1180D9   [51]     	ld de,$D980
+0110: CDAD09   [68]     	call atSfxInit
+0113: 210000   [78]     	ld hl,0
+0116:                   loop:
+0116: E5       [11]     	push hl
+0117: CD9E01   [28]     	call atPlay
+011A: E1       [38]     	pop hl
+                        
+                        	; эффекты: таблица (кадр lo, hi, номер); канал 1, громкость 15, нота 36 — как FX_Play
+011B: E5       [49]     	push hl
+011C: 116501   [59]     	ld de,sfx_tab
+011F:                   trig_l:
+011F: 13       [ 6]     	inc de
+0120: 13       [12]     	inc de
+0121: 1A       [19]     	ld a,(de)
+0122: B7       [23]     	or a
+0123: CA5201   [33|33]  	jp z,trig_end
+0126: 1B       [39]     	dec de
+0127: 1B       [45]     	dec de
+0128: 1A       [52]     	ld a,(de)
+0129: BD       [56]     	cp l
+012A: C24C01   [66|66]  	jp nz,trig_n
+012D: 13       [72]     	inc de
+012E: 1A       [79]     	ld a,(de)
+012F: 1B       [85]     	dec de
+0130: BC       [89]     	cp h
+0131: C24C01   [99|99]  	jp nz,trig_n
+0134: 13       [105]    	inc de
+0135: 13       [111]    	inc de
+0136: 1A       [118]    	ld a,(de)
+0137: 1B       [124]    	dec de
+0138: 1B       [130]    	dec de
+0139: D5       [141]    	push de
+013A: E5       [152]    	push hl
+013B: 6F       [156]    	ld l,a
+013C: 3E01     [163]    	ld a,1
+013E: 260F     [170]    	ld h,15
+0140: 1E24     [177]    	ld e,36
+0142: 1600     [184]    	ld d,0
+0144: 010000   [194]    	ld bc,0
+0147: CDC109   [211]    	call atSfxPlay
+014A: E1       [221]    	pop hl
+014B: D1       [231]    	pop de
+014C:                   trig_n:
+014C: 13       [ 6]     	inc de
+014D: 13       [12]     	inc de
+014E: 13       [18]     	inc de
+014F: C31F01   [28]     	jp trig_l
+0152:                   trig_end:
+0152: E1       [10]     	pop hl
+0153: 3EFF     [17]     	ld a,$FF
+0155: D3FF     [28]     	out ($FF),a
+0157: 23       [34]     	inc hl
+0158: 7C       [38]     	ld a,h
+0159: FE18     [45]     	cp 6200/256
+015B: C21601   [55|55]  	jp nz,loop
+015E: 7D       [59]     	ld a,l
+015F: FE38     [66]     	cp 6200 & 255
+0161: C21601   [76|76]  	jp nz,loop
+0164: 76       [80]     	halt
+0165:                   sfx_tab:
+0165: 640001            	db 100,0,1
+0168: 2C0102            	db 44,1,2
+016B: BC0203            	db 188,2,3
+016E: B00404            	db 176,4,4
+0171: DC0505            	db 220,5,5
+0174: E60506            	db 230,5,6
+0177: D00707            	db 208,7,7
+017A: 280A01            	db 40,10,1
+017D: E40C03            	db 228,12,3
+0180: 041002            	db 4,16,2
+0183: 881305            	db 136,19,5
+0186: 701704            	db 112,23,4
+0189: 000000            	db 0,0,0
+                        #include "../../build/tr/arkos.asm"
+                        ; ==== arkos_src.asm -> i8080 (z80to8080.py) ====
+                        
+                        	; ВЕКТОР: org снят — плеер на месте в коде
+                        
+                        	; Arkos Tracker Player V1.0 - Spectrum / Pentagon version.
+                        	;   Code by Targhan/Arkos
+                        	;   Speccy port / source re-layout by Grim/Arkos
+                        	;
+                        	; Compile fine with Pasmo v0.5.4.beta2
+                        	; Manual and informations available at http://arkostracker.cpcscene.com/
+                        	; I know, I know... I'm a tab-indent-zealot =)
+                        
+                        	;*** Configuration switches ****************************************************
+                        
+                        	; Switch between Speccy or Pentagon AY3 Tone table
+                        	; 1 = Spectrum / any other value = Pentagon
+0001:                   atCNF_ZXPT:	equ 1
+                        
+                        	; Enable/Disable sound effect support.
+                        	; 0 = Disabled / any other value = Enabled
+0001:                   atCNF_SFX:	equ 1
+                        
+                        	; Enable/Disable volume fade support.
+                        	; 0 = Disabled / any other value = Enabled
+0000:                   atCNF_FADE:	equ 0
+                        
+                        	;*** Player API ****************************************************************
+                        
+                        	; Initialize the player
+                        	; - Routine: atInit
+                        	; - Input:
+                        	;	DE = Song data address
+                        
+                        	; Play one tick of the music
+                        	; - Routine: atPlay
+                        	; - Output:
+                        	;	_All_ CPU registers might be modified.
+                        
+                        	; Stop all sounds (reset the AY3)
+                        	; - Routine: atStop
+                        
+                        	;*** Optionnal sound effect API ************************************************
+                        
+                        	; Initialize sound effects
+                        	; - Routine: atSfxInit
+                        	; - Input:
+                        	;	DE = Song data address
+                        
+                        	; Trigger a sound effect on a channel
+                        	; - Routine: atSfxPlay
+                        	; - Input:
+                        	;	 A = Channel (0,1 or 2)
+                        	;	 L = Sound effect number (>0)
+                        	;	 H = Volume (0 to 15)
+                        	;	 E = Note key (0 to 143)
+                        	;	 D = Speed
+                        	;	BC = Pitch offset
+                        	; If the speed parameter is 0, the original intrument speed is used. Any value between
+                        	; 1 and 255 will over-ride the default speed (1 being the fastest).
+                        
+                        	; Stop any sound effect on a given channel
+                        	; - Routine: atSfxStop
+                        	; - Input:
+                        	;	A = Channel (0,1 or 2)
+                        
+                        
+                        	; Stop sound effect on all the 3 channels.
+                        	; - Routine: atSfxStopAll
+                        
+                        	;*** Optionnal fade API ********************************************************
+                        
+                        	; Set the amount by which the song volume is decreased.
+                        	; - Routine: atFade
+                        	; - Input:
+                        	;	A = volume decrease (0 = no fade, 15+ = enjoy the silence)
+                        
+                        
+                        	;*** Player mighty code ********************************************************
+                        
+                        	; Internal constant, do not change
+00FE:                   _atDEF_R13RetrigValue:	equ $FE
+                        
+                        	; Added by utopian to have a simple SFX interface
+018C: C34009   [10]     	jp atInit	;Call Player = Initialise song (DE = Song address).
+018F: C39E01   [20]     	jp atPlay	;Call Player + 3 = Play song.
+0192: C39C09   [30]     	jp atStop	;Call Player + 6 = Stop song.
+0195: C3AD09   [40]     	jp atSfxInit	;Call Player + 9 to initialise the sound effect music.
+0198: C3C109   [50]     	jp atSfxPlay	;Call Player + 12 to play an effect
+019B: C3B409   [60]     	jp atSfxStopAll	;Call Player + 15 to stop all sound effects.
+                        
+                        
+019E:                   atPlay:
+019E: AF       [ 4]     	xor a
+019F: 32BB05   [17]     	ld (_atVAR_digidrum), a	;Reset the Digidrum flag.
+                        
+                        	; If Speed counter is over, we have to read the Pattern further.
+01A2:                   _atVAR_SongSpeedCtr:
+01A2: 3E01     [ 7]     	ld a, 1
+01A4: 3D       [11]     	dec a
+01A5: C2EB03   [21|21]  	jp nz, _atSetSongSpeedCtr
+                        
+                        	; Do we have to move to the next song position or continue in the same pattern?
+01A8:                   _atVAR_patternHeightCtr:
+01A8: 3E01     [ 7]     	ld a, 1
+01AA: 3D       [11]     	dec a
+01AB: C22902   [21|21]  	jp nz, _atSetPatternHeightCtr
+                        
+                        	; Pattern Over. We have to read the Linker.
+                        	; Get the Transpositions, if they have changed,
+                        	; or detect the Song Ending !
+                        
+01AE:                   _atVAR_Linker:
+01AE: 210000   [10]     	ld hl, 0
+01B1: 7E       [17]     	ld a, (hl)
+01B2: 23       [23]     	inc hl
+01B3: 1F       [27]     	rra
+01B4: D2BE01   [37|37]  	jp nc, _atSongContinue
+                        	; Get the song loop position
+01B7: 7E       [44]     	ld a, (hl)
+01B8: 23       [50]     	inc hl
+01B9: 66       [57]     	ld h, (hl)
+01BA: 6F       [61]     	ld l, a
+01BB: 7E       [68]     	ld a, (hl)	; We know the Song won't restart now,
+01BC: 23       [74]     	inc hl	; so we can skip the first bit.
+01BD: 1F       [78]     	rra
+01BE:                   _atSongContinue:
+01BE: 1F       [ 4]     	rra
+01BF: D2C801   [14|14]  	jp nc, _atKeepTrCh1
+01C2: 119502   [24]     	ld de, _atVAR_TranspCh1 + 1
+                        	; Z80> ldi 
+01C5: CD120D   [41]     	call z_ldi
+01C8:                   _atKeepTrCh1:
+01C8: 1F       [ 4]     	rra
+01C9: D2D201   [14|14]  	jp nc, _atKeepTrCh2
+01CC: 111B03   [24]     	ld de, _atVAR_TranspCh2 + 1
+                        	; Z80> ldi 
+01CF: CD120D   [41]     	call z_ldi
+01D2:                   _atKeepTrCh2:
+01D2: 1F       [ 4]     	rra
+01D3: D2DC01   [14|14]  	jp nc, _atKeepTrCh3
+01D6: 11A103   [24]     	ld de, _atVAR_TranspCh3 + 1
+                        	; Z80> ldi 
+01D9: CD120D   [41]     	call z_ldi
+01DC:                   _atKeepTrCh3:
+                        	; Get the Tracks addresses.
+01DC: 115E02   [10]     	ld de, _atVAR_Track1Ptr + 1
+                        	; Z80> ldi 
+01DF: CD120D   [27]     	call z_ldi
+                        	; Z80> ldi 
+01E2: CD120D   [44]     	call z_ldi
+01E5: 11E402   [54]     	ld de, _atVAR_Track2Ptr + 1
+                        	; Z80> ldi 
+01E8: CD120D   [71]     	call z_ldi
+                        	; Z80> ldi 
+01EB: CD120D   [88]     	call z_ldi
+01EE: 116A03   [98]     	ld de, _atVAR_Track3Ptr + 1
+                        	; Z80> ldi 
+01F1: CD120D   [115]    	call z_ldi
+                        	; Z80> ldi 
+01F4: CD120D   [132]    	call z_ldi
+                        
+                        	; Get the Special Track address, if it has changed.
+01F7: 1F       [136]    	rra
+01F8: D20102   [146|146]	jp nc, _atKeepPatternHeight
+01FB: 112802   [156]    	ld de, _atVAR_PatternHeight + 1
+                        	; Z80> ldi 
+01FE: CD120D   [173]    	call z_ldi
+0201:                   _atKeepPatternHeight:
+0201: 1F       [ 4]     	rra
+0202: D21002   [14|14]  	jp nc, _atReplaySpecialTrack
+                        	; Load a new special track
+0205: 5E       [21]     	ld e, (hl)
+0206: 23       [27]     	inc hl
+0207: 56       [34]     	ld d, (hl)
+0208: 23       [40]     	inc hl
+                        	; Z80> ld (_atVAR_SpecialTrackAddr + 1), de
+0209: E5       [51]     	push hl
+020A: EB       [55]     	ex de,hl
+020B: 221402   [71]     	ld (_atVAR_SpecialTrackAddr + 1),hl
+020E: EB       [75]     	ex de,hl
+020F: E1       [85]     	pop hl
+0210:                   _atReplaySpecialTrack:
+0210: 22AF01   [16]     	ld (_atVAR_Linker + 1), hl
+0213:                   _atVAR_SpecialTrackAddr:
+0213: 210000   [10]     	ld hl, 0
+0216: 223302   [26]     	ld (_atVAR_SpecialTrackPtr + 1), hl
+                        
+                        	; Reset the SpecialTrack/Tracks line counter.
+                        	; We can't rely on the song data, because the
+                        	; Pattern Height is not related to the Tracks Height.
+0219: 3E01     [33]     	ld a, 1
+021B: 322D02   [46]     	ld (_atVAR_WaitSpecialTrack + 1), a
+021E: 325802   [59]     	ld (_atVAR_WaitTrack1 + 1), a
+0221: 32DE02   [72]     	ld (_atVAR_WaitTrack2 + 1), a
+0224: 326403   [85]     	ld (_atVAR_WaitTrack3 + 1), a
+                        
+0227:                   _atVAR_PatternHeight:
+0227: 3E01     [ 7]     	ld a, 1
+0229:                   _atSetPatternHeightCtr:
+0229: 32A901   [13]     	ld (_atVAR_patternHeightCtr + 1), a
+                        
+                        
+                        	;*** Read Special Track ********************************************************
+                        
+022C:                   _atVAR_WaitSpecialTrack:
+022C: 3E01     [ 7]     	ld a, 1
+022E: 3D       [11]     	dec a
+022F: C25402   [21|21]  	jp nz, _atSpecialTrackWait
+                        
+0232:                   _atVAR_SpecialTrackPtr:
+0232: 210000   [10]     	ld hl, 0
+0235: 7E       [17]     	ld a, (hl)
+0236: 23       [23]     	inc hl
+                        	; Z80> srl a	;Data (1) or Wait (0) ?
+0237: B7       [27]     	or a
+0238: 1F       [31]     	rra
+                        ; !!FLAGS srl: нет Z/S/P (только CY)
+0239: D25102   [41|41]  	jp nc, _atSpecialTrack_waitCmd	;If Wait, A contains the Wait value.
+                        	; Z80> srl a	;Speed (0) or Digidrum (1) ?
+023C: B7       [45]     	or a
+023D: 1F       [49]     	rra
+                        ; !!FLAGS srl: нет Z/S/P (только CY)
+                        	; First, we don't test the Effect Type, but only the Escape Code (=0)
+023E: C24302   [59|59]  	jp nz, _atSpecialTrackNoEscCode
+0241: 7E       [66]     	ld a, (hl)
+0242: 23       [72]     	inc hl
+0243:                   _atSpecialTrackNoEscCode:
+                        	; Now, we test the Effect type, since the Carry didn't change.
+0243: D24C02   [10|10]  	jp nc, _atSpecialTrack_speedCmd
+0246: 32BB05   [23]     	ld (_atVAR_digidrum), a
+0249: C34F02   [33]     	jp _atSpecialTrack_proceed
+024C:                   _atSpecialTrack_speedCmd:
+024C: 32EA03   [13]     	ld (_atVAR_SongSpeed + 1), a
+024F:                   _atSpecialTrack_proceed:
+024F: 3E01     [ 7]     	ld a, 1
+0251:                   _atSpecialTrack_waitCmd:
+0251: 223302   [16]     	ld (_atVAR_SpecialTrackPtr + 1), hl
+0254:                   _atSpecialTrackWait:
+0254: 322D02   [13]     	ld (_atVAR_WaitSpecialTrack + 1), a
+                        
+                        
+                        	;*** Read Track 1 **************************************************************
+                        
+0257:                   _atVAR_WaitTrack1:
+0257: 3E01     [ 7]     	ld a, 1
+0259: 3D       [11]     	dec a
+025A: C2DA02   [21|21]  	jp nz, _atTrack1Wait
+                        
+                        
+025D:                   _atVAR_Track1Ptr:
+025D: 210000   [10]     	ld hl, 0
+0260: CDE107   [27]     	call _atReadTrack
+0263: 225E02   [43]     	ld (_atVAR_Track1Ptr + 1), hl
+0266: DADA02   [53|53]  	jp c, _atTrack1Wait
+                        
+                        	; No Wait command. Can be a Note and/or Effects.
+0269: 7A       [57]     	ld a, d	; Make a copy of the flags+Volume in A, not to temper with the original.
+026A: 1F       [61]     	rra	; Volume ? If bit 4 was 1, then volume exists on b3-b0
+026B: D27302   [71|71]  	jp nc, _atTrack1_keepVolume
+026E: E60F     [78]     	and %1111
+0270: 32E704   [91]     	ld (_atVAR_Track1Volume), a
+0273:                   _atTrack1_keepVolume:
+                        	; Z80> rl d	; New Pitch ?
+0273: 32480D   [13]     	ld (z_a),a
+0276: 7A       [17]     	ld a,d
+0277: 17       [21]     	rla
+0278: 57       [25]     	ld d,a
+0279: 3A480D   [38]     	ld a,(z_a)
+                        ; !!FLAGS rl: нет Z/S/P (только CY)
+027C: D28702   [48|48]  	jp nc, _atTrack1_keepPitch
+                        	; Z80> ld (_atVAR_Track1PitchAdd + 1), ix
+027F: E5       [59]     	push hl
+0280: 2A440D   [75]     	ld hl,(z_ix)
+0283: 22D904   [91]     	ld (_atVAR_Track1PitchAdd + 1),hl
+0286: E1       [101]    	pop hl
+0287:                   _atTrack1_keepPitch:
+                        	; Z80> rl d	; Note ? If no Note, we don't have to test if a new Instrument is here.
+0287: 32480D   [13]     	ld (z_a),a
+028A: 7A       [17]     	ld a,d
+028B: 17       [21]     	rla
+028C: 57       [25]     	ld d,a
+028D: 3A480D   [38]     	ld a,(z_a)
+                        ; !!FLAGS rl: нет Z/S/P (только CY)
+0290: D2D802   [48|48]  	jp nc, _atTrack1_keepNote
+0293: 7B       [52]     	ld a, e
+                        	; Transpose Note according to the Transposition in the Linker.
+0294:                   _atVAR_TranspCh1:
+0294: C600     [ 7]     	add a, 0
+0296: 32E604   [20]     	ld (_atVAR_Track1Note), a
+                        	; Reset the TrackPitch.
+0299: 210000   [30]     	ld hl, 0
+029C: 22D604   [46]     	ld (_atVAR_Track1Pitch + 1), hl
+                        	; New Instrument ?
+                        	; Z80> rl d
+029F: 32480D   [59]     	ld (z_a),a
+02A2: 7A       [63]     	ld a,d
+02A3: 17       [67]     	rla
+02A4: 57       [71]     	ld d,a
+02A5: 3A480D   [84]     	ld a,(z_a)
+                        ; !!FLAGS rl: нет Z/S/P (только CY)
+02A8: DAB702   [94|94]  	jp c, _atTrack1LoadInstrument
+                        	; Same Instrument. We recover its address to restart it.
+02AB:                   _atVAR_Track1InstAddr:
+02AB: 210000   [10]     	ld hl, 0
+02AE: 3AF804   [23]     	ld a, (_atVAR_Track1InstSpeed + 1)
+02B1: 32EF04   [36]     	ld (_atVAR_Track1InstSpeedCtr + 1), a
+02B4: C3D502   [46]     	jp _atTrack1SetInstrumentPtr
+                        
+02B7:                   _atTrack1LoadInstrument:	; New Instrument. We have to get its new address, and Speed.
+02B7: 68       [ 4]     	ld l, b	; H is already set to 0 before.
+02B8: 29       [15]     	add hl, hl
+02B9:                   _atVAR_Track1InstrumentLUT:
+02B9: 010000   [10]     	ld bc, 0
+02BC: 09       [21]     	add hl, bc
+02BD: 7E       [28]     	ld a, (hl)	; Get Instrument address.
+02BE: 23       [34]     	inc hl
+02BF: 66       [41]     	ld h, (hl)
+02C0: 6F       [45]     	ld l, a
+02C1: 7E       [52]     	ld a, (hl)	; Get Instrument speed.
+02C2: 23       [58]     	inc hl
+02C3: 32F804   [71]     	ld (_atVAR_Track1InstSpeed + 1), a
+02C6: 32EF04   [84]     	ld (_atVAR_Track1InstSpeedCtr + 1), a
+02C9: 7E       [91]     	ld a, (hl)
+02CA: B7       [95]     	or a	; Get IsRetrig?. Code it only if different to 0, else next Instruments are going to overwrite it.
+02CB: CAD102   [105|105]	jp z, $+1+5
+02CE: 32AB05   [118]    	ld (_atVAR_R13Lock + 1), a	; Poke &FE as previous R13 value
+02D1: 23       [124]    	inc hl
+02D2: 22AC02   [140]    	ld (_atVAR_Track1InstAddr + 1), hl	; When using the Instrument again, no need to give the Speed, it is skipped.
+02D5:                   _atTrack1SetInstrumentPtr:
+02D5: 22E904   [16]     	ld (_atVAR_Track1InstrumentPtr + 1), hl
+02D8:                   _atTrack1_keepNote:
+02D8: 3E01     [ 7]     	ld a, 1
+02DA:                   _atTrack1Wait:
+02DA: 325802   [13]     	ld (_atVAR_WaitTrack1 + 1), a
+                        
+                        
+                        	;*** Read Track 2 **************************************************************
+                        
+02DD:                   _atVAR_WaitTrack2:
+02DD: 3E01     [ 7]     	ld a, 1
+02DF: 3D       [11]     	dec a
+02E0: C26003   [21|21]  	jp nz, _atTrack2Wait
+                        
+                        
+02E3:                   _atVAR_Track2Ptr:
+02E3: 210000   [10]     	ld hl, 0
+02E6: CDE107   [27]     	call _atReadTrack
+02E9: 22E402   [43]     	ld (_atVAR_Track2Ptr + 1), hl
+02EC: DA6003   [53|53]  	jp c, _atTrack2Wait
+                        
+                        	; No Wait command. Can be a Note and/or Effects.
+                        	; Make a copy of the flags+Volume in A, not to temper with the original.
+02EF: 7A       [57]     	ld a, d
+02F0: 1F       [61]     	rra	; Volume ? If bit 4 was 1, then volume exists on b3-b0
+02F1: D2F902   [71|71]  	jp nc, _atTrack2_keepVolume
+02F4: E60F     [78]     	and %1111
+02F6: 327604   [91]     	ld (_atVAR_Track2Volume), a
+02F9:                   _atTrack2_keepVolume:
+                        	; Z80> rl d	; New Pitch ?
+02F9: 32480D   [13]     	ld (z_a),a
+02FC: 7A       [17]     	ld a,d
+02FD: 17       [21]     	rla
+02FE: 57       [25]     	ld d,a
+02FF: 3A480D   [38]     	ld a,(z_a)
+                        ; !!FLAGS rl: нет Z/S/P (только CY)
+0302: D20D03   [48|48]  	jp nc, _atTrack2_keepPitch
+                        	; Z80> ld (_atVAR_Track2PitchAdd + 1), ix
+0305: E5       [59]     	push hl
+0306: 2A440D   [75]     	ld hl,(z_ix)
+0309: 226804   [91]     	ld (_atVAR_Track2PitchAdd + 1),hl
+030C: E1       [101]    	pop hl
+030D:                   _atTrack2_keepPitch:
+                        
+                        	; Z80> rl d	; Note ? If no Note, we don't have to test if a new Instrument is here.
+030D: 32480D   [13]     	ld (z_a),a
+0310: 7A       [17]     	ld a,d
+0311: 17       [21]     	rla
+0312: 57       [25]     	ld d,a
+0313: 3A480D   [38]     	ld a,(z_a)
+                        ; !!FLAGS rl: нет Z/S/P (только CY)
+0316: D25E03   [48|48]  	jp nc, _atTrack2_keepNote
+                        
+                        	; Transpose Note according to the Transposition in the Linker.
+0319: 7B       [52]     	ld a, e
+031A:                   _atVAR_TranspCh2:
+031A: C600     [ 7]     	add a, 0
+031C: 327504   [20]     	ld (_atVAR_Track2Note), a
+                        	; Reset the TrackPitch.
+031F: 210000   [30]     	ld hl, 0
+0322: 226504   [46]     	ld (_atVAR_Track2Pitch + 1), hl
+                        	; New Instrument ?
+                        	; Z80> rl d
+0325: 32480D   [59]     	ld (z_a),a
+0328: 7A       [63]     	ld a,d
+0329: 17       [67]     	rla
+032A: 57       [71]     	ld d,a
+032B: 3A480D   [84]     	ld a,(z_a)
+                        ; !!FLAGS rl: нет Z/S/P (только CY)
+032E: DA3D03   [94|94]  	jp c, _atTrack2LoadInstrument
+                        	; Same Instrument. We recover its address to restart it.
+0331:                   _atVAR_Track2InstAddr:
+0331: 210000   [10]     	ld hl, 0
+0334: 3A8704   [23]     	ld a, (_atVAR_Track2InstSpeed + 1)
+0337: 327E04   [36]     	ld (_atVAR_Track2InstSpeedCtr + 1), a
+033A: C35B03   [46]     	jp _atTrack2SetInstrumentPtr
+                        
+033D:                   _atTrack2LoadInstrument:	; New Instrument. We have to get its new address, and Speed.
+033D: 68       [ 4]     	ld l, b	; H is already set to 0 before.
+033E: 29       [15]     	add hl, hl
+033F:                   _atVAR_Track2InstrumentLUT:
+033F: 010000   [10]     	ld bc, 0
+0342: 09       [21]     	add hl, bc
+0343: 7E       [28]     	ld a, (hl)	; Get Instrument address.
+0344: 23       [34]     	inc hl
+0345: 66       [41]     	ld h, (hl)
+0346: 6F       [45]     	ld l, a
+0347: 7E       [52]     	ld a, (hl)	; Get Instrument speed.
+0348: 23       [58]     	inc hl
+0349: 328704   [71]     	ld (_atVAR_Track2InstSpeed + 1), a
+034C: 327E04   [84]     	ld (_atVAR_Track2InstSpeedCtr + 1), a
+034F: 7E       [91]     	ld a, (hl)
+0350: B7       [95]     	or a	; Get IsRetrig?. Code it only if different to 0, else next Instruments are going to overwrite it.
+0351: CA5703   [105|105]	jp z, $+1+5
+0354: 32AB05   [118]    	ld (_atVAR_R13Lock + 1), a	; Poke &FE as previous R13 value
+0357: 23       [124]    	inc hl
+0358: 223203   [140]    	ld (_atVAR_Track2InstAddr + 1), hl	; When using the Instrument again, no need to give the Speed, it is skipped.
+035B:                   _atTrack2SetInstrumentPtr:
+035B: 227804   [16]     	ld (_atVAR_Track2InstrumentPtr + 1), hl
+035E:                   _atTrack2_keepNote:
+035E: 3E01     [ 7]     	ld a, 1
+0360:                   _atTrack2Wait:
+0360: 32DE02   [13]     	ld (_atVAR_WaitTrack2 + 1), a
+                        
+                        
+                        	;*** Read Track 3 **************************************************************
+                        
+0363:                   _atVAR_WaitTrack3:
+0363: 3E01     [ 7]     	ld a, 1
+0365: 3D       [11]     	dec a
+0366: C2E603   [21|21]  	jp nz, _atTrack3Wait
+                        
+                        
+0369:                   _atVAR_Track3Ptr:
+0369: 210000   [10]     	ld hl, 0
+036C: CDE107   [27]     	call _atReadTrack
+036F: 226A03   [43]     	ld (_atVAR_Track3Ptr + 1), hl
+0372: DAE603   [53|53]  	jp c, _atTrack3Wait
+                        
+                        	; No Wait command. Can be a Note and/or Effects.
+                        	; Make a copy of the flags+Volume in A, not to temper with the original.
+0375: 7A       [57]     	ld a, d
+0376: 1F       [61]     	rra	; Volume ? If bit 4 was 1, then volume exists on b3-b0
+0377: D27F03   [71|71]  	jp nc, _atTrack3_keepVolume
+037A: E60F     [78]     	and %1111
+037C: 320C04   [91]     	ld (_atVAR_Track3Volume), a
+037F:                   _atTrack3_keepVolume:
+                        	; Z80> rl d	; New Pitch ?
+037F: 32480D   [13]     	ld (z_a),a
+0382: 7A       [17]     	ld a,d
+0383: 17       [21]     	rla
+0384: 57       [25]     	ld d,a
+0385: 3A480D   [38]     	ld a,(z_a)
+                        ; !!FLAGS rl: нет Z/S/P (только CY)
+0388: D29303   [48|48]  	jp nc, _atTrack3_keepPitch
+                        	; Z80> ld (_atVAR_Track3PitchAdd + 1), ix
+038B: E5       [59]     	push hl
+038C: 2A440D   [75]     	ld hl,(z_ix)
+038F: 22FE03   [91]     	ld (_atVAR_Track3PitchAdd + 1),hl
+0392: E1       [101]    	pop hl
+0393:                   _atTrack3_keepPitch:
+                        	; Z80> rl d	; Note ? If no Note, we don't have to test if a new Instrument is here.
+0393: 32480D   [13]     	ld (z_a),a
+0396: 7A       [17]     	ld a,d
+0397: 17       [21]     	rla
+0398: 57       [25]     	ld d,a
+0399: 3A480D   [38]     	ld a,(z_a)
+                        ; !!FLAGS rl: нет Z/S/P (только CY)
+039C: D2E403   [48|48]  	jp nc, _atTrack3_keepNote
+                        
+                        	;Transpose Note according to the Transposition in the Linker.
+039F: 7B       [52]     	ld a, e
+03A0:                   _atVAR_TranspCh3:
+03A0: C600     [ 7]     	add a, 0
+03A2: 320B04   [20]     	ld (_atVAR_Track3Note), a
+                        	;Reset the TrackPitch.
+03A5: 210000   [30]     	ld hl, 0
+03A8: 22FB03   [46]     	ld (_atVAR_Track3Pitch + 1), hl
+                        	;New Instrument ?
+                        	; Z80> rl d
+03AB: 32480D   [59]     	ld (z_a),a
+03AE: 7A       [63]     	ld a,d
+03AF: 17       [67]     	rla
+03B0: 57       [71]     	ld d,a
+03B1: 3A480D   [84]     	ld a,(z_a)
+                        ; !!FLAGS rl: нет Z/S/P (только CY)
+03B4: DAC303   [94|94]  	jp c, _atTrack3LoadInstrument
+                        	;Same Instrument. We recover its address to restart it.
+03B7:                   _atVAR_Track3InstAddr:
+03B7: 210000   [10]     	ld hl, 0
+                        	;Reset the Instrument Speed Counter. Never seemed useful...
+03BA: 3A1D04   [23]     	ld a, (_atVAR_Track3InstSpeed + 1)
+03BD: 321404   [36]     	ld (_atVAR_Track3InstSpeedCtr + 1), a
+03C0: C3E103   [46]     	jp _atTrack3SetInstrumentPtr
+                        
+03C3:                   _atTrack3LoadInstrument:	;New Instrument. We have to get its new address, and Speed.
+03C3: 68       [ 4]     	ld l, b	;H is already set to 0 before.
+03C4: 29       [15]     	add hl, hl
+03C5:                   _atVAR_Track3InstrumentLUT:
+03C5: 010000   [10]     	ld bc, 0
+03C8: 09       [21]     	add hl, bc
+03C9: 7E       [28]     	ld a, (hl)	;Get Instrument address.
+03CA: 23       [34]     	inc hl
+03CB: 66       [41]     	ld h, (hl)
+03CC: 6F       [45]     	ld l, a
+03CD: 7E       [52]     	ld a, (hl)	;Get Instrument speed.
+03CE: 23       [58]     	inc hl
+03CF: 321D04   [71]     	ld (_atVAR_Track3InstSpeed + 1), a
+03D2: 321404   [84]     	ld (_atVAR_Track3InstSpeedCtr + 1), a
+03D5: 7E       [91]     	ld a, (hl)
+03D6: B7       [95]     	or a	; Get IsRetrig?. Code it only if different to 0, else next Instruments are going to overwrite it.
+03D7: CADD03   [105|105]	jp z, $+1+5
+03DA: 32AB05   [118]    	ld (_atVAR_R13Lock + 1), a	; Poke &FE as previous R13 value
+03DD: 23       [124]    	inc hl
+03DE: 22B803   [140]    	ld (_atVAR_Track3InstAddr + 1), hl	; When using the Instrument again, no need to give the Speed, it is skipped.
+03E1:                   _atTrack3SetInstrumentPtr:
+03E1: 220E04   [16]     	ld (_atVAR_Track3InstrumentPtr + 1), hl
+03E4:                   _atTrack3_keepNote:
+03E4: 3E01     [ 7]     	ld a, 1
+03E6:                   _atTrack3Wait:
+03E6: 326403   [13]     	ld (_atVAR_WaitTrack3 + 1), a
+                        
+03E9:                   _atVAR_SongSpeed:
+03E9: 3E01     [ 7]     	ld a, 1
+03EB:                   _atSetSongSpeedCtr:
+03EB: 32A301   [13]     	ld (_atVAR_SongSpeedCtr + 1), a
+                        
+                        
+                        
+                        	;;; arkos_hot.asm, часть 1 — ВЕКТОР: горячая часть плеера Arkos Tracker 1 на i8080 вручную.
+                        	;;; Заменяет строки оригинала «Play Sound on Track 3/2/1» (до _atAY3Update). Алгоритм 1:1,
+                        	;;; самомодифицируемые операнды _atVAR_* — как в оригинале (их читает холодный код и atSfxPlay).
+                        	;;; Регистры Z80, которых нет: DE' (TrackPitch) -> ps_pitch; HL' (частота) -> HL, указатель
+                        	;;; инструмента на это время в ps_iptr; IY -> ps_freqp/ps_volp; IXL/IXH -> ps_ixl/ps_ixh;
+                        	;;; AF' (сборка R7) -> ps_r7. Гейт: tests/music/check.sh (поток AY 1:1 с Z80-оригиналом).
+                        
+                        	;*** Play Sound on Track 3 ***
+03EE: 21B705   [23]     	ld hl, _atVAR_AY3Registers + 4
+03F1: 22DA07   [39]     	ld (ps_freqp), hl	; IY -> регистры канала: частота
+03F4: 21BE05   [49]     	ld hl, _atVAR_AY3Registers + 4 + 7
+03F7: 22DC07   [65]     	ld (ps_volp), hl	; IY+7 -> громкость
+03FA:                   _atVAR_Track3Pitch:
+03FA: 210000   [10]     	ld hl, 0
+03FD:                   _atVAR_Track3PitchAdd:
+03FD: 110000   [10]     	ld de, 0
+0400: 19       [21]     	add hl, de
+0401: 22FB03   [37]     	ld (_atVAR_Track3Pitch + 1), hl
+0404: CDC507   [54]     	call ps_sra2	; питч/4 со знаком
+0407: 22D607   [70]     	ld (ps_pitch), hl	; DE' = TrackPitch
+040C:                   _atVAR_Track3Volume:	equ $+2
+040B:                   _atVAR_Track3Note:	equ $+1
+040A: 110000   [80]     	ld de, 0	; D = инвертированная громкость, E = нота
+040D:                   _atVAR_Track3InstrumentPtr:
+040D: 210000   [10]     	ld hl, 0
+0410: CDC205   [27]     	call _atPlaySound
+0413:                   _atVAR_Track3InstSpeedCtr:
+0413: 3E01     [ 7]     	ld a, 1
+0415: 3D       [11]     	dec a
+0416: C21E04   [21|21]  	jp nz, _atSoundTrack3_noForward
+0419: 220E04   [37]     	ld (_atVAR_Track3InstrumentPtr + 1), hl
+041C:                   _atVAR_Track3InstSpeed:
+041C: 3E06     [ 7]     	ld a, 6
+041E:                   _atSoundTrack3_noForward:
+041E: 321404   [13]     	ld (_atVAR_Track3InstSpeedCtr + 1), a
+                        	; Эффект на канале 3. Раскладка операндов одинакова для трёх каналов — atSfxPlay адресует их
+                        	; смещениями от _atVAR_SfxTrack1_pitch.
+0421:                   _atVAR_SfxTrack3_pitch:
+0421: 110000   [10]     	ld de, 0
+0424: EB       [14]     	ex de, hl
+0425: 22D607   [30]     	ld (ps_pitch), hl
+0428:                   _atVAR_SfxTrack3_instrument:
+0428: 210000   [10]     	ld hl, 0	; 0 = эффекта нет
+042B: 7D       [14]     	ld a, l
+042C: B4       [18]     	or h
+042D: CA5204   [28|28]  	jp z, _atNoSfxTrack3
+0432:                   _atVAR_SfxTrack3_volume:	equ $+2
+0431:                   _atVAR_SfxTrack3_note:	equ $+1
+0430: 110000   [38]     	ld de, 0
+0433: 3E01     [45]     	ld a, 1
+0435: 320F07   [58]     	ld (PLY_PS_EndSound_SFX + 1), a
+0438: CDC205   [75]     	call _atPlaySound
+043B: AF       [79]     	xor a
+043C: 320F07   [92]     	ld (PLY_PS_EndSound_SFX + 1), a
+043F: 7D       [96]     	ld a, l	; адрес 0 = инструмент кончился
+0440: B4       [100]    	or h
+0441: CA4A04   [110|110]	jp z, _atVAR_SfxTrack3_setInstrumentAddr
+0444:                   _atVAR_SfxTrack3_instrumentSpeedCtr:
+0444: 3E01     [ 7]     	ld a, 1
+0446: 3D       [11]     	dec a
+0447: C24F04   [21|21]  	jp nz, _atSfxTrack3_noForward
+044A:                   _atVAR_SfxTrack3_setInstrumentAddr:
+044A: 222904   [16]     	ld (_atVAR_SfxTrack3_instrument + 1), hl
+044D:                   _atVAR_SfxTrack3_instrumentSpeed:
+044D: 3E06     [ 7]     	ld a, 6
+044F:                   _atSfxTrack3_noForward:
+044F: 324504   [13]     	ld (_atVAR_SfxTrack3_instrumentSpeedCtr + 1), a
+0452:                   _atNoSfxTrack3:
+                        
+0452: 3ADE07   [13]     	ld a, (ps_ixl)	; R7: флаги канала 3
+0455: 32E007   [26]     	ld (ps_r7), a
+                        
+                        	;*** Play Sound on Track 2 ***
+0458: 21B505   [36]     	ld hl, _atVAR_AY3Registers + 2
+045B: 22DA07   [52]     	ld (ps_freqp), hl	; IY -> регистры канала: частота
+045E: 21BC05   [62]     	ld hl, _atVAR_AY3Registers + 2 + 7
+0461: 22DC07   [78]     	ld (ps_volp), hl	; IY+7 -> громкость
+0464:                   _atVAR_Track2Pitch:
+0464: 210000   [10]     	ld hl, 0
+0467:                   _atVAR_Track2PitchAdd:
+0467: 110000   [10]     	ld de, 0
+046A: 19       [21]     	add hl, de
+046B: 226504   [37]     	ld (_atVAR_Track2Pitch + 1), hl
+046E: CDC507   [54]     	call ps_sra2	; питч/4 со знаком
+0471: 22D607   [70]     	ld (ps_pitch), hl	; DE' = TrackPitch
+0476:                   _atVAR_Track2Volume:	equ $+2
+0475:                   _atVAR_Track2Note:	equ $+1
+0474: 110000   [80]     	ld de, 0	; D = инвертированная громкость, E = нота
+0477:                   _atVAR_Track2InstrumentPtr:
+0477: 210000   [10]     	ld hl, 0
+047A: CDC205   [27]     	call _atPlaySound
+047D:                   _atVAR_Track2InstSpeedCtr:
+047D: 3E01     [ 7]     	ld a, 1
+047F: 3D       [11]     	dec a
+0480: C28804   [21|21]  	jp nz, _atSoundTrack2_noForward
+0483: 227804   [37]     	ld (_atVAR_Track2InstrumentPtr + 1), hl
+0486:                   _atVAR_Track2InstSpeed:
+0486: 3E06     [ 7]     	ld a, 6
+0488:                   _atSoundTrack2_noForward:
+0488: 327E04   [13]     	ld (_atVAR_Track2InstSpeedCtr + 1), a
+                        	; Эффект на канале 2. Раскладка операндов одинакова для трёх каналов — atSfxPlay адресует их
+                        	; смещениями от _atVAR_SfxTrack1_pitch.
+048B:                   _atVAR_SfxTrack2_pitch:
+048B: 110000   [10]     	ld de, 0
+048E: EB       [14]     	ex de, hl
+048F: 22D607   [30]     	ld (ps_pitch), hl
+0492:                   _atVAR_SfxTrack2_instrument:
+0492: 210000   [10]     	ld hl, 0	; 0 = эффекта нет
+0495: 7D       [14]     	ld a, l
+0496: B4       [18]     	or h
+0497: CABC04   [28|28]  	jp z, _atNoSfxTrack2
+049C:                   _atVAR_SfxTrack2_volume:	equ $+2
+049B:                   _atVAR_SfxTrack2_note:	equ $+1
+049A: 110000   [38]     	ld de, 0
+049D: 3E01     [45]     	ld a, 1
+049F: 320F07   [58]     	ld (PLY_PS_EndSound_SFX + 1), a
+04A2: CDC205   [75]     	call _atPlaySound
+04A5: AF       [79]     	xor a
+04A6: 320F07   [92]     	ld (PLY_PS_EndSound_SFX + 1), a
+04A9: 7D       [96]     	ld a, l	; адрес 0 = инструмент кончился
+04AA: B4       [100]    	or h
+04AB: CAB404   [110|110]	jp z, _atVAR_SfxTrack2_setInstrumentAddr
+04AE:                   _atVAR_SfxTrack2_instrumentSpeedCtr:
+04AE: 3E01     [ 7]     	ld a, 1
+04B0: 3D       [11]     	dec a
+04B1: C2B904   [21|21]  	jp nz, _atSfxTrack2_noForward
+04B4:                   _atVAR_SfxTrack2_setInstrumentAddr:
+04B4: 229304   [16]     	ld (_atVAR_SfxTrack2_instrument + 1), hl
+04B7:                   _atVAR_SfxTrack2_instrumentSpeed:
+04B7: 3E06     [ 7]     	ld a, 6
+04B9:                   _atSfxTrack2_noForward:
+04B9: 32AF04   [13]     	ld (_atVAR_SfxTrack2_instrumentSpeedCtr + 1), a
+04BC:                   _atNoSfxTrack2:
+                        
+04BC: 3AE007   [13]     	ld a, (ps_r7)	; R7: (ch3 << 1 | ch2) << 1
+04BF: 87       [17]     	add a, a
+04C0: 47       [21]     	ld b, a
+04C1: 3ADE07   [34]     	ld a, (ps_ixl)
+04C4: B0       [38]     	or b
+04C5: 87       [42]     	add a, a
+04C6: 32E007   [55]     	ld (ps_r7), a
+                        
+                        	;*** Play Sound on Track 1 ***
+04C9: 21B305   [65]     	ld hl, _atVAR_AY3Registers + 0
+04CC: 22DA07   [81]     	ld (ps_freqp), hl	; IY -> регистры канала: частота
+04CF: 21BA05   [91]     	ld hl, _atVAR_AY3Registers + 0 + 7
+04D2: 22DC07   [107]    	ld (ps_volp), hl	; IY+7 -> громкость
+04D5:                   _atVAR_Track1Pitch:
+04D5: 210000   [10]     	ld hl, 0
+04D8:                   _atVAR_Track1PitchAdd:
+04D8: 110000   [10]     	ld de, 0
+04DB: 19       [21]     	add hl, de
+04DC: 22D604   [37]     	ld (_atVAR_Track1Pitch + 1), hl
+04DF: CDC507   [54]     	call ps_sra2	; питч/4 со знаком
+04E2: 22D607   [70]     	ld (ps_pitch), hl	; DE' = TrackPitch
+04E7:                   _atVAR_Track1Volume:	equ $+2
+04E6:                   _atVAR_Track1Note:	equ $+1
+04E5: 110000   [80]     	ld de, 0	; D = инвертированная громкость, E = нота
+04E8:                   _atVAR_Track1InstrumentPtr:
+04E8: 210000   [10]     	ld hl, 0
+04EB: CDC205   [27]     	call _atPlaySound
+04EE:                   _atVAR_Track1InstSpeedCtr:
+04EE: 3E01     [ 7]     	ld a, 1
+04F0: 3D       [11]     	dec a
+04F1: C2F904   [21|21]  	jp nz, _atSoundTrack1_noForward
+04F4: 22E904   [37]     	ld (_atVAR_Track1InstrumentPtr + 1), hl
+04F7:                   _atVAR_Track1InstSpeed:
+04F7: 3E06     [ 7]     	ld a, 6
+04F9:                   _atSoundTrack1_noForward:
+04F9: 32EF04   [13]     	ld (_atVAR_Track1InstSpeedCtr + 1), a
+                        	; Эффект на канале 1. Раскладка операндов одинакова для трёх каналов — atSfxPlay адресует их
+                        	; смещениями от _atVAR_SfxTrack1_pitch.
+04FC:                   _atVAR_SfxTrack1_pitch:
+04FC: 110000   [10]     	ld de, 0
+04FF: EB       [14]     	ex de, hl
+0500: 22D607   [30]     	ld (ps_pitch), hl
+0503:                   _atVAR_SfxTrack1_instrument:
+0503: 210000   [10]     	ld hl, 0	; 0 = эффекта нет
+0506: 7D       [14]     	ld a, l
+0507: B4       [18]     	or h
+0508: CA2D05   [28|28]  	jp z, _atNoSfxTrack1
+050D:                   _atVAR_SfxTrack1_volume:	equ $+2
+050C:                   _atVAR_SfxTrack1_note:	equ $+1
+050B: 110000   [38]     	ld de, 0
+050E: 3E01     [45]     	ld a, 1
+0510: 320F07   [58]     	ld (PLY_PS_EndSound_SFX + 1), a
+0513: CDC205   [75]     	call _atPlaySound
+0516: AF       [79]     	xor a
+0517: 320F07   [92]     	ld (PLY_PS_EndSound_SFX + 1), a
+051A: 7D       [96]     	ld a, l	; адрес 0 = инструмент кончился
+051B: B4       [100]    	or h
+051C: CA2505   [110|110]	jp z, _atVAR_SfxTrack1_setInstrumentAddr
+051F:                   _atVAR_SfxTrack1_instrumentSpeedCtr:
+051F: 3E01     [ 7]     	ld a, 1
+0521: 3D       [11]     	dec a
+0522: C22A05   [21|21]  	jp nz, _atSfxTrack1_noForward
+0525:                   _atVAR_SfxTrack1_setInstrumentAddr:
+0525: 220405   [16]     	ld (_atVAR_SfxTrack1_instrument + 1), hl
+0528:                   _atVAR_SfxTrack1_instrumentSpeed:
+0528: 3E06     [ 7]     	ld a, 6
+052A:                   _atSfxTrack1_noForward:
+052A: 322005   [13]     	ld (_atVAR_SfxTrack1_instrumentSpeedCtr + 1), a
+052D:                   _atNoSfxTrack1:
+                        
+052D: 3AE007   [13]     	ld a, (ps_r7)	; R7 = ... | ch1 -> A для _atAY3Update
+0530: 47       [17]     	ld b, a
+0531: 3ADE07   [30]     	ld a, (ps_ixl)
+0534: B0       [34]     	or b
+                        
+                        
+                        	;*** Update AY3 Registers (platform specific) **********************************
+                        
+                        	; Update AY3 registers (unrolled)
+                        	; - Input:
+                        	;	A = AY3 Register 7 value
+0535:                   _atAY3Update:
+                        	;A=Register 7
+0535: 47       [ 4]     	ld b, a
+0536: 21B305   [14]     	ld hl, _atVAR_AY3Registers
+                        
+                        	;Register 0
+0539: AF       [18]     	xor a
+053A: D315     [29]     	out ($15), a	; AY Вектора: выбор регистра
+053C: 7E       [36]     	ld a, (hl)
+053D: D314     [47]     	out ($14), a	; AY Вектора: данные
+053F: 23       [53]     	inc hl
+                        
+                        	;Register 1
+0540: 3E01     [60]     	ld a, 1
+0542: D315     [71]     	out ($15), a	; AY Вектора: выбор регистра
+0544: 7E       [78]     	ld a, (hl)
+0545: D314     [89]     	out ($14), a	; AY Вектора: данные
+0547: 23       [95]     	inc hl
+                        
+                        	;Register 2
+0548: 3E02     [102]    	ld a, 2
+054A: D315     [113]    	out ($15), a	; AY Вектора: выбор регистра
+054C: 7E       [120]    	ld a, (hl)
+054D: D314     [131]    	out ($14), a	; AY Вектора: данные
+054F: 23       [137]    	inc hl
+                        
+                        	;Register 3
+0550: 3E03     [144]    	ld a, 3
+0552: D315     [155]    	out ($15), a	; AY Вектора: выбор регистра
+0554: 7E       [162]    	ld a, (hl)
+0555: D314     [173]    	out ($14), a	; AY Вектора: данные
+0557: 23       [179]    	inc hl
+                        
+                        	;Register 4
+0558: 3E04     [186]    	ld a, 4
+055A: D315     [197]    	out ($15), a	; AY Вектора: выбор регистра
+055C: 7E       [204]    	ld a, (hl)
+055D: D314     [215]    	out ($14), a	; AY Вектора: данные
+055F: 23       [221]    	inc hl
+                        
+                        	;Register 5
+0560: 3E05     [228]    	ld a, 5
+0562: D315     [239]    	out ($15), a	; AY Вектора: выбор регистра
+0564: 7E       [246]    	ld a, (hl)
+0565: D314     [257]    	out ($14), a	; AY Вектора: данные
+0567: 23       [263]    	inc hl
+                        
+                        	;Register 6
+0568: 3E06     [270]    	ld a, 6
+056A: D315     [281]    	out ($15), a	; AY Вектора: выбор регистра
+056C: 7E       [288]    	ld a, (hl)
+056D: D314     [299]    	out ($14), a	; AY Вектора: данные
+056F: 23       [305]    	inc hl
+                        
+                        	;Register 7
+0570: 3E07     [312]    	ld a, 7
+0572: D315     [323]    	out ($15), a	; AY Вектора: выбор регистра
+0574: 78       [327]    	ld a, b	;Use the stored Register 7.
+0575: E6BF     [334]    	and $bf	; bit 6 must be 0
+0577: F680     [341]    	or $80	; bit 7 must be 1
+0579: D314     [352]    	out ($14), a	; AY Вектора: данные
+                        
+                        	;Register 8
+057B: 3E08     [359]    	ld a, 8
+057D: D315     [370]    	out ($15), a	; AY Вектора: выбор регистра
+057F: 7E       [377]    	ld a, (hl)
+                        	if atCNF_FADE
+                        PLY_Channel1_FadeValue:
+                        	sub 0	;Set a value from 0 (full volume) to 16 or more (volume to 0).
+                        	jp nc, $+1+3
+                        	xor a
+                        	endif
+                        
+0580: D314     [388]    	out ($14), a	; AY Вектора: данные
+0582: 23       [394]    	inc hl
+0583: 23       [400]    	inc hl	;Skip unused byte.
+                        
+                        	;Register 9
+0584: 3E09     [407]    	ld a, 9
+0586: D315     [418]    	out ($15), a	; AY Вектора: выбор регистра
+0588: 7E       [425]    	ld a, (hl)
+                        
+                        	if atCNF_FADE
+                        PLY_Channel2_FadeValue:
+                        	sub 0	;Set a value from 0 (full volume) to 16 or more (volume to 0).
+                        	jp nc, $+1+3
+                        	xor a
+                        	endif
+                        
+0589: D314     [436]    	out ($14), a	; AY Вектора: данные
+058B: 23       [442]    	inc hl
+058C: 23       [448]    	inc hl	;Skip unused byte.
+                        
+                        	;Register 10
+058D: 3E0A     [455]    	ld a, 10
+058F: D315     [466]    	out ($15), a	; AY Вектора: выбор регистра
+0591: 7E       [473]    	ld a, (hl)
+                        
+                        	if atCNF_FADE
+                        PLY_Channel3_FadeValue:
+                        	sub 0	;Set a value from 0 (full volume) to 16 or more (volume to 0).
+                        	jp nc, $+1+3
+                        	xor a
+                        	endif
+                        
+0592: D314     [484]    	out ($14), a	; AY Вектора: данные
+0594: 23       [490]    	inc hl
+                        
+                        	;Register 11
+0595: 3E0B     [497]    	ld a, 11
+0597: D315     [508]    	out ($15), a	; AY Вектора: выбор регистра
+0599: 7E       [515]    	ld a, (hl)
+059A: D314     [526]    	out ($14), a	; AY Вектора: данные
+059C: 23       [532]    	inc hl
+                        
+                        	;Register 12
+059D: 3E0C     [539]    	ld a, 12
+059F: D315     [550]    	out ($15), a	; AY Вектора: выбор регистра
+05A1: 7E       [557]    	ld a, (hl)
+05A2: D314     [568]    	out ($14), a	; AY Вектора: данные
+05A4: 23       [574]    	inc hl
+                        
+                        	;Register 13
+                        
+                        
+05A5:                   PLY_PSGReg13_Code:
+05A5: 3E0D     [ 7]     	ld a, 13
+05A7: D315     [18]     	out ($15), a	; AY Вектора: выбор регистра
+05A9: 7E       [25]     	ld a, (hl)
+05AA:                   _atVAR_R13Lock:
+05AA:                   PLY_PSGReg13_Retrig:
+05AA: FEFF     [ 7]     	cp 255	;If IsRetrig?, force the R13 to be triggered.
+05AC: C8       [12|18]  	ret z
+                        
+05AD: D314     [23]     	out ($14), a	; AY Вектора: данные
+05AF: 32AB05   [36]     	ld (PLY_PSGReg13_Retrig + 1), a
+05B2: C9       [46]     	ret
+                        
+                        
+                        
+                        
+05B3:                   _atVAR_AY3Registers:
+                        
+05B3: 00                _atVAR_Reg0:	db 0
+05B4: 00                _atVAR_Reg1:	db 0
+05B5: 00                _atVAR_Reg2:	db 0
+05B6: 00                _atVAR_Reg3:	db 0
+05B7: 00                _atVAR_Reg4:	db 0
+05B8: 00                _atVAR_Reg5:	db 0
+05B9: 00                _atVAR_Reg6:	db 0
+05BA: 00                _atVAR_Reg8:	db 0	;+7
+                        
+                        	; Digidrum ID triggered by the song (0=no digidrum)
+05BB: 00                _atVAR_digidrum:	db 0
+                        
+05BC: 00                _atVAR_Reg9:	db 0	;+9
+05BD: 00                	db 0
+05BE: 00                _atVAR_Reg10:	db 0	;+11
+05BF: 00                _atVAR_Reg11:	db 0
+05C0: 00                _atVAR_Reg12:	db 0
+05C1: 00                _atVAR_Reg13:	db 0
+                        
+                        
+                        
+                        	;(nbGrim - these sound routines need some tweaks imo)
+                        
+                        	;Plays a sound stream.
+                        	;HL=Pointer on Instrument Data
+                        	;IY=Pointer on Register code (volume, frequency).
+                        	;E=Note
+                        	;D=Inverted Volume
+                        	;DE'=TrackPitch
+                        
+                        	;RET=
+                        	;HL=New Instrument pointer.
+                        	;IXL=Reg7 mask (x00x)
+                        
+                        	;Also used inside =
+                        	;B,C=read byte/second byte.
+                        	;IXH=Save original Note (only used for Independant mode).
+                        
+                        
+                        	;;; arkos_hot.asm, часть 2 — _atPlaySound и подпрограммы (заменяет оригинал до «Read Track»).
+                        	; Вход: HL = указатель на данные инструмента, D = инвертированная громкость, E = нота,
+                        	; ps_pitch = TrackPitch, ps_freqp/ps_volp = регистры канала. Выход: HL = новый указатель
+                        	; инструмента (0 = эффект кончился), ps_ixl = флаги R7 канала (бит 3 шум выкл, бит 0 звук выкл).
+05C2:                   _atPlaySound:
+05C2: 46       [ 7]     	ld b, (hl)
+05C3: 23       [13]     	inc hl
+05C4: 78       [17]     	ld a, b
+05C5: 1F       [21]     	rra
+05C6: 47       [25]     	ld b, a	; rr b: аппаратный звук?
+05C7: DA4206   [35|35]  	jp c, PLY_PS_Hard
+05CA: 78       [39]     	ld a, b
+05CB: 1F       [43]     	rra
+05CC: 47       [47]     	ld b, a	; rr b: нужен второй байт?
+05CD: DAFE05   [57|57]  	jp c, PLY_PS_S_SecondByteNeeded
+05D0: 78       [61]     	ld a, b
+05D1: E60F     [68]     	and %1111
+05D3: C2E205   [78|78]  	jp nz, PLY_PS_S_SoundOn
+                        	; громкость 0 — звука нет: громкость 0 (на случай аппаратного баса раньше), звук и шум выкл
+05D6: E5       [89]     	push hl
+05D7: 2ADC07   [105]    	ld hl, (ps_volp)
+05DA: 77       [112]    	ld (hl), a
+05DB: E1       [122]    	pop hl
+05DC: 3E09     [129]    	ld a, %1001
+05DE: 32DE07   [142]    	ld (ps_ixl), a
+05E1: C9       [152]    	ret
+05E2:                   PLY_PS_S_SoundOn:
+05E2: 3E08     [ 7]     	ld a, %1000
+05E4: 32DE07   [20]     	ld (ps_ixl), a
+05E7: 78       [24]     	ld a, b
+05E8: E60F     [31]     	and %1111
+05EA: 92       [35]     	sub d	; кодировать громкость
+05EB: D2EF05   [45|45]  	jp nc, ps_so_1
+05EE: AF       [49]     	xor a
+05EF:                   ps_so_1:
+05EF: E5       [11]     	push hl
+05F0: 2ADC07   [27]     	ld hl, (ps_volp)
+05F3: 77       [34]     	ld (hl), a
+05F4: E1       [44]     	pop hl
+05F5: 78       [48]     	ld a, b
+05F6: 1F       [52]     	rra
+05F7: 47       [56]     	ld b, a	; rr b: флаги для подпрограммы
+05F8: CD7E07   [73]     	call _atSound_calcFrequency
+05FB: C33706   [83]     	jp ps_store_freq_ret
+05FE:                   PLY_PS_S_SecondByteNeeded:
+05FE: 3E08     [ 7]     	ld a, %1000	; по умолчанию: шум выкл, звук вкл
+0600: 32DE07   [20]     	ld (ps_ixl), a
+0603: 4E       [27]     	ld c, (hl)
+0604: 23       [33]     	inc hl
+0605: 79       [37]     	ld a, c	; шум?
+0606: E61F     [44]     	and %11111
+0608: CA1206   [54|54]  	jp z, PLY_PS_S_SBN_NoNoise
+060B: 32B905   [67]     	ld (_atVAR_Reg6), a
+060E: AF       [71]     	xor a
+060F: 32DE07   [84]     	ld (ps_ixl), a	; открыть шум
+0612:                   PLY_PS_S_SBN_NoNoise:
+0612: 78       [ 4]     	ld a, b
+0613: E60F     [11]     	and %1111
+0615: 92       [15]     	sub d
+0616: D21A06   [25|25]  	jp nc, ps_sbn_1
+0619: AF       [29]     	xor a
+061A:                   ps_sbn_1:
+061A: E5       [11]     	push hl
+061B: 2ADC07   [27]     	ld hl, (ps_volp)
+061E: 77       [34]     	ld (hl), a
+061F: E1       [44]     	pop hl
+0620: 79       [48]     	ld a, c	; звук?
+0621: E620     [55]     	and $20
+0623: C22E06   [65|65]  	jp nz, PLY_PS_S_SBN_Sound
+0626: 3ADE07   [78]     	ld a, (ps_ixl)	; нет звука: inc ixl
+0629: 3C       [82]     	inc a
+062A: 32DE07   [95]     	ld (ps_ixl), a
+062D: C9       [105]    	ret
+062E:                   PLY_PS_S_SBN_Sound:
+062E: 78       [ 4]     	ld a, b
+062F: 1F       [ 8]     	rra
+0630: 47       [12]     	ld b, a	; rr b
+0631: 79       [16]     	ld a, c
+0632: E640     [23]     	and $40	; bit 6,c: ручная частота?
+0634: CD7B07   [40]     	call _atSound_getFrequency
+0637:                   ps_store_freq_ret:	; HL = частота -> регистры канала; вернуть указатель инструмента
+0637: EB       [ 4]     	ex de, hl
+0638: 2ADA07   [20]     	ld hl, (ps_freqp)
+063B: 73       [27]     	ld (hl), e
+063C: 23       [33]     	inc hl
+063D: 72       [40]     	ld (hl), d
+063E: 2AD807   [56]     	ld hl, (ps_iptr)
+0641: C9       [66]     	ret
+                        	;**********
+                        	;Hard Sound
+                        	;**********
+0642:                   PLY_PS_Hard:
+0642: 78       [ 4]     	ld a, b
+0643: 1F       [ 8]     	rra
+0644: 47       [12]     	ld b, a	; rr b: retrig
+0645: D25806   [22|22]  	jp nc, PLY_PS_Hard_NoRetrig
+0648: 3AEF04   [35]     	ld a, (_atVAR_Track1InstSpeedCtr + 1)	; retrig только на первом шаге строки инструмента
+064B: 4F       [39]     	ld c, a
+064C: 3AF804   [52]     	ld a, (_atVAR_Track1InstSpeed + 1)
+064F: B9       [56]     	cp c
+0650: C25806   [66|66]  	jp nz, PLY_PS_Hard_NoRetrig
+0653: 3EFE     [73]     	ld a, _atDEF_R13RetrigValue
+0655: 32AB05   [86]     	ld (_atVAR_R13Lock + 1), a
+0658:                   PLY_PS_Hard_NoRetrig:
+0658: 78       [ 4]     	ld a, b
+0659: E602     [11]     	and 2	; bit 1,b: Loop/Independent?
+065B: C20807   [21|21]  	jp nz, PLY_PS_Hard_LoopOrIndependent
+                        	; аппаратный звук: громкость 16
+065E: E5       [32]     	push hl
+065F: 2ADC07   [48]     	ld hl, (ps_volp)
+0662: 3610     [58]     	ld (hl), 16
+0664: E1       [68]     	pop hl
+0665: 3E08     [75]     	ld a, %1000
+0667: 32DE07   [88]     	ld (ps_ixl), a
+066A: 4E       [95]     	ld c, (hl)	; второй байт
+066B: 23       [101]    	inc hl
+066C: 79       [105]    	ld a, c
+066D: E60F     [112]    	and %1111	; форма огибающей
+066F: 32C105   [125]    	ld (_atVAR_Reg13), a
+0672: 78       [129]    	ld a, b
+0673: E601     [136]    	and 1	; bit 0,b
+0675: CACB06   [146|146]	jp z, PLY_PS_HardwareDependent
+                        	;******************
+                        	;Software Dependent
+                        	;******************
+0678: 78       [150]    	ld a, b
+0679: E604     [157]    	and 4	; bit 4-2,b: ручная частота?
+067B: CD7B07   [174]    	call _atSound_getFrequency
+067E: EB       [178]    	ex de, hl	; программная частота -> регистры канала (HL остаётся = частота)
+067F: 2ADA07   [194]    	ld hl, (ps_freqp)
+0682: 73       [201]    	ld (hl), e
+0683: 23       [207]    	inc hl
+0684: 72       [214]    	ld (hl), d
+0685: EB       [218]    	ex de, hl
+                        	; сдвиг вправо: n = 7 - ((c >> 4) & 7)  (в оригинале jr $+2 по цепочке srl h / rr l)
+0686: 79       [222]    	ld a, c
+0687: 1F       [226]    	rra
+0688: 1F       [230]    	rra
+0689: 1F       [234]    	rra
+068A: 1F       [238]    	rra
+068B: 2F       [242]    	cpl
+068C: E607     [249]    	and 7
+068E: CAA106   [259|259]	jp z, PLY_PS_SD_NoInc	; n = 0: в оригинале CY = 0 (после and) — без округления
+0691: 57       [263]    	ld d, a
+0692:                   ps_sd_loop:
+0692: 7C       [ 4]     	ld a, h
+0693: B7       [ 8]     	or a
+0694: 1F       [12]     	rra
+0695: 67       [16]     	ld h, a
+0696: 7D       [20]     	ld a, l
+0697: 1F       [24]     	rra
+0698: 6F       [28]     	ld l, a
+0699: 15       [32]     	dec d	; dec не трогает CY
+069A: C29206   [42|42]  	jp nz, ps_sd_loop
+069D: D2A106   [52|52]  	jp nc, PLY_PS_SD_NoInc	; округление по вытесненному биту
+06A0: 23       [58]     	inc hl
+06A1:                   PLY_PS_SD_NoInc:
+06A1: 78       [ 4]     	ld a, b
+06A2: E620     [11]     	and $20	; bit 7-2,b: аппаратный питч?
+06A4: CAB706   [21|21]  	jp z, PLY_PS_SD_NoHardwarePitch
+06A7: EB       [25]     	ex de, hl	; прибавить питч (word из инструмента) к аппаратной частоте
+06A8: 2AD807   [41]     	ld hl, (ps_iptr)
+06AB: 7E       [48]     	ld a, (hl)
+06AC: 23       [54]     	inc hl
+06AD: 83       [58]     	add a, e
+06AE: 5F       [62]     	ld e, a
+06AF: 7E       [69]     	ld a, (hl)
+06B0: 23       [75]     	inc hl
+06B1: 8A       [79]     	adc a, d
+06B2: 57       [83]     	ld d, a
+06B3: 22D807   [99]     	ld (ps_iptr), hl
+06B6: EB       [103]    	ex de, hl
+06B7:                   PLY_PS_SD_NoHardwarePitch:
+06B7: 22BF05   [16]     	ld (_atVAR_Reg11), hl
+06BA: 2AD807   [32]     	ld hl, (ps_iptr)
+                        	;This code is also used by Hardware Dependent.
+06BD:                   PLY_PS_SD_Noise:
+06BD: 79       [ 4]     	ld a, c	; шум?
+06BE: E680     [11]     	and $80
+06C0: C8       [16|22]  	ret z
+06C1: 7E       [23]     	ld a, (hl)
+06C2: 23       [29]     	inc hl
+06C3: 32B905   [42]     	ld (_atVAR_Reg6), a
+06C6: AF       [46]     	xor a
+06C7: 32DE07   [59]     	ld (ps_ixl), a
+06CA: C9       [69]     	ret
+                        	;Hardware Dependent
+06CB:                   PLY_PS_HardwareDependent:
+06CB: 78       [ 4]     	ld a, b
+06CC: E604     [11]     	and 4	; ручная аппаратная частота?
+06CE: CD7B07   [28]     	call _atSound_getFrequency
+06D1: 22BF05   [44]     	ld (_atVAR_Reg11), hl	; аппаратная частота
+                        	; сдвиг влево: n = 7 - ((c >> 4) & 7)  (цепочка sla l / rl h = add hl,hl)
+06D4: 79       [48]     	ld a, c
+06D5: 1F       [52]     	rra
+06D6: 1F       [56]     	rra
+06D7: 1F       [60]     	rra
+06D8: 1F       [64]     	rra
+06D9: 2F       [68]     	cpl
+06DA: E607     [75]     	and 7
+06DC: CAE506   [85|85]  	jp z, PLY_PS_HD_Shifted
+06DF: 57       [89]     	ld d, a
+06E0:                   ps_hd_loop:
+06E0: 29       [11]     	add hl, hl
+06E1: 15       [15]     	dec d
+06E2: C2E006   [25|25]  	jp nz, ps_hd_loop
+06E5:                   PLY_PS_HD_Shifted:
+06E5: 78       [ 4]     	ld a, b
+06E6: E620     [11]     	and $20	; программный питч?
+06E8: CAFB06   [21|21]  	jp z, PLY_PS_HD_NoSoftwarePitch
+06EB: EB       [25]     	ex de, hl
+06EC: 2AD807   [41]     	ld hl, (ps_iptr)
+06EF: 7E       [48]     	ld a, (hl)
+06F0: 23       [54]     	inc hl
+06F1: 83       [58]     	add a, e
+06F2: 5F       [62]     	ld e, a
+06F3: 7E       [69]     	ld a, (hl)
+06F4: 23       [75]     	inc hl
+06F5: 8A       [79]     	adc a, d
+06F6: 57       [83]     	ld d, a
+06F7: 22D807   [99]     	ld (ps_iptr), hl
+06FA: EB       [103]    	ex de, hl
+06FB:                   PLY_PS_HD_NoSoftwarePitch:
+06FB: EB       [ 4]     	ex de, hl	; программная частота -> регистры канала
+06FC: 2ADA07   [20]     	ld hl, (ps_freqp)
+06FF: 73       [27]     	ld (hl), e
+0700: 23       [33]     	inc hl
+0701: 72       [40]     	ld (hl), d
+0702: 2AD807   [56]     	ld hl, (ps_iptr)
+0705: C3BD06   [66]     	jp PLY_PS_SD_Noise
+0708:                   PLY_PS_Hard_LoopOrIndependent:
+0708: 78       [ 4]     	ld a, b
+0709: E601     [11]     	and 1	; bit 0,b: 0 = Independent, 1 = Loop (конец звука)
+070B: CA1F07   [21|21]  	jp z, PLY_PS_Independent
+070E:                   PLY_PS_EndSound_SFX:
+070E: 3E00     [ 7]     	ld a, 0	; 1 = играет эффект: конец = адрес 0
+0710: B7       [11]     	or a
+0711: C21B07   [21|21]  	jp nz, PLY_PS_EndSFX
+0714: 7E       [28]     	ld a, (hl)	; конец звука: новый указатель и перезапуск инструмента
+0715: 23       [34]     	inc hl
+0716: 66       [41]     	ld h, (hl)
+0717: 6F       [45]     	ld l, a
+0718: C3C205   [55]     	jp _atPlaySound
+071B:                   PLY_PS_EndSFX:
+071B: 210000   [10]     	ld hl, 0
+071E: C9       [20]     	ret
+                        	;Independent
+071F:                   PLY_PS_Independent:
+071F: E5       [11]     	push hl
+0720: 2ADC07   [27]     	ld hl, (ps_volp)
+0723: 3610     [37]     	ld (hl), 16
+0725: E1       [47]     	pop hl
+0726: 78       [51]     	ld a, b
+0727: E620     [58]     	and $20	; bit 7-2,b: звук?
+0729: C23407   [68|68]  	jp nz, PLY_PS_I_SoundOn
+072C: 3E09     [75]     	ld a, %1001	; без звука: программная частота не нужна
+072E: 32DE07   [88]     	ld (ps_ixl), a
+0731: C35107   [98]     	jp PLY_PS_I_SkipSoftwareFrequencyCalculation
+0734:                   PLY_PS_I_SoundOn:
+0734: 3E08     [ 7]     	ld a, %1000
+0736: 32DE07   [20]     	ld (ps_ixl), a
+0739: 7B       [24]     	ld a, e
+073A: 32DF07   [37]     	ld (ps_ixh), a	; сохранить ноту (арпеджио её меняет)
+073D: 78       [41]     	ld a, b
+073E: E604     [48]     	and 4
+0740: CD7B07   [65]     	call _atSound_getFrequency
+0743: EB       [69]     	ex de, hl
+0744: 2ADA07   [85]     	ld hl, (ps_freqp)
+0747: 73       [92]     	ld (hl), e
+0748: 23       [98]     	inc hl
+0749: 72       [105]    	ld (hl), d
+074A: 2AD807   [121]    	ld hl, (ps_iptr)
+074D: 3ADF07   [134]    	ld a, (ps_ixh)
+0750: 5F       [138]    	ld e, a
+0751:                   PLY_PS_I_SkipSoftwareFrequencyCalculation:
+0751: 46       [ 7]     	ld b, (hl)	; второй байт
+0752: 23       [13]     	inc hl
+0753: 78       [17]     	ld a, b
+0754: E60F     [24]     	and %1111
+0756: 32C105   [37]     	ld (_atVAR_Reg13), a
+0759: 78       [41]     	ld a, b	; rr b; rr b
+075A: 1F       [45]     	rra
+075B: 1F       [49]     	rra
+075C: 47       [53]     	ld b, a
+075D: 78       [57]     	ld a, b
+075E: E604     [64]     	and 4	; ручная аппаратная частота?
+0760: CD7B07   [81]     	call _atSound_getFrequency
+0763: 22BF05   [97]     	ld (_atVAR_Reg11), hl
+0766: 2AD807   [113]    	ld hl, (ps_iptr)
+0769: 78       [117]    	ld a, b
+076A: E620     [124]    	and $20	; шум?
+076C: C8       [129|135]	ret z
+076D: 7E       [136]    	ld a, (hl)
+076E: 23       [142]    	inc hl
+076F: 32B905   [155]    	ld (_atVAR_Reg6), a
+0772: 3ADE07   [168]    	ld a, (ps_ixl)	; res 3,ixl
+0775: E6F7     [175]    	and $F7
+0777: 32DE07   [188]    	ld (ps_ixl), a
+077A: C9       [198]    	ret
+                        	; _atSound_getFrequency: Z=0 -> ручная частота (word) + TrackPitch; иначе по ноте:
+                        	;   бит 4 B — питч инструмента (word, прибавляется к TrackPitch), бит 3 B — арпеджио (byte).
+                        	; Вход: HL = инструмент, B = флаги, E = нота. Выход: HL = частота, ps_iptr = инструмент дальше.
+                        	; Портит A, DE.
+077B:                   _atSound_getFrequency:
+077B: C2B907   [10|10]  	jp nz, _atSound_getFrequency_manual
+077E:                   _atSound_calcFrequency:
+077E: 78       [ 4]     	ld a, b
+077F: E610     [11]     	and $10
+0781: CA9607   [21|21]  	jp z, _atSound_calcFrequency_noPitch
+0784: 7E       [28]     	ld a, (hl)	; питч инструмента -> TrackPitch (DE = громкость/нота — не трогать!)
+0785: 23       [34]     	inc hl
+0786: E5       [45]     	push hl
+0787: 21D607   [55]     	ld hl, ps_pitch
+078A: 86       [62]     	add a, (hl)
+078B: 77       [69]     	ld (hl), a
+078C: E1       [79]     	pop hl
+078D: 7E       [86]     	ld a, (hl)
+078E: 23       [92]     	inc hl
+078F: E5       [103]    	push hl
+0790: 21D707   [113]    	ld hl, ps_pitch+1
+0793: 8E       [120]    	adc a, (hl)	; CY от первого add: push/pop/ld hl,nn флаги не трогают
+0794: 77       [127]    	ld (hl), a
+0795: E1       [137]    	pop hl
+0796:                   _atSound_calcFrequency_noPitch:
+0796: 78       [ 4]     	ld a, b
+0797: E608     [11]     	and $08
+0799: 7B       [15]     	ld a, e	; нота (and не трогает A? трогает — поэтому флаг проверяем сразу)
+079A: CAA607   [25|25]  	jp z, _atSound_calcFrequency_noArp
+079D: 86       [32]     	add a, (hl)	; + арпеджио
+079E: 23       [38]     	inc hl
+079F: FE90     [45]     	cp 144
+07A1: DAA607   [55|55]  	jp c, _atSound_calcFrequency_noArp
+07A4: 3E8F     [62]     	ld a, 143
+07A6:                   _atSound_calcFrequency_noArp:
+07A6: 22D807   [16]     	ld (ps_iptr), hl
+07A9: 6F       [20]     	ld l, a
+07AA: 2600     [27]     	ld h, 0
+07AC: 29       [38]     	add hl, hl
+07AD: 112008   [48]     	ld de, _atLUT_notePeriods
+07B0: 19       [59]     	add hl, de
+07B1: 5E       [66]     	ld e, (hl)
+07B2: 23       [72]     	inc hl
+07B3: 56       [79]     	ld d, (hl)
+07B4: 2AD607   [95]     	ld hl, (ps_pitch)
+07B7: 19       [106]    	add hl, de	; период + TrackPitch (+ питч инструмента)
+07B8: C9       [116]    	ret
+07B9:                   _atSound_getFrequency_manual:
+07B9: 5E       [ 7]     	ld e, (hl)	; ручная частота + TrackPitch
+07BA: 23       [13]     	inc hl
+07BB: 56       [20]     	ld d, (hl)
+07BC: 23       [26]     	inc hl
+07BD: 22D807   [42]     	ld (ps_iptr), hl
+07C0: 2AD607   [58]     	ld hl, (ps_pitch)
+07C3: 19       [69]     	add hl, de
+07C4: C9       [79]     	ret
+                        	; ps_sra2: HL >>= 2 арифметически (sra h / rr l дважды)
+07C5:                   ps_sra2:
+07C5: 7C       [ 4]     	ld a, h
+07C6: 17       [ 8]     	rla
+07C7: 7C       [12]     	ld a, h
+07C8: 1F       [16]     	rra
+07C9: 67       [20]     	ld h, a
+07CA: 7D       [24]     	ld a, l
+07CB: 1F       [28]     	rra
+07CC: 6F       [32]     	ld l, a
+07CD: 7C       [36]     	ld a, h
+07CE: 17       [40]     	rla
+07CF: 7C       [44]     	ld a, h
+07D0: 1F       [48]     	rra
+07D1: 67       [52]     	ld h, a
+07D2: 7D       [56]     	ld a, l
+07D3: 1F       [60]     	rra
+07D4: 6F       [64]     	ld l, a
+07D5: C9       [74]     	ret
+                        	; ячейки нативного плеера
+07D6: 0000              ps_pitch:	dw 0	; DE' — TrackPitch
+07D8: 0000              ps_iptr:	dw 0	; указатель инструмента на время расчёта частоты
+07DA: 0000              ps_freqp:	dw 0	; IY -> частота канала
+07DC: 0000              ps_volp:	dw 0	; IY+7 -> громкость канала
+07DE: 00                ps_ixl:	db 0	; флаги R7 канала
+07DF: 00                ps_ixh:	db 0	; сохранённая нота
+07E0: 00                ps_r7:	db 0	; AF' — сборка R7
+                        
+                        	; Read Track.
+                        	; Input:
+                        	;	HL=Track Pointer.
+                        
+                        	; Output:
+                        	;	HL = Updated Track Pointer.
+                        	;	Carry = 1 => Wait A lines.
+                        	;		then A = Wait (0(=256)-127)
+                        	;	Carry = 0 => Line not empty.
+                        	;	 D = Parameters + Volume.
+                        	;	 E = Note
+                        	;	 B = Instrument. 0=RST
+                        	;	IX = PitchAdd. Only used if Pitch? = 1.
+07E1:                   _atReadTrack:
+07E1: 7E       [ 7]     	ld a, (hl)
+07E2: 23       [13]     	inc hl
+                        	; Z80> srl a	;Full Optimisation ? If yes = Note only, no Pitch, no Volume, Same Instrument.
+07E3: B7       [17]     	or a
+07E4: 1F       [21]     	rra
+                        ; !!FLAGS srl: нет Z/S/P (только CY)
+07E5: DA1608   [31|31]  	jp c, _atReadTrack_FullOptimisation
+07E8: D620     [38]     	sub 32	;0-31 = Wait.
+07EA: DA1308   [48|48]  	jp c, _atReadTrack_Wait
+07ED: C2F307   [58|58]  	jp nz, _atReadTrack_NoEscapeCode
+07F0: 7E       [65]     	ld a, (hl)
+07F1: 23       [71]     	inc hl
+07F2: 3C       [75]     	inc a
+07F3:                   _atReadTrack_NoEscapeCode:
+07F3: 3D       [ 4]     	dec a	;0 (32-32) = Escape Code for more Notes (parameters will be read)
+07F4: 5F       [ 8]     	ld e, a	;Save Note.
+                        
+                        	;Read Parameters
+07F5:                   _atReadTrack_ReadParameters:
+07F5: 7E       [ 7]     	ld a, (hl)
+07F6: 57       [11]     	ld d, a	;Save Parameters.
+07F7: 23       [17]     	inc hl
+07F8: 17       [21]     	rla	;Pitch ?
+07F9: D20C08   [31|31]  	jp nc, _atReadTrack_Pitch_End
+07FC: 46       [38]     	ld b, (hl)	;Get PitchAdd
+                        	; Z80> ld ixl, b
+07FD: F5       [49]     	push af
+07FE: 78       [53]     	ld a,b
+07FF: 32440D   [66]     	ld (z_ix),a
+0802: F1       [76]     	pop af
+0803: 23       [82]     	inc hl
+0804: 46       [89]     	ld b, (hl)
+                        	; Z80> ld ixh, b
+0805: F5       [100]    	push af
+0806: 78       [104]    	ld a,b
+0807: 32450D   [117]    	ld (z_ix+1),a
+080A: F1       [127]    	pop af
+080B: 23       [133]    	inc hl
+080C:                   _atReadTrack_Pitch_End:
+080C: 17       [ 4]     	rla	;Skip IsNote? flag.
+080D: 17       [ 8]     	rla	;New Instrument ?
+080E: D0       [13|19]  	ret nc
+080F: 46       [20]     	ld b, (hl)
+0810: 23       [26]     	inc hl
+0811: B7       [30]     	or a	;Remove Carry, as the player interpret it as a Wait command.
+0812: C9       [40]     	ret
+                        
+0813:                   _atReadTrack_Wait:
+0813: C620     [ 7]     	add a, 32
+0815: C9       [17]     	ret
+0816:                   _atReadTrack_FullOptimisation:
+                        	;Note only, no Pitch, no Volume, Same Instrument.
+0816: 1640     [ 7]     	ld d, %01000000	;[7] Note only.
+0818: D601     [14]     	sub 1	;[7]
+081A: 5F       [18]     	ld e, a	;[4]
+081B: D0       [23|29]  	ret nc	;[5/11]
+081C: 5E       [30]     	ld e, (hl)	;[7] Escape Code found (0). Read Note.
+081D: 23       [36]     	inc hl	;[6]
+081E: B7       [40]     	or a	;[4]
+081F: C9       [50]     	ret	;[10]
+                        
+                        
+                        	;*** note/Periods lookup table *************************************************
+                        
+0820:                   _atLUT_notePeriods:
+                        	if atCNF_ZXPT
+                        	;					dw 4095,4095,4095,4095,4095,4095,4095,4095,4095,4030,3804,3591
+0820: DC0E070E          	dw 3804, 3591
+0824: 3D0D7F0C          	dw 3389, 3199, 3019, 2850, 2690, 2539, 2397, 2262, 2135, 2015, 1902, 1795
+0828: CB0B220B          
+082C: 820AEB09          
+0830: 5D09D608          
+0834: 5708DF07          
+0838: 6E070307          
+083C: 9F063F06          	dw 1695, 1599, 1510, 1425, 1345, 1270, 1198, 1131, 1068, 1008, 951, 898
+0840: E6059105          
+0844: 4105F604          
+0848: AE046B04          
+084C: 2C04F003          
+0850: B7038203          
+0854: 4F032003          	dw 847, 800, 755, 712, 673, 635, 599, 566, 534, 504, 476, 449
+0858: F302C802          
+085C: A1027B02          
+0860: 57023602          
+0864: 1602F801          
+0868: DC01C101          
+086C: A8019001          	dw 424, 400, 377, 356, 336, 317, 300, 283, 267, 252, 238, 224
+0870: 79016401          
+0874: 50013D01          
+0878: 2C011B01          
+087C: 0B01FC00          
+0880: EE00E000          
+0884: D400C800          	dw 212, 200, 189, 178, 168, 159, 150, 141, 133, 126, 119, 112
+0888: BD00B200          
+088C: A8009F00          
+0890: 96008D00          
+0894: 85007E00          
+0898: 77007000          
+089C: 6A006400          	dw 106, 100, 94, 89, 84, 79, 75, 71, 67, 63, 59, 56
+08A0: 5E005900          
+08A4: 54004F00          
+08A8: 4B004700          
+08AC: 43003F00          
+08B0: 3B003800          
+08B4: 35003200          	dw 53, 50, 47, 45, 42, 40, 37, 35, 33, 31, 30, 28
+08B8: 2F002D00          
+08BC: 2A002800          
+08C0: 25002300          
+08C4: 21001F00          
+08C8: 1E001C00          
+08CC: 1A001900          	dw 26, 25, 24, 22, 21, 20, 19, 18, 17, 16, 15, 14
+08D0: 18001600          
+08D4: 15001400          
+08D8: 13001200          
+08DC: 11001000          
+08E0: 0F000E00          
+08E4: 0D000C00          	dw 13, 12, 12, 11, 11, 10, 9, 9, 8, 8, 7, 7
+08E8: 0C000B00          
+08EC: 0B000A00          
+08F0: 09000900          
+08F4: 08000800          
+08F8: 07000700          
+08FC: 07000600          	dw 7, 6, 6, 6, 5, 5, 5, 4, 4, 4, 4, 4
+0900: 06000600          
+0904: 05000500          
+0908: 05000400          
+090C: 04000400          
+0910: 04000400          
+0914: 03000300          	dw 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2
+0918: 03000300          
+091C: 03000200          
+0920: 02000200          
+0924: 02000200          
+0928: 02000200          
+092C: 02000200          	dw 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+0930: 02000200          
+0934: 02000200          
+0938: 02000200          
+093C: 02000200          
+                        	else
+                        	dw 4095, 4095, 4095, 4095, 4095, 4095, 4095, 4095, 4095, 3977, 3754, 3543
+                        	dw 3344, 3157, 2980, 2812, 2655, 2506, 2365, 2232, 2107, 1989, 1877, 1772
+                        	dw 1672, 1578, 1490, 1406, 1327, 1253, 1182, 1116, 1053, 994, 939, 886
+                        	dw 836, 789, 745, 703, 664, 626, 591, 558, 527, 497, 469, 443
+                        	dw 418, 395, 372, 352, 332, 313, 296, 279, 263, 249, 235, 221
+                        	dw 209, 197, 186, 176, 166, 157, 148, 140, 132, 124, 117, 111
+                        	dw 105, 99, 93, 88, 83, 78, 74, 70, 66, 62, 59, 55
+                        	dw 52, 49, 47, 44, 41, 39, 37, 35, 33, 31, 29, 28
+                        	dw 26, 25, 23, 22, 21, 20, 18, 17, 16, 16, 15, 14
+                        	dw 13, 12, 12, 11, 10, 10, 9, 9, 8, 8, 7, 7
+                        	dw 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 3
+                        	dw 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2
+                        	endif
+                        
+                        	;*** Player controls ***********************************************************
+                        
+                        	; Initialize player
+                        	;  Input:
+                        	;	DE = song data address
+0940:                   atInit:
+0940: 210900   [10]     	ld hl, 9	;Skip Header, SampleChannel, YM Clock (DB*3), and Replay Frequency.
+0943: 19       [21]     	add hl, de
+                        
+0944: 11EA03   [31]     	ld de, _atVAR_SongSpeed + 1
+                        	; Z80> ldi 	;Copy Speed.
+0947: CD120D   [48]     	call z_ldi
+094A: 4E       [55]     	ld c, (hl)	;Get Instruments chunk size.
+094B: 23       [61]     	inc hl
+094C: 46       [68]     	ld b, (hl)
+094D: 23       [74]     	inc hl
+094E: 22BA02   [90]     	ld (_atVAR_Track1InstrumentLUT + 1), hl
+0951: 224003   [106]    	ld (_atVAR_Track2InstrumentLUT + 1), hl
+0954: 22C603   [122]    	ld (_atVAR_Track3InstrumentLUT + 1), hl
+                        
+0957: 09       [133]    	add hl, bc	;Skip Instruments to go to the Linker address.
+                        	;Get the pre-Linker information of the first pattern.
+0958: 112802   [143]    	ld de, _atVAR_PatternHeight + 1
+                        	; Z80> ldi 
+095B: CD120D   [160]    	call z_ldi
+095E: 119502   [170]    	ld de, _atVAR_TranspCh1 + 1
+                        	; Z80> ldi 
+0961: CD120D   [187]    	call z_ldi
+0964: 111B03   [197]    	ld de, _atVAR_TranspCh2 + 1
+                        	; Z80> ldi 
+0967: CD120D   [214]    	call z_ldi
+096A: 11A103   [224]    	ld de, _atVAR_TranspCh3 + 1
+                        	; Z80> ldi 
+096D: CD120D   [241]    	call z_ldi
+0970: 111402   [251]    	ld de, _atVAR_SpecialTrackAddr + 1
+                        	; Z80> ldi 
+0973: CD120D   [268]    	call z_ldi
+                        	; Z80> ldi 
+0976: CD120D   [285]    	call z_ldi
+0979: 22AF01   [301]    	ld (_atVAR_Linker + 1), hl	;Get the Linker address.
+                        
+097C: 3E01     [308]    	ld a, 1
+097E: 32A301   [321]    	ld (_atVAR_SongSpeedCtr + 1), a
+0981: 32A901   [334]    	ld (_atVAR_patternHeightCtr + 1), a
+                        
+0984: 3EFF     [341]    	ld a, $ff
+0986: 32C105   [354]    	ld (_atVAR_Reg13), a
+                        
+                        	;Set the Instruments pointers to Instrument 0 data (Header has to be skipped).
+0989: 2ABA02   [370]    	ld hl, (_atVAR_Track1InstrumentLUT + 1)
+098C: 5E       [377]    	ld e, (hl)
+098D: 23       [383]    	inc hl
+098E: 56       [390]    	ld d, (hl)
+098F: EB       [394]    	ex de, hl
+0990: 23       [400]    	inc hl	;Skip Instrument 0 Header.
+0991: 23       [406]    	inc hl
+0992: 22E904   [422]    	ld (_atVAR_Track1InstrumentPtr + 1), hl
+0995: 227804   [438]    	ld (_atVAR_Track2InstrumentPtr + 1), hl
+0998: 220E04   [454]    	ld (_atVAR_Track3InstrumentPtr + 1), hl
+099B: C9       [464]    	ret
+                        
+                        
+                        
+                        	;Stop the music, cut the channels.
+099C:                   atStop:
+099C: 21BA05   [10]     	ld hl, _atVAR_Reg8	; Clear R8,R9 and R10 to zero
+099F: 010003   [20]     	ld bc, $0300
+09A2: 71       [27]     	ld (hl), c
+09A3: 23       [33]     	inc hl
+                        	; Z80> djnz $-2
+09A4: 05       [37]     	dec b
+09A5: C2A209   [47|47]  	jp nz,$-1-2
+                        ; !!FLAGS djnz: dec b меняет Z/S/P
+09A8: 3E3F     [54]     	ld a, %00111111	; Disable Tone and Noise on all channels
+09AA: C33505   [64]     	jp _atAY3Update
+                        
+                        
+                        	;*** Optionnal Sound effect API ************************************************
+                        
+                        	if atCNF_SFX
+                        
+                        	;Initialize the Sound Effects.
+                        	; DE = SFX Music.
+09AD:                   atSfxInit:
+                        	;Find the Instrument Table.
+09AD: 210C00   [10]     	ld hl, 12
+09B0: 19       [21]     	add hl, de
+09B1: 22F809   [37]     	ld (_atSfxPlay_InstrumentTable + 1), hl
+                        
+                        	;Clear the three channels of any sound effect.
+09B4:                   atSfxStopAll:
+09B4: 210000   [10]     	ld hl, 0
+09B7: 220405   [26]     	ld (_atVAR_SfxTrack1_instrument + 1), hl
+09BA: 229304   [42]     	ld (_atVAR_SfxTrack2_instrument + 1), hl
+09BD: 222904   [58]     	ld (_atVAR_SfxTrack3_instrument + 1), hl
+09C0: C9       [68]     	ret
+                        
+                        
+0000:                   _atDEF_SfxOffset_pitch:	equ 0
+0011:                   _atDEF_SfxOffset_volume:	equ _atVAR_SfxTrack1_volume		- _atVAR_SfxTrack1_pitch
+0010:                   _atDEF_SfxOffset_note:	equ _atVAR_SfxTrack1_note		- _atVAR_SfxTrack1_pitch
+0007:                   _atDEF_SfxOffset_instrument:	equ _atVAR_SfxTrack1_instrument		- _atVAR_SfxTrack1_pitch
+002C:                   _atDEF_SfxOffset_speed:	equ _atVAR_SfxTrack1_instrumentSpeed	- _atVAR_SfxTrack1_pitch
+0023:                   _atDEF_SfxOffset_speedCtr:	equ _atVAR_SfxTrack1_instrumentSpeedCtr	- _atVAR_SfxTrack1_pitch
+                        
+                        
+                        	;Plays a Sound Effects along with the music.
+                        	; Input
+                        	;	A = No Channel (0,1,2)
+                        	;	L = SFX Number (>0)
+                        	;	H = Volume (0...F)
+                        	;	E = Note (0...143)
+                        	;	D = Speed (0 = As original, 1...255 = new Speed (1 is fastest))
+                        	;	BC = Inverted Pitch (-#FFFF -> FFFF). 0 is no pitch. The higher the pitch, the lower the sound.
+09C1:                   atSfxPlay:
+                        	; Z80> ld ix, _atVAR_SfxTrack1_pitch
+09C1: E5       [11]     	push hl
+09C2: 21FC04   [21]     	ld hl,_atVAR_SfxTrack1_pitch
+09C5: 22440D   [37]     	ld (z_ix),hl
+09C8: E1       [47]     	pop hl
+09C9: 3D       [51]     	dec a
+09CA: FAE009   [61|61]  	jp m, _atSfxPlay_Selected
+                        	; Z80> ld ix, _atVAR_SfxTrack2_pitch
+09CD: E5       [72]     	push hl
+09CE: 218B04   [82]     	ld hl,_atVAR_SfxTrack2_pitch
+09D1: 22440D   [98]     	ld (z_ix),hl
+09D4: E1       [108]    	pop hl
+09D5: CAE009   [118|118]	jp z, _atSfxPlay_Selected
+                        	; Z80> ld ix, _atVAR_SfxTrack3_pitch
+09D8: E5       [129]    	push hl
+09D9: 212104   [139]    	ld hl,_atVAR_SfxTrack3_pitch
+09DC: 22440D   [155]    	ld (z_ix),hl
+09DF: E1       [165]    	pop hl
+                        
+09E0:                   _atSfxPlay_Selected:
+                        	; Z80> ld (ix + _atDEF_SfxOffset_pitch + 1), c	;Set Pitch
+09E0: CD220C   [17]     	call z_ix_st_c
+09E3: 01                	db _atDEF_SfxOffset_pitch + 1
+                        	; Z80> ld (ix + _atDEF_SfxOffset_pitch + 2), b
+09E4: CD0B0C   [34]     	call z_ix_st_b
+09E7: 02                	db _atDEF_SfxOffset_pitch + 2
+09E8: 7B       [38]     	ld a, e	;Set Note
+                        	; Z80> ld (ix + _atDEF_SfxOffset_note), a
+09E9: CDDD0B   [55]     	call z_ix_sta
+09EC: 10                	db _atDEF_SfxOffset_note
+09ED: 3E0F     [62]     	ld a, 15	;Set Volume
+09EF: 94       [66]     	sub h
+                        	; Z80> ld (ix + _atDEF_SfxOffset_volume), a
+09F0: CDDD0B   [83]     	call z_ix_sta
+09F3: 11                	db _atDEF_SfxOffset_volume
+09F4: 2600     [90]     	ld h, 0	;Set Instrument Address
+09F6: 29       [101]    	add hl, hl
+09F7:                   _atSfxPlay_InstrumentTable:
+09F7: 010000   [10]     	ld bc, 0
+09FA: 09       [21]     	add hl, bc
+09FB: 7E       [28]     	ld a, (hl)
+09FC: 23       [34]     	inc hl
+09FD: 66       [41]     	ld h, (hl)
+09FE: 6F       [45]     	ld l, a
+09FF: 7A       [49]     	ld a, d	;Read Speed or use the user's one ?
+0A00: B7       [53]     	or a
+0A01: C2050A   [63|63]  	jp nz, _atSfxPlay_UserSpeed
+0A04: 7E       [70]     	ld a, (hl)	;Get Speed
+0A05:                   _atSfxPlay_UserSpeed:
+                        	; Z80> ld (ix + _atDEF_SfxOffset_speed + 1), a
+0A05: CDDD0B   [17]     	call z_ix_sta
+0A08: 2D                	db _atDEF_SfxOffset_speed + 1
+                        	; Z80> ld (ix + _atDEF_SfxOffset_speedCtr + 1), a
+0A09: CDDD0B   [34]     	call z_ix_sta
+0A0C: 24                	db _atDEF_SfxOffset_speedCtr + 1
+0A0D: 23       [40]     	inc hl	;Skip Retrig
+0A0E: 23       [46]     	inc hl
+                        	; Z80> ld (ix + _atDEF_SfxOffset_instrument + 1), l
+0A0F: 32480D   [59]     	ld (z_a),a
+0A12: 7D       [63]     	ld a,l
+0A13: CDDD0B   [80]     	call z_ix_sta
+0A16: 08                	db _atDEF_SfxOffset_instrument + 1
+0A17: 3A480D   [93]     	ld a,(z_a)
+                        	; Z80> ld (ix + _atDEF_SfxOffset_instrument + 2), h
+0A1A: 32480D   [106]    	ld (z_a),a
+0A1D: 7C       [110]    	ld a,h
+0A1E: CDDD0B   [127]    	call z_ix_sta
+0A21: 09                	db _atDEF_SfxOffset_instrument + 2
+0A22: 3A480D   [140]    	ld a,(z_a)
+0A25: C9       [150]    	ret
+                        
+                        	;Stops a sound effect on the selected channel
+                        	;A = No Channel (0,1,2)
+0A26:                   atSfxStop:
+0A26: 210405   [10]     	ld hl, _atVAR_SfxTrack1_instrument + 1
+0A29: 3D       [14]     	dec a
+0A2A: FA360A   [24|24]  	jp m, _atSfxStop_ChannelFound
+0A2D: 219304   [34]     	ld hl, _atVAR_SfxTrack2_instrument + 1
+0A30: CA370A   [44|44]  	jp z, _atSfxStop_ChannelFound + 1
+0A33: 212904   [54]     	ld hl, _atVAR_SfxTrack3_instrument + 1
+0A36:                   _atSfxStop_ChannelFound:
+0A36: AF       [ 4]     	xor a
+0A37: 77       [11]     	ld (hl), a
+0A38: 23       [17]     	inc hl
+0A39: 77       [24]     	ld (hl), a
+0A3A: C9       [34]     	ret
+                        
+                        	endif
+                        
+                        	;*** Optionnal Fade API ********************************************************
+                        
+                        	if atCNF_FADE
+                        atFade:
+                        	ld (_azVAR_FadeChA), a
+                        	ld (_azVAR_FadeChB), a
+                        	ld (_azVAR_FadeChC), a
+                        	ret
+                        	endif
+                        
+                        
+                        #include "../../src/vec/z80rt.asm"
+                        ; z80rt.asm — рантайм-хелперы для кода, оттранслированного z80to8080.py.
+                        ; Только i8080 (проверяется zasm --8080). Контракт: каждый хелпер бережёт
+                        ; HL, BC, DE, A и флаги, кроме явно объявленного результата.
+                        ;
+                        ; Ячейки (в vec_vars.asm): z_ix, z_iy (2 байта), z_a (1), z_tmp (1), z_ret (2),
+                        ; z_af2, z_bc2, z_de2, z_hl2 (2).
+                        
+                        ; ---------------------------------------------------------------------------
+                        ; ld a,(ix+d): вход A=d. Выход A=(ix+d). Флаги сохранены.
+0A3B:                   z_ix_rda:
+0A3B: E5       [11]     	push hl
+0A3C: F5       [22]     	push af
+0A3D: 2A440D   [38]     	ld hl,(z_ix)
+0A40: 85       [42]     	add a,l
+0A41: 6F       [46]     	ld l,a
+0A42: 7C       [50]     	ld a,h
+0A43: CE00     [57]     	adc a,0
+0A45: 67       [61]     	ld h,a
+0A46: F1       [71]     	pop af
+0A47: 7E       [78]     	ld a,(hl)
+0A48: E1       [88]     	pop hl
+0A49: C9       [98]     	ret
+                        ; то же, флаги можно портить (после инструкции они мертвы)
+0A4A:                   z_ix_rda_nf:
+0A4A: E5       [11]     	push hl
+0A4B: 2A440D   [27]     	ld hl,(z_ix)
+0A4E: 85       [31]     	add a,l
+0A4F: 6F       [35]     	ld l,a
+0A50: 7C       [39]     	ld a,h
+0A51: CE00     [46]     	adc a,0
+0A53: 67       [50]     	ld h,a
+0A54: 7E       [57]     	ld a,(hl)
+0A55: E1       [67]     	pop hl
+0A56: C9       [77]     	ret
+0A57:                   z_iy_rda:
+0A57: E5       [11]     	push hl
+0A58: F5       [22]     	push af
+0A59: 2A460D   [38]     	ld hl,(z_iy)
+0A5C: 85       [42]     	add a,l
+0A5D: 6F       [46]     	ld l,a
+0A5E: 7C       [50]     	ld a,h
+0A5F: CE00     [57]     	adc a,0
+0A61: 67       [61]     	ld h,a
+0A62: F1       [71]     	pop af
+0A63: 7E       [78]     	ld a,(hl)
+0A64: E1       [88]     	pop hl
+0A65: C9       [98]     	ret
+0A66:                   z_iy_rda_nf:
+0A66: E5       [11]     	push hl
+0A67: 2A460D   [27]     	ld hl,(z_iy)
+0A6A: 85       [31]     	add a,l
+0A6B: 6F       [35]     	ld l,a
+0A6C: 7C       [39]     	ld a,h
+0A6D: CE00     [46]     	adc a,0
+0A6F: 67       [50]     	ld h,a
+0A70: 7E       [57]     	ld a,(hl)
+0A71: E1       [67]     	pop hl
+0A72: C9       [77]     	ret
+                        
+                        ; ---------------------------------------------------------------------------
+                        ; HL := ix+d, d — байт после call. Бережёт A, флаги, BC, DE. HL — результат.
+                        ; (вызывающий сам сохраняет HL, если нужно)
+0A73:                   z_ix_hl:
+0A73: E3       [19]     	ex (sp),hl		; HL=адрес возврата, (SP)=старый HL (не нужен)
+0A74: F5       [30]     	push af
+0A75: 7E       [37]     	ld a,(hl)		; d
+0A76: 23       [43]     	inc hl
+0A77: 224A0D   [59]     	ld (z_ret),hl
+0A7A: 2A440D   [75]     	ld hl,(z_ix)
+0A7D: 85       [79]     	add a,l
+0A7E: 6F       [83]     	ld l,a
+0A7F: 7C       [87]     	ld a,h
+0A80: CE00     [94]     	adc a,0
+0A82: 67       [98]     	ld h,a
+0A83: F1       [108]    	pop af
+0A84: E3       [127]    	ex (sp),hl		; HL=результат... нет: (SP)=старый HL -> вернём через z_ret
+                        	; сейчас HL=старый HL, (SP)=результат. Нам нужно вернуть результат в HL,
+                        	; а на стек положить адрес возврата.
+0A85: E1       [137]    	pop hl			; HL=результат, стек чист
+0A86: E5       [148]    	push hl
+0A87: 2A4A0D   [164]    	ld hl,(z_ret)
+0A8A: E3       [183]    	ex (sp),hl		; (SP)=адрес возврата, HL=результат
+0A8B: C9       [193]    	ret
+0A8C:                   z_iy_hl:
+0A8C: E3       [19]     	ex (sp),hl
+0A8D: F5       [30]     	push af
+0A8E: 7E       [37]     	ld a,(hl)
+0A8F: 23       [43]     	inc hl
+0A90: 224A0D   [59]     	ld (z_ret),hl
+0A93: 2A460D   [75]     	ld hl,(z_iy)
+0A96: 85       [79]     	add a,l
+0A97: 6F       [83]     	ld l,a
+0A98: 7C       [87]     	ld a,h
+0A99: CE00     [94]     	adc a,0
+0A9B: 67       [98]     	ld h,a
+0A9C: F1       [108]    	pop af
+0A9D: E3       [127]    	ex (sp),hl
+0A9E: E1       [137]    	pop hl
+0A9F: E5       [148]    	push hl
+0AA0: 2A4A0D   [164]    	ld hl,(z_ret)
+0AA3: E3       [183]    	ex (sp),hl
+0AA4: C9       [193]    	ret
+                        
+                        ; ---------------------------------------------------------------------------
+                        ; ld r,(ix+d) для r=b,c,d,e,h,l и ld (ix+d),r; d — байт после call.
+                        ; Реализованы через общий каркас: HL=ix+d вычисляется, затем действие.
+                        ; Макрос-подобная раскладка руками (i8080, без макросов zasm ради простоты).
+                        
+                        ; --- чтение в регистр (не A, не H/L): бережёт A, флаги, HL
+0AA5:                   z_ix_rd_b:
+0AA5: E3       [19]     	ex (sp),hl
+0AA6: F5       [30]     	push af
+0AA7: 7E       [37]     	ld a,(hl)
+0AA8: 23       [43]     	inc hl
+0AA9: 224A0D   [59]     	ld (z_ret),hl
+0AAC: 2A440D   [75]     	ld hl,(z_ix)
+0AAF: 85       [79]     	add a,l
+0AB0: 6F       [83]     	ld l,a
+0AB1: 7C       [87]     	ld a,h
+0AB2: CE00     [94]     	adc a,0
+0AB4: 67       [98]     	ld h,a
+0AB5: 46       [105]    	ld b,(hl)
+0AB6: 2A4A0D   [121]    	ld hl,(z_ret)
+0AB9: F1       [131]    	pop af
+0ABA: E3       [150]    	ex (sp),hl
+0ABB: C9       [160]    	ret
+0ABC:                   z_ix_rd_c:
+0ABC: E3       [19]     	ex (sp),hl
+0ABD: F5       [30]     	push af
+0ABE: 7E       [37]     	ld a,(hl)
+0ABF: 23       [43]     	inc hl
+0AC0: 224A0D   [59]     	ld (z_ret),hl
+0AC3: 2A440D   [75]     	ld hl,(z_ix)
+0AC6: 85       [79]     	add a,l
+0AC7: 6F       [83]     	ld l,a
+0AC8: 7C       [87]     	ld a,h
+0AC9: CE00     [94]     	adc a,0
+0ACB: 67       [98]     	ld h,a
+0ACC: 4E       [105]    	ld c,(hl)
+0ACD: 2A4A0D   [121]    	ld hl,(z_ret)
+0AD0: F1       [131]    	pop af
+0AD1: E3       [150]    	ex (sp),hl
+0AD2: C9       [160]    	ret
+0AD3:                   z_ix_rd_d:
+0AD3: E3       [19]     	ex (sp),hl
+0AD4: F5       [30]     	push af
+0AD5: 7E       [37]     	ld a,(hl)
+0AD6: 23       [43]     	inc hl
+0AD7: 224A0D   [59]     	ld (z_ret),hl
+0ADA: 2A440D   [75]     	ld hl,(z_ix)
+0ADD: 85       [79]     	add a,l
+0ADE: 6F       [83]     	ld l,a
+0ADF: 7C       [87]     	ld a,h
+0AE0: CE00     [94]     	adc a,0
+0AE2: 67       [98]     	ld h,a
+0AE3: 56       [105]    	ld d,(hl)
+0AE4: 2A4A0D   [121]    	ld hl,(z_ret)
+0AE7: F1       [131]    	pop af
+0AE8: E3       [150]    	ex (sp),hl
+0AE9: C9       [160]    	ret
+0AEA:                   z_ix_rd_e:
+0AEA: E3       [19]     	ex (sp),hl
+0AEB: F5       [30]     	push af
+0AEC: 7E       [37]     	ld a,(hl)
+0AED: 23       [43]     	inc hl
+0AEE: 224A0D   [59]     	ld (z_ret),hl
+0AF1: 2A440D   [75]     	ld hl,(z_ix)
+0AF4: 85       [79]     	add a,l
+0AF5: 6F       [83]     	ld l,a
+0AF6: 7C       [87]     	ld a,h
+0AF7: CE00     [94]     	adc a,0
+0AF9: 67       [98]     	ld h,a
+0AFA: 5E       [105]    	ld e,(hl)
+0AFB: 2A4A0D   [121]    	ld hl,(z_ret)
+0AFE: F1       [131]    	pop af
+0AFF: E3       [150]    	ex (sp),hl
+0B00: C9       [160]    	ret
+                        ; --- чтение в H / L: результат кладётся в старый HL
+0B01:                   z_ix_rd_h:
+0B01: E3       [19]     	ex (sp),hl
+0B02: F5       [30]     	push af
+0B03: 7E       [37]     	ld a,(hl)
+0B04: 23       [43]     	inc hl
+0B05: 224A0D   [59]     	ld (z_ret),hl
+0B08: 2A440D   [75]     	ld hl,(z_ix)
+0B0B: 85       [79]     	add a,l
+0B0C: 6F       [83]     	ld l,a
+0B0D: 7C       [87]     	ld a,h
+0B0E: CE00     [94]     	adc a,0
+0B10: 67       [98]     	ld h,a
+0B11: 7E       [105]    	ld a,(hl)
+0B12: 32490D   [118]    	ld (z_tmp),a
+0B15: 2A4A0D   [134]    	ld hl,(z_ret)
+0B18: F1       [144]    	pop af
+0B19: E3       [163]    	ex (sp),hl		; HL=старый HL, (SP)=адрес возврата
+0B1A: F5       [174]    	push af
+0B1B: 3A490D   [187]    	ld a,(z_tmp)
+0B1E: 67       [191]    	ld h,a
+0B1F: F1       [201]    	pop af
+0B20: C9       [211]    	ret
+0B21:                   z_ix_rd_l:
+0B21: E3       [19]     	ex (sp),hl
+0B22: F5       [30]     	push af
+0B23: 7E       [37]     	ld a,(hl)
+0B24: 23       [43]     	inc hl
+0B25: 224A0D   [59]     	ld (z_ret),hl
+0B28: 2A440D   [75]     	ld hl,(z_ix)
+0B2B: 85       [79]     	add a,l
+0B2C: 6F       [83]     	ld l,a
+0B2D: 7C       [87]     	ld a,h
+0B2E: CE00     [94]     	adc a,0
+0B30: 67       [98]     	ld h,a
+0B31: 7E       [105]    	ld a,(hl)
+0B32: 32490D   [118]    	ld (z_tmp),a
+0B35: 2A4A0D   [134]    	ld hl,(z_ret)
+0B38: F1       [144]    	pop af
+0B39: E3       [163]    	ex (sp),hl
+0B3A: F5       [174]    	push af
+0B3B: 3A490D   [187]    	ld a,(z_tmp)
+0B3E: 6F       [191]    	ld l,a
+0B3F: F1       [201]    	pop af
+0B40: C9       [211]    	ret
+0B41:                   z_iy_rd_b:
+0B41: E3       [19]     	ex (sp),hl
+0B42: F5       [30]     	push af
+0B43: 7E       [37]     	ld a,(hl)
+0B44: 23       [43]     	inc hl
+0B45: 224A0D   [59]     	ld (z_ret),hl
+0B48: 2A460D   [75]     	ld hl,(z_iy)
+0B4B: 85       [79]     	add a,l
+0B4C: 6F       [83]     	ld l,a
+0B4D: 7C       [87]     	ld a,h
+0B4E: CE00     [94]     	adc a,0
+0B50: 67       [98]     	ld h,a
+0B51: 46       [105]    	ld b,(hl)
+0B52: 2A4A0D   [121]    	ld hl,(z_ret)
+0B55: F1       [131]    	pop af
+0B56: E3       [150]    	ex (sp),hl
+0B57: C9       [160]    	ret
+0B58:                   z_iy_rd_c:
+0B58: E3       [19]     	ex (sp),hl
+0B59: F5       [30]     	push af
+0B5A: 7E       [37]     	ld a,(hl)
+0B5B: 23       [43]     	inc hl
+0B5C: 224A0D   [59]     	ld (z_ret),hl
+0B5F: 2A460D   [75]     	ld hl,(z_iy)
+0B62: 85       [79]     	add a,l
+0B63: 6F       [83]     	ld l,a
+0B64: 7C       [87]     	ld a,h
+0B65: CE00     [94]     	adc a,0
+0B67: 67       [98]     	ld h,a
+0B68: 4E       [105]    	ld c,(hl)
+0B69: 2A4A0D   [121]    	ld hl,(z_ret)
+0B6C: F1       [131]    	pop af
+0B6D: E3       [150]    	ex (sp),hl
+0B6E: C9       [160]    	ret
+0B6F:                   z_iy_rd_d:
+0B6F: E3       [19]     	ex (sp),hl
+0B70: F5       [30]     	push af
+0B71: 7E       [37]     	ld a,(hl)
+0B72: 23       [43]     	inc hl
+0B73: 224A0D   [59]     	ld (z_ret),hl
+0B76: 2A460D   [75]     	ld hl,(z_iy)
+0B79: 85       [79]     	add a,l
+0B7A: 6F       [83]     	ld l,a
+0B7B: 7C       [87]     	ld a,h
+0B7C: CE00     [94]     	adc a,0
+0B7E: 67       [98]     	ld h,a
+0B7F: 56       [105]    	ld d,(hl)
+0B80: 2A4A0D   [121]    	ld hl,(z_ret)
+0B83: F1       [131]    	pop af
+0B84: E3       [150]    	ex (sp),hl
+0B85: C9       [160]    	ret
+0B86:                   z_iy_rd_e:
+0B86: E3       [19]     	ex (sp),hl
+0B87: F5       [30]     	push af
+0B88: 7E       [37]     	ld a,(hl)
+0B89: 23       [43]     	inc hl
+0B8A: 224A0D   [59]     	ld (z_ret),hl
+0B8D: 2A460D   [75]     	ld hl,(z_iy)
+0B90: 85       [79]     	add a,l
+0B91: 6F       [83]     	ld l,a
+0B92: 7C       [87]     	ld a,h
+0B93: CE00     [94]     	adc a,0
+0B95: 67       [98]     	ld h,a
+0B96: 5E       [105]    	ld e,(hl)
+0B97: 2A4A0D   [121]    	ld hl,(z_ret)
+0B9A: F1       [131]    	pop af
+0B9B: E3       [150]    	ex (sp),hl
+0B9C: C9       [160]    	ret
+0B9D:                   z_iy_rd_h:
+0B9D: E3       [19]     	ex (sp),hl
+0B9E: F5       [30]     	push af
+0B9F: 7E       [37]     	ld a,(hl)
+0BA0: 23       [43]     	inc hl
+0BA1: 224A0D   [59]     	ld (z_ret),hl
+0BA4: 2A460D   [75]     	ld hl,(z_iy)
+0BA7: 85       [79]     	add a,l
+0BA8: 6F       [83]     	ld l,a
+0BA9: 7C       [87]     	ld a,h
+0BAA: CE00     [94]     	adc a,0
+0BAC: 67       [98]     	ld h,a
+0BAD: 7E       [105]    	ld a,(hl)
+0BAE: 32490D   [118]    	ld (z_tmp),a
+0BB1: 2A4A0D   [134]    	ld hl,(z_ret)
+0BB4: F1       [144]    	pop af
+0BB5: E3       [163]    	ex (sp),hl
+0BB6: F5       [174]    	push af
+0BB7: 3A490D   [187]    	ld a,(z_tmp)
+0BBA: 67       [191]    	ld h,a
+0BBB: F1       [201]    	pop af
+0BBC: C9       [211]    	ret
+0BBD:                   z_iy_rd_l:
+0BBD: E3       [19]     	ex (sp),hl
+0BBE: F5       [30]     	push af
+0BBF: 7E       [37]     	ld a,(hl)
+0BC0: 23       [43]     	inc hl
+0BC1: 224A0D   [59]     	ld (z_ret),hl
+0BC4: 2A460D   [75]     	ld hl,(z_iy)
+0BC7: 85       [79]     	add a,l
+0BC8: 6F       [83]     	ld l,a
+0BC9: 7C       [87]     	ld a,h
+0BCA: CE00     [94]     	adc a,0
+0BCC: 67       [98]     	ld h,a
+0BCD: 7E       [105]    	ld a,(hl)
+0BCE: 32490D   [118]    	ld (z_tmp),a
+0BD1: 2A4A0D   [134]    	ld hl,(z_ret)
+0BD4: F1       [144]    	pop af
+0BD5: E3       [163]    	ex (sp),hl
+0BD6: F5       [174]    	push af
+0BD7: 3A490D   [187]    	ld a,(z_tmp)
+0BDA: 6F       [191]    	ld l,a
+0BDB: F1       [201]    	pop af
+0BDC: C9       [211]    	ret
+                        
+                        ; --- запись A / регистра / константы в (ix+d); d (и n) — байты после call
+0BDD:                   z_ix_sta:
+0BDD: E3       [19]     	ex (sp),hl
+0BDE: F5       [30]     	push af
+0BDF: 7E       [37]     	ld a,(hl)
+0BE0: 23       [43]     	inc hl
+0BE1: 224A0D   [59]     	ld (z_ret),hl
+0BE4: 2A440D   [75]     	ld hl,(z_ix)
+0BE7: 85       [79]     	add a,l
+0BE8: 6F       [83]     	ld l,a
+0BE9: 7C       [87]     	ld a,h
+0BEA: CE00     [94]     	adc a,0
+0BEC: 67       [98]     	ld h,a
+0BED: F1       [108]    	pop af
+0BEE: 77       [115]    	ld (hl),a
+0BEF: 2A4A0D   [131]    	ld hl,(z_ret)
+0BF2: E3       [150]    	ex (sp),hl
+0BF3: C9       [160]    	ret
+0BF4:                   z_iy_sta:
+0BF4: E3       [19]     	ex (sp),hl
+0BF5: F5       [30]     	push af
+0BF6: 7E       [37]     	ld a,(hl)
+0BF7: 23       [43]     	inc hl
+0BF8: 224A0D   [59]     	ld (z_ret),hl
+0BFB: 2A460D   [75]     	ld hl,(z_iy)
+0BFE: 85       [79]     	add a,l
+0BFF: 6F       [83]     	ld l,a
+0C00: 7C       [87]     	ld a,h
+0C01: CE00     [94]     	adc a,0
+0C03: 67       [98]     	ld h,a
+0C04: F1       [108]    	pop af
+0C05: 77       [115]    	ld (hl),a
+0C06: 2A4A0D   [131]    	ld hl,(z_ret)
+0C09: E3       [150]    	ex (sp),hl
+0C0A: C9       [160]    	ret
+0C0B:                   z_ix_st_b:
+0C0B: E3       [19]     	ex (sp),hl
+0C0C: F5       [30]     	push af
+0C0D: 7E       [37]     	ld a,(hl)
+0C0E: 23       [43]     	inc hl
+0C0F: 224A0D   [59]     	ld (z_ret),hl
+0C12: 2A440D   [75]     	ld hl,(z_ix)
+0C15: 85       [79]     	add a,l
+0C16: 6F       [83]     	ld l,a
+0C17: 7C       [87]     	ld a,h
+0C18: CE00     [94]     	adc a,0
+0C1A: 67       [98]     	ld h,a
+0C1B: 70       [105]    	ld (hl),b
+0C1C: 2A4A0D   [121]    	ld hl,(z_ret)
+0C1F: F1       [131]    	pop af
+0C20: E3       [150]    	ex (sp),hl
+0C21: C9       [160]    	ret
+0C22:                   z_ix_st_c:
+0C22: E3       [19]     	ex (sp),hl
+0C23: F5       [30]     	push af
+0C24: 7E       [37]     	ld a,(hl)
+0C25: 23       [43]     	inc hl
+0C26: 224A0D   [59]     	ld (z_ret),hl
+0C29: 2A440D   [75]     	ld hl,(z_ix)
+0C2C: 85       [79]     	add a,l
+0C2D: 6F       [83]     	ld l,a
+0C2E: 7C       [87]     	ld a,h
+0C2F: CE00     [94]     	adc a,0
+0C31: 67       [98]     	ld h,a
+0C32: 71       [105]    	ld (hl),c
+0C33: 2A4A0D   [121]    	ld hl,(z_ret)
+0C36: F1       [131]    	pop af
+0C37: E3       [150]    	ex (sp),hl
+0C38: C9       [160]    	ret
+0C39:                   z_ix_st_d:
+0C39: E3       [19]     	ex (sp),hl
+0C3A: F5       [30]     	push af
+0C3B: 7E       [37]     	ld a,(hl)
+0C3C: 23       [43]     	inc hl
+0C3D: 224A0D   [59]     	ld (z_ret),hl
+0C40: 2A440D   [75]     	ld hl,(z_ix)
+0C43: 85       [79]     	add a,l
+0C44: 6F       [83]     	ld l,a
+0C45: 7C       [87]     	ld a,h
+0C46: CE00     [94]     	adc a,0
+0C48: 67       [98]     	ld h,a
+0C49: 72       [105]    	ld (hl),d
+0C4A: 2A4A0D   [121]    	ld hl,(z_ret)
+0C4D: F1       [131]    	pop af
+0C4E: E3       [150]    	ex (sp),hl
+0C4F: C9       [160]    	ret
+0C50:                   z_ix_st_e:
+0C50: E3       [19]     	ex (sp),hl
+0C51: F5       [30]     	push af
+0C52: 7E       [37]     	ld a,(hl)
+0C53: 23       [43]     	inc hl
+0C54: 224A0D   [59]     	ld (z_ret),hl
+0C57: 2A440D   [75]     	ld hl,(z_ix)
+0C5A: 85       [79]     	add a,l
+0C5B: 6F       [83]     	ld l,a
+0C5C: 7C       [87]     	ld a,h
+0C5D: CE00     [94]     	adc a,0
+0C5F: 67       [98]     	ld h,a
+0C60: 73       [105]    	ld (hl),e
+0C61: 2A4A0D   [121]    	ld hl,(z_ret)
+0C64: F1       [131]    	pop af
+0C65: E3       [150]    	ex (sp),hl
+0C66: C9       [160]    	ret
+0C67:                   z_iy_st_b:
+0C67: E3       [19]     	ex (sp),hl
+0C68: F5       [30]     	push af
+0C69: 7E       [37]     	ld a,(hl)
+0C6A: 23       [43]     	inc hl
+0C6B: 224A0D   [59]     	ld (z_ret),hl
+0C6E: 2A460D   [75]     	ld hl,(z_iy)
+0C71: 85       [79]     	add a,l
+0C72: 6F       [83]     	ld l,a
+0C73: 7C       [87]     	ld a,h
+0C74: CE00     [94]     	adc a,0
+0C76: 67       [98]     	ld h,a
+0C77: 70       [105]    	ld (hl),b
+0C78: 2A4A0D   [121]    	ld hl,(z_ret)
+0C7B: F1       [131]    	pop af
+0C7C: E3       [150]    	ex (sp),hl
+0C7D: C9       [160]    	ret
+0C7E:                   z_iy_st_c:
+0C7E: E3       [19]     	ex (sp),hl
+0C7F: F5       [30]     	push af
+0C80: 7E       [37]     	ld a,(hl)
+0C81: 23       [43]     	inc hl
+0C82: 224A0D   [59]     	ld (z_ret),hl
+0C85: 2A460D   [75]     	ld hl,(z_iy)
+0C88: 85       [79]     	add a,l
+0C89: 6F       [83]     	ld l,a
+0C8A: 7C       [87]     	ld a,h
+0C8B: CE00     [94]     	adc a,0
+0C8D: 67       [98]     	ld h,a
+0C8E: 71       [105]    	ld (hl),c
+0C8F: 2A4A0D   [121]    	ld hl,(z_ret)
+0C92: F1       [131]    	pop af
+0C93: E3       [150]    	ex (sp),hl
+0C94: C9       [160]    	ret
+0C95:                   z_iy_st_d:
+0C95: E3       [19]     	ex (sp),hl
+0C96: F5       [30]     	push af
+0C97: 7E       [37]     	ld a,(hl)
+0C98: 23       [43]     	inc hl
+0C99: 224A0D   [59]     	ld (z_ret),hl
+0C9C: 2A460D   [75]     	ld hl,(z_iy)
+0C9F: 85       [79]     	add a,l
+0CA0: 6F       [83]     	ld l,a
+0CA1: 7C       [87]     	ld a,h
+0CA2: CE00     [94]     	adc a,0
+0CA4: 67       [98]     	ld h,a
+0CA5: 72       [105]    	ld (hl),d
+0CA6: 2A4A0D   [121]    	ld hl,(z_ret)
+0CA9: F1       [131]    	pop af
+0CAA: E3       [150]    	ex (sp),hl
+0CAB: C9       [160]    	ret
+0CAC:                   z_iy_st_e:
+0CAC: E3       [19]     	ex (sp),hl
+0CAD: F5       [30]     	push af
+0CAE: 7E       [37]     	ld a,(hl)
+0CAF: 23       [43]     	inc hl
+0CB0: 224A0D   [59]     	ld (z_ret),hl
+0CB3: 2A460D   [75]     	ld hl,(z_iy)
+0CB6: 85       [79]     	add a,l
+0CB7: 6F       [83]     	ld l,a
+0CB8: 7C       [87]     	ld a,h
+0CB9: CE00     [94]     	adc a,0
+0CBB: 67       [98]     	ld h,a
+0CBC: 73       [105]    	ld (hl),e
+0CBD: 2A4A0D   [121]    	ld hl,(z_ret)
+0CC0: F1       [131]    	pop af
+0CC1: E3       [150]    	ex (sp),hl
+0CC2: C9       [160]    	ret
+                        ; ld (ix+d),n : после call два байта: d, n
+0CC3:                   z_ix_stn:
+0CC3: E3       [19]     	ex (sp),hl
+0CC4: F5       [30]     	push af
+0CC5: 7E       [37]     	ld a,(hl)		; d
+0CC6: 23       [43]     	inc hl
+0CC7: 224A0D   [59]     	ld (z_ret),hl
+0CCA: 2A440D   [75]     	ld hl,(z_ix)
+0CCD: 85       [79]     	add a,l
+0CCE: 6F       [83]     	ld l,a
+0CCF: 7C       [87]     	ld a,h
+0CD0: CE00     [94]     	adc a,0
+0CD2: 67       [98]     	ld h,a
+0CD3: EB       [102]    	ex de,hl		; DE=адрес назначения
+0CD4: 2A4A0D   [118]    	ld hl,(z_ret)
+0CD7: 7E       [125]    	ld a,(hl)		; n
+0CD8: 23       [131]    	inc hl
+0CD9: 224A0D   [147]    	ld (z_ret),hl
+0CDC: 12       [154]    	ld (de),a
+0CDD: EB       [158]    	ex de,hl		; DE восстановлен, HL=мусор
+0CDE: 2A4A0D   [174]    	ld hl,(z_ret)
+0CE1: F1       [184]    	pop af
+0CE2: E3       [203]    	ex (sp),hl
+0CE3: C9       [213]    	ret
+0CE4:                   z_iy_stn:
+0CE4: E3       [19]     	ex (sp),hl
+0CE5: F5       [30]     	push af
+0CE6: 7E       [37]     	ld a,(hl)
+0CE7: 23       [43]     	inc hl
+0CE8: 224A0D   [59]     	ld (z_ret),hl
+0CEB: 2A460D   [75]     	ld hl,(z_iy)
+0CEE: 85       [79]     	add a,l
+0CEF: 6F       [83]     	ld l,a
+0CF0: 7C       [87]     	ld a,h
+0CF1: CE00     [94]     	adc a,0
+0CF3: 67       [98]     	ld h,a
+0CF4: EB       [102]    	ex de,hl
+0CF5: 2A4A0D   [118]    	ld hl,(z_ret)
+0CF8: 7E       [125]    	ld a,(hl)
+0CF9: 23       [131]    	inc hl
+0CFA: 224A0D   [147]    	ld (z_ret),hl
+0CFD: 12       [154]    	ld (de),a
+0CFE: EB       [158]    	ex de,hl
+0CFF: 2A4A0D   [174]    	ld hl,(z_ret)
+0D02: F1       [184]    	pop af
+0D03: E3       [203]    	ex (sp),hl
+0D04: C9       [213]    	ret
+                        
+                        ; ---------------------------------------------------------------------------
+                        ; ldir / ldi: как на Z80 (HL,DE += BC; BC=0). A и флаги сохраняются.
+0D05:                   z_ldir:
+0D05: F5       [11]     	push af
+0D06:                   z_ldir_l:
+0D06: 7E       [ 7]     	ld a,(hl)
+0D07: 12       [14]     	ld (de),a
+0D08: 23       [20]     	inc hl
+0D09: 13       [26]     	inc de
+0D0A: 0B       [32]     	dec bc
+0D0B: 78       [36]     	ld a,b
+0D0C: B1       [40]     	or c
+0D0D: C2060D   [50|50]  	jp nz,z_ldir_l
+0D10: F1       [60]     	pop af
+0D11: C9       [70]     	ret
+0D12:                   z_ldi:
+0D12: F5       [11]     	push af
+0D13: 7E       [18]     	ld a,(hl)
+0D14: 12       [25]     	ld (de),a
+0D15: 23       [31]     	inc hl
+0D16: 13       [37]     	inc de
+0D17: 0B       [43]     	dec bc
+0D18: F1       [53]     	pop af
+0D19: C9       [63]     	ret
+                        
+                        ; exx: обмен BC,DE,HL с тенями. A и флаги сохраняются.
+0D1A:                   z_exx:
+0D1A: F5       [11]     	push af
+0D1B: E5       [22]     	push hl			; исходный HL — на стек ДО обменов DE/BC (они портят HL как временный)
+0D1C: D5       [33]     	push de
+0D1D: 2A500D   [49]     	ld hl,(z_de2)
+0D20: E3       [68]     	ex (sp),hl
+0D21: 22500D   [84]     	ld (z_de2),hl
+0D24: D1       [94]     	pop de
+0D25: C5       [105]    	push bc
+0D26: 2A4E0D   [121]    	ld hl,(z_bc2)
+0D29: E3       [140]    	ex (sp),hl
+0D2A: 224E0D   [156]    	ld (z_bc2),hl
+0D2D: C1       [166]    	pop bc
+0D2E: 2A520D   [182]    	ld hl,(z_hl2)
+0D31: E3       [201]    	ex (sp),hl		; HL = исходный HL, (SP) = hl2
+0D32: 22520D   [217]    	ld (z_hl2),hl
+0D35: E1       [227]    	pop hl			; HL = hl2
+0D36: F1       [237]    	pop af
+0D37: C9       [247]    	ret
+                        ; ex af,af'
+0D38:                   z_exaf:
+0D38: E5       [11]     	push hl
+0D39: F5       [22]     	push af
+0D3A: 2A4C0D   [38]     	ld hl,(z_af2)
+0D3D: E3       [57]     	ex (sp),hl
+0D3E: 224C0D   [73]     	ld (z_af2),hl
+0D41: F1       [83]     	pop af
+0D42: E1       [93]     	pop hl
+0D43: C9       [103]    	ret
+0D44: 0000              z_ix:	dw 0
+0D46: 0000              z_iy:	dw 0
+0D48: 00                z_a:	db 0
+0D49: 00                z_tmp:	db 0
+0D4A: 0000              z_ret:	dw 0
+0D4C: 0000              z_af2:	dw 0
+0D4E: 0000              z_bc2:	dw 0
+0D50: 0000              z_de2:	dw 0
+0D52: 0000              z_hl2:	dw 0
+0D54: 00                ply_sd_cnt: db 0
+0D55: 00                ply_hd_cnt: db 0
+0D56: 00                ply_sd_loop: db 0
+
+
+; +++ segments +++
+
+#CODE          = $0100 =   256,  size = $0C57 =  3159
+
+; +++ global symbols +++
+
+DEMO                          = $0000 =     0          i8080_drv_sfx.asm:5 (unused)
+MUSIC_ROM_PAGE                = $0028 =    40          i8080_drv_sfx.asm:7 (unused)
+PLY_PSGReg13_Code             = $05A5 =  1445          arkos.asm:879 (unused)
+PLY_PSGReg13_Retrig           = $05AA =  1450          arkos.asm:884
+PLY_PS_EndSFX                 = $071B =  1819          arkos.asm:1179
+PLY_PS_EndSound_SFX           = $070E =  1806          arkos.asm:1170
+PLY_PS_HD_NoSoftwarePitch     = $06FB =  1787          arkos.asm:1158
+PLY_PS_HD_Shifted             = $06E5 =  1765          arkos.asm:1142
+PLY_PS_Hard                   = $0642 =  1602          arkos.asm:1027
+PLY_PS_Hard_LoopOrIndependent = $0708 =  1800          arkos.asm:1166
+PLY_PS_Hard_NoRetrig          = $0658 =  1624          arkos.asm:1039
+PLY_PS_HardwareDependent      = $06CB =  1739          arkos.asm:1123
+PLY_PS_I_SkipSoftwareFrequencyCalculation = $0751 =  1873          arkos.asm:1210
+PLY_PS_I_SoundOn              = $0734 =  1844          arkos.asm:1194
+PLY_PS_Independent            = $071F =  1823          arkos.asm:1183
+PLY_PS_SD_NoHardwarePitch     = $06B7 =  1719          arkos.asm:1108
+PLY_PS_SD_NoInc               = $06A1 =  1697          arkos.asm:1092
+PLY_PS_SD_Noise               = $06BD =  1725          arkos.asm:1112
+PLY_PS_S_SBN_NoNoise          = $0612 =  1554          arkos.asm:991
+PLY_PS_S_SBN_Sound            = $062E =  1582          arkos.asm:1009
+PLY_PS_S_SecondByteNeeded     = $05FE =  1534          arkos.asm:980
+PLY_PS_S_SoundOn              = $05E2 =  1506          arkos.asm:962
+VDP_NY                        = $000A =    10          i8080_drv_sfx.asm:6 (unused)
+_8080_                        = $0001 =     1          i8080_drv_sfx.asm:1 (unused)
+_atAY3Update                  = $0535 =  1333          arkos.asm:754
+_atDEF_R13RetrigValue         = $00FE =   254          arkos.asm:81
+_atDEF_SfxOffset_instrument   = $0007 =     7          arkos.asm:1529
+_atDEF_SfxOffset_note         = $0010 =    16          arkos.asm:1528
+_atDEF_SfxOffset_pitch        = $0000 =     0          arkos.asm:1526
+_atDEF_SfxOffset_speed        = $002C =    44          arkos.asm:1530
+_atDEF_SfxOffset_speedCtr     = $0023 =    35          arkos.asm:1531
+_atDEF_SfxOffset_volume       = $0011 =    17          arkos.asm:1527
+_atKeepPatternHeight          = $0201 =   513          arkos.asm:168
+_atKeepTrCh1                  = $01C8 =   456          arkos.asm:132
+_atKeepTrCh2                  = $01D2 =   466          arkos.asm:138
+_atKeepTrCh3                  = $01DC =   476          arkos.asm:144
+_atLUT_notePeriods            = $0820 =  2080          arkos.asm:1397
+_atNoSfxTrack1                = $052D =  1325          arkos.asm:741
+_atNoSfxTrack2                = $04BC =  1212          arkos.asm:671
+_atNoSfxTrack3                = $0452 =  1106          arkos.asm:606
+_atPlaySound                  = $05C2 =  1474          arkos.asm:940
+_atReadTrack                  = $07E1 =  2017          arkos.asm:1332
+_atReadTrack_FullOptimisation = $0816 =  2070          arkos.asm:1383
+_atReadTrack_NoEscapeCode     = $07F3 =  2035          arkos.asm:1346
+_atReadTrack_Pitch_End        = $080C =  2060          arkos.asm:1371
+_atReadTrack_ReadParameters   = $07F5 =  2037          arkos.asm:1351 (unused)
+_atReadTrack_Wait             = $0813 =  2067          arkos.asm:1380
+_atReplaySpecialTrack         = $0210 =   528          arkos.asm:182
+_atSetPatternHeightCtr        = $0229 =   553          arkos.asm:199
+_atSetSongSpeedCtr            = $03EB =  1003          arkos.asm:534
+_atSfxPlay_InstrumentTable    = $09F7 =  2551          arkos.asm:1580
+_atSfxPlay_Selected           = $09E0 =  2528          arkos.asm:1562
+_atSfxPlay_UserSpeed          = $0A05 =  2565          arkos.asm:1591
+_atSfxStop_ChannelFound       = $0A36 =  2614          arkos.asm:1623
+_atSfxTrack1_noForward        = $052A =  1322          arkos.asm:739
+_atSfxTrack2_noForward        = $04B9 =  1209          arkos.asm:669
+_atSfxTrack3_noForward        = $044F =  1103          arkos.asm:604
+_atSongContinue               = $01BE =   446          arkos.asm:126
+_atSoundTrack1_noForward      = $04F9 =  1273          arkos.asm:707
+_atSoundTrack2_noForward      = $0488 =  1160          arkos.asm:637
+_atSoundTrack3_noForward      = $041E =  1054          arkos.asm:572
+_atSound_calcFrequency        = $077E =  1918          arkos.asm:1241
+_atSound_calcFrequency_noArp  = $07A6 =  1958          arkos.asm:1269
+_atSound_calcFrequency_noPitch = $0796 =  1942          arkos.asm:1259
+_atSound_getFrequency         = $077B =  1915          arkos.asm:1239
+_atSound_getFrequency_manual  = $07B9 =  1977          arkos.asm:1282
+_atSpecialTrackNoEscCode      = $0243 =   579          arkos.asm:227
+_atSpecialTrackWait           = $0254 =   596          arkos.asm:238
+_atSpecialTrack_proceed       = $024F =   591          arkos.asm:234
+_atSpecialTrack_speedCmd      = $024C =   588          arkos.asm:232
+_atSpecialTrack_waitCmd       = $0251 =   593          arkos.asm:236
+_atTrack1LoadInstrument       = $02B7 =   695          arkos.asm:309
+_atTrack1SetInstrumentPtr     = $02D5 =   725          arkos.asm:329
+_atTrack1Wait                 = $02DA =   730          arkos.asm:333
+_atTrack1_keepNote            = $02D8 =   728          arkos.asm:331
+_atTrack1_keepPitch           = $0287 =   647          arkos.asm:276
+_atTrack1_keepVolume          = $0273 =   627          arkos.asm:262
+_atTrack2LoadInstrument       = $033D =   829          arkos.asm:407
+_atTrack2SetInstrumentPtr     = $035B =   859          arkos.asm:427
+_atTrack2Wait                 = $0360 =   864          arkos.asm:431
+_atTrack2_keepNote            = $035E =   862          arkos.asm:429
+_atTrack2_keepPitch           = $030D =   781          arkos.asm:372
+_atTrack2_keepVolume          = $02F9 =   761          arkos.asm:358
+_atTrack3LoadInstrument       = $03C3 =   963          arkos.asm:505
+_atTrack3SetInstrumentPtr     = $03E1 =   993          arkos.asm:525
+_atTrack3Wait                 = $03E6 =   998          arkos.asm:529
+_atTrack3_keepNote            = $03E4 =   996          arkos.asm:527
+_atTrack3_keepPitch           = $0393 =   915          arkos.asm:470
+_atTrack3_keepVolume          = $037F =   895          arkos.asm:456
+_atVAR_AY3Registers           = $05B3 =  1459          arkos.asm:895
+_atVAR_Linker                 = $01AE =   430          arkos.asm:112
+_atVAR_PatternHeight          = $0227 =   551          arkos.asm:197
+_atVAR_R13Lock                = $05AA =  1450          arkos.asm:883
+_atVAR_Reg0                   = $05B3 =  1459          arkos.asm:897 (unused)
+_atVAR_Reg1                   = $05B4 =  1460          arkos.asm:898 (unused)
+_atVAR_Reg10                  = $05BE =  1470          arkos.asm:911 (unused)
+_atVAR_Reg11                  = $05BF =  1471          arkos.asm:912
+_atVAR_Reg12                  = $05C0 =  1472          arkos.asm:913 (unused)
+_atVAR_Reg13                  = $05C1 =  1473          arkos.asm:914
+_atVAR_Reg2                   = $05B5 =  1461          arkos.asm:899 (unused)
+_atVAR_Reg3                   = $05B6 =  1462          arkos.asm:900 (unused)
+_atVAR_Reg4                   = $05B7 =  1463          arkos.asm:901 (unused)
+_atVAR_Reg5                   = $05B8 =  1464          arkos.asm:902 (unused)
+_atVAR_Reg6                   = $05B9 =  1465          arkos.asm:903
+_atVAR_Reg8                   = $05BA =  1466          arkos.asm:904
+_atVAR_Reg9                   = $05BC =  1468          arkos.asm:909 (unused)
+_atVAR_SfxTrack1_instrument   = $0503 =  1283          arkos.asm:715
+_atVAR_SfxTrack1_instrumentSpeed = $0528 =  1320          arkos.asm:737
+_atVAR_SfxTrack1_instrumentSpeedCtr = $051F =  1311          arkos.asm:731
+_atVAR_SfxTrack1_note         = $050C =  1292          arkos.asm:721
+_atVAR_SfxTrack1_pitch        = $04FC =  1276          arkos.asm:711
+_atVAR_SfxTrack1_setInstrumentAddr = $0525 =  1317          arkos.asm:735
+_atVAR_SfxTrack1_volume       = $050D =  1293          arkos.asm:720
+_atVAR_SfxTrack2_instrument   = $0492 =  1170          arkos.asm:645
+_atVAR_SfxTrack2_instrumentSpeed = $04B7 =  1207          arkos.asm:667 (unused)
+_atVAR_SfxTrack2_instrumentSpeedCtr = $04AE =  1198          arkos.asm:661
+_atVAR_SfxTrack2_note         = $049B =  1179          arkos.asm:651 (unused)
+_atVAR_SfxTrack2_pitch        = $048B =  1163          arkos.asm:641
+_atVAR_SfxTrack2_setInstrumentAddr = $04B4 =  1204          arkos.asm:665
+_atVAR_SfxTrack2_volume       = $049C =  1180          arkos.asm:650 (unused)
+_atVAR_SfxTrack3_instrument   = $0428 =  1064          arkos.asm:580
+_atVAR_SfxTrack3_instrumentSpeed = $044D =  1101          arkos.asm:602 (unused)
+_atVAR_SfxTrack3_instrumentSpeedCtr = $0444 =  1092          arkos.asm:596
+_atVAR_SfxTrack3_note         = $0431 =  1073          arkos.asm:586 (unused)
+_atVAR_SfxTrack3_pitch        = $0421 =  1057          arkos.asm:576
+_atVAR_SfxTrack3_setInstrumentAddr = $044A =  1098          arkos.asm:600
+_atVAR_SfxTrack3_volume       = $0432 =  1074          arkos.asm:585 (unused)
+_atVAR_SongSpeed              = $03E9 =  1001          arkos.asm:532
+_atVAR_SongSpeedCtr           = $01A2 =   418          arkos.asm:97
+_atVAR_SpecialTrackAddr       = $0213 =   531          arkos.asm:184
+_atVAR_SpecialTrackPtr        = $0232 =   562          arkos.asm:210
+_atVAR_Track1InstAddr         = $02AB =   683          arkos.asm:303
+_atVAR_Track1InstSpeed        = $04F7 =  1271          arkos.asm:705
+_atVAR_Track1InstSpeedCtr     = $04EE =  1262          arkos.asm:700
+_atVAR_Track1InstrumentLUT    = $02B9 =   697          arkos.asm:312
+_atVAR_Track1InstrumentPtr    = $04E8 =  1256          arkos.asm:697
+_atVAR_Track1Note             = $04E6 =  1254          arkos.asm:695
+_atVAR_Track1Pitch            = $04D5 =  1237          arkos.asm:686
+_atVAR_Track1PitchAdd         = $04D8 =  1240          arkos.asm:688
+_atVAR_Track1Ptr              = $025D =   605          arkos.asm:250
+_atVAR_Track1Volume           = $04E7 =  1255          arkos.asm:694
+_atVAR_Track2InstAddr         = $0331 =   817          arkos.asm:401
+_atVAR_Track2InstSpeed        = $0486 =  1158          arkos.asm:635
+_atVAR_Track2InstSpeedCtr     = $047D =  1149          arkos.asm:630
+_atVAR_Track2InstrumentLUT    = $033F =   831          arkos.asm:410
+_atVAR_Track2InstrumentPtr    = $0477 =  1143          arkos.asm:627
+_atVAR_Track2Note             = $0475 =  1141          arkos.asm:625
+_atVAR_Track2Pitch            = $0464 =  1124          arkos.asm:616
+_atVAR_Track2PitchAdd         = $0467 =  1127          arkos.asm:618
+_atVAR_Track2Ptr              = $02E3 =   739          arkos.asm:345
+_atVAR_Track2Volume           = $0476 =  1142          arkos.asm:624
+_atVAR_Track3InstAddr         = $03B7 =   951          arkos.asm:498
+_atVAR_Track3InstSpeed        = $041C =  1052          arkos.asm:570
+_atVAR_Track3InstSpeedCtr     = $0413 =  1043          arkos.asm:565
+_atVAR_Track3InstrumentLUT    = $03C5 =   965          arkos.asm:508
+_atVAR_Track3InstrumentPtr    = $040D =  1037          arkos.asm:562
+_atVAR_Track3Note             = $040B =  1035          arkos.asm:560
+_atVAR_Track3Pitch            = $03FA =  1018          arkos.asm:551
+_atVAR_Track3PitchAdd         = $03FD =  1021          arkos.asm:553
+_atVAR_Track3Ptr              = $0369 =   873          arkos.asm:443
+_atVAR_Track3Volume           = $040C =  1036          arkos.asm:559
+_atVAR_TranspCh1              = $0294 =   660          arkos.asm:287
+_atVAR_TranspCh2              = $031A =   794          arkos.asm:385
+_atVAR_TranspCh3              = $03A0 =   928          arkos.asm:482
+_atVAR_WaitSpecialTrack       = $022C =   556          arkos.asm:205
+_atVAR_WaitTrack1             = $0257 =   599          arkos.asm:244
+_atVAR_WaitTrack2             = $02DD =   733          arkos.asm:339
+_atVAR_WaitTrack3             = $0363 =   867          arkos.asm:437
+_atVAR_digidrum               = $05BB =  1467          arkos.asm:907
+_atVAR_patternHeightCtr       = $01A8 =   424          arkos.asm:103
+_end                          = $0D57 =  3415          i8080_drv_sfx.asm:3 (unused)
+_size                         = $0C57 =  3159          i8080_drv_sfx.asm:3 (unused)
+atCNF_FADE                    = $0000 =     0          arkos.asm:25
+atCNF_SFX                     = $0001 =     1          arkos.asm:21
+atCNF_ZXPT                    = $0001 =     1          arkos.asm:17
+atInit                        = $0940 =  2368          arkos.asm:1433
+atPlay                        = $019E =   414          arkos.asm:92
+atSfxInit                     = $09AD =  2477          arkos.asm:1511
+atSfxPlay                     = $09C1 =  2497          arkos.asm:1542
+atSfxStop                     = $0A26 =  2598          arkos.asm:1616 (unused)
+atSfxStopAll                  = $09B4 =  2484          arkos.asm:1518
+atStop                        = $099C =  2460          arkos.asm:1492
+loop                          = $0116 =   278          i8080_drv_sfx.asm:16
+ply_hd_cnt                    = $0D55 =  3413          i8080_drv_sfx.asm:99 (unused)
+ply_sd_cnt                    = $0D54 =  3412          i8080_drv_sfx.asm:98 (unused)
+ply_sd_loop                   = $0D56 =  3414          i8080_drv_sfx.asm:100 (unused)
+ps_freqp                      = $07DA =  2010          arkos.asm:1313
+ps_hd_loop                    = $06E0 =  1760          arkos.asm:1138
+ps_iptr                       = $07D8 =  2008          arkos.asm:1312
+ps_ixh                        = $07DF =  2015          arkos.asm:1316
+ps_ixl                        = $07DE =  2014          arkos.asm:1315
+ps_pitch                      = $07D6 =  2006          arkos.asm:1311
+ps_r7                         = $07E0 =  2016          arkos.asm:1317
+ps_sbn_1                      = $061A =  1562          arkos.asm:997
+ps_sd_loop                    = $0692 =  1682          arkos.asm:1080
+ps_so_1                       = $05EF =  1519          arkos.asm:970
+ps_sra2                       = $07C5 =  1989          arkos.asm:1292
+ps_store_freq_ret             = $0637 =  1591          arkos.asm:1016
+ps_volp                       = $07DC =  2012          arkos.asm:1314
+sfx_tab                       = $0165 =   357          i8080_drv_sfx.asm:73
+start                         = $0103 =   259          i8080_drv_sfx.asm:8
+trig_end                      = $0152 =   338          i8080_drv_sfx.asm:61
+trig_l                        = $011F =   287          i8080_drv_sfx.asm:24
+trig_n                        = $014C =   332          i8080_drv_sfx.asm:56
+z_a                           = $0D48 =  3400          i8080_drv_sfx.asm:91
+z_af2                         = $0D4C =  3404          i8080_drv_sfx.asm:94
+z_bc2                         = $0D4E =  3406          i8080_drv_sfx.asm:95
+z_de2                         = $0D50 =  3408          i8080_drv_sfx.asm:96
+z_exaf                        = $0D38 =  3384          z80rt.asm:601 (unused)
+z_exx                         = $0D1A =  3354          z80rt.asm:581 (unused)
+z_hl2                         = $0D52 =  3410          i8080_drv_sfx.asm:97
+z_ix                          = $0D44 =  3396          i8080_drv_sfx.asm:89
+z_ix_hl                       = $0A73 =  2675          z80rt.asm:63 (unused)
+z_ix_rd_b                     = $0AA5 =  2725          z80rt.asm:110 (unused)
+z_ix_rd_c                     = $0ABC =  2748          z80rt.asm:127 (unused)
+z_ix_rd_d                     = $0AD3 =  2771          z80rt.asm:144 (unused)
+z_ix_rd_e                     = $0AEA =  2794          z80rt.asm:161 (unused)
+z_ix_rd_h                     = $0B01 =  2817          z80rt.asm:179 (unused)
+z_ix_rd_l                     = $0B21 =  2849          z80rt.asm:201 (unused)
+z_ix_rda                      = $0A3B =  2619          z80rt.asm:10 (unused)
+z_ix_rda_nf                   = $0A4A =  2634          z80rt.asm:24 (unused)
+z_ix_st_b                     = $0C0B =  3083          z80rt.asm:371
+z_ix_st_c                     = $0C22 =  3106          z80rt.asm:388
+z_ix_st_d                     = $0C39 =  3129          z80rt.asm:405 (unused)
+z_ix_st_e                     = $0C50 =  3152          z80rt.asm:422 (unused)
+z_ix_sta                      = $0BDD =  3037          z80rt.asm:337
+z_ix_stn                      = $0CC3 =  3267          z80rt.asm:508 (unused)
+z_iy                          = $0D46 =  3398          i8080_drv_sfx.asm:90
+z_iy_hl                       = $0A8C =  2700          z80rt.asm:84 (unused)
+z_iy_rd_b                     = $0B41 =  2881          z80rt.asm:223 (unused)
+z_iy_rd_c                     = $0B58 =  2904          z80rt.asm:240 (unused)
+z_iy_rd_d                     = $0B6F =  2927          z80rt.asm:257 (unused)
+z_iy_rd_e                     = $0B86 =  2950          z80rt.asm:274 (unused)
+z_iy_rd_h                     = $0B9D =  2973          z80rt.asm:291 (unused)
+z_iy_rd_l                     = $0BBD =  3005          z80rt.asm:313 (unused)
+z_iy_rda                      = $0A57 =  2647          z80rt.asm:35 (unused)
+z_iy_rda_nf                   = $0A66 =  2662          z80rt.asm:48 (unused)
+z_iy_st_b                     = $0C67 =  3175          z80rt.asm:439 (unused)
+z_iy_st_c                     = $0C7E =  3198          z80rt.asm:456 (unused)
+z_iy_st_d                     = $0C95 =  3221          z80rt.asm:473 (unused)
+z_iy_st_e                     = $0CAC =  3244          z80rt.asm:490 (unused)
+z_iy_sta                      = $0BF4 =  3060          z80rt.asm:354 (unused)
+z_iy_stn                      = $0CE4 =  3300          z80rt.asm:531 (unused)
+z_ldi                         = $0D12 =  3346          z80rt.asm:570
+z_ldir                        = $0D05 =  3333          z80rt.asm:557 (unused)
+z_ldir_l                      = $0D06 =  3334          z80rt.asm:559
+z_ret                         = $0D4A =  3402          i8080_drv_sfx.asm:93
+z_tmp                         = $0D49 =  3401          i8080_drv_sfx.asm:92
+
+
+total time: 0.0066 sec.
+no errors

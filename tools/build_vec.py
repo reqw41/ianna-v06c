@@ -116,6 +116,20 @@ def make_music():
     pl = pl.replace('org $DDCC', '; ВЕКТОР: org снят — плеер на месте в коде')
     pl = pl.replace('out (#a0),a', 'out ($15),a\t; AY Вектора: выбор регистра').replace('out (#a1),a', 'out ($14),a\t; AY Вектора: данные')
     assert 'out (#a' not in pl
+    # ВЕКТОР: горячая часть плеера (Play Sound по каналам + _atPlaySound) — нативный i8080 (src/vec/arkos_hot.asm)
+    hot = (VEC / 'arkos_hot.asm').read_text(encoding='utf-8')
+    hot1, hot2 = hot.split(';;;SPLIT;;;\n')
+    L = pl.split('\n')
+    def find(pred, start=0):
+        for i in range(start, len(L)):
+            if pred(L[i]): return i
+        raise SystemExit('arkos: маркер не найден')
+    a = find(lambda l: 'Play Sound on Track 3' in l)
+    b = find(lambda l: 'Update AY3 Registers (platform specific)' in l, a)
+    c = find(lambda l: l.startswith('_atPlaySound'), b)
+    d = find(lambda l: '; Read Track.' in l, c)
+    assert 'atCNF_SFX\tequ 1' in pl
+    pl = '\n'.join(L[:a] + hot1.split('\n') + L[b:c] + hot2.split('\n') + L[d:])
     (TR / 'arkos_src.asm').write_text(pl)
 
 def make_vars():
