@@ -437,7 +437,7 @@ dt_a0:
 	cp 80
 	jp nc,dt_direct		; $FE (грязный без слота) и $FF — прямо в VRAM
 	call vec_pool_addr
-	ld a,18			; бюджет DI: тайл в слот — медиана 17.5, p90 18.6 (calib, ур.2)
+	ld a,18 - C8*3		; бюджет DI: тайл в слот — 16ц медиана 17.5 / c8 14.1 (calib)
 	call vec_budget
 	ex de,hl		; DE = слот в окне
 	di
@@ -499,7 +499,7 @@ dtb_loop:
 	jp dt_end
     endif
 dt_direct:
-	ld a,22			; бюджет DI: тайл прямо в VRAM — медиана 20.8, p90 27 (calib, ур.1; включая обход RedrawInvTiles до следующего блита)
+	ld a,22 - C8*4		; бюджет DI: тайл прямо в VRAM — 16ц медиана 20.8 / c8 17.1 (calib; вкл. обход RedrawInvTiles)
 	call vec_budget
 	ld a,b
 	rrca
@@ -542,7 +542,7 @@ drawFGTile:
 	push de
 	push bc
 	push af
-	ld a,31			; FG: медиана 29–30, максимум 30.4 (calib)
+	ld a,31 - C8*6		; FG: 16ц медиана 29-30 / c8 24.4 (calib)
 	call vec_budget
 	pop af
 	ld l,a
@@ -787,7 +787,7 @@ dft_exit:
 ; Кадр 384 Б: for col 0..2: for row 31..0: [p0,p1,p2,p3]; маска на лету.
 drawSprite:
 	push af
-	ld a,10			; накладные DrawSpriteList/пролога спрайта: 9.8 ед. (calib)
+	ld a,10 + C8*2		; накладные DrawSpriteList/пролога спрайта: 16ц 9.8 / c8 11.8 ед. (calib)
 	call vec_budget
 	pop af
 	push af
@@ -1448,15 +1448,21 @@ dspm_n_ok:
 	ld a,(vec_spr_row)
 	sub b
 	ld (vec_spr_row),a
-	; бюджет DI на сегмент (calib: зеркальный медиана 2.25 ед./строку, p90 2.4; с 2.25 терялось 2 % прерываний): 2n + n/2 + 2. Живой регистр — DE (адрес в пуле)
+	; бюджет DI на сегмент, зеркальный. 16ц: 2n + n/2 + 2 (медиана 2.25/строку, p90 2.4); c8: 2n + 2
+	; (медиана 18.6 при n~8, p90 33.8 при n=16 — впритык к 34). Живой регистр — DE (адрес в пуле)
 	ex de,hl
 	ld (vec_spr_dst),hl
 	ld a,b
+    if C8
+	add a,b
+	add a,2
+    else
 	rrca
 	and $7f
 	add a,b
 	add a,b
 	add a,2
+    endif
 	ld (vec_spr_colcost),a
 	ld hl,dspm_seg_go
 	ld (vec_blit_ret),hl
@@ -1938,7 +1944,7 @@ vpf_slot:
 	ld e,a
 	ld hl,(vec_bud_used)	; фаза кадра: считать и сброс (ISR обнулит при прерывании)
 	ld a,l
-	add a,20
+	add a,20 - C8*4		; слот сброса: 96 Б при C8
 	jp nc,vpf_bud_ok
 	ld a,255
 vpf_bud_ok:
