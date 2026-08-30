@@ -291,8 +291,8 @@ vec_stk_leave:
 ; слот сброса ~18, спрайт по КОЛОНКАМ: прямой ~1.5 ед./строку, зеркальный ~2.1 (+8 на колонку),
 ; панель cols*pops/2 + 2. Таймер ВИ53 не трогаем — он нужен под музыку.
 ; Вход: A = стоимость в единицах 256 тактов. Портит A и флаги.
-VEC_BUDGET_LIMIT equ 224	; кадр = 234 ед.; запас на неучтённые накладные (стоимости откалиброваны по фазе ВИ53/стенду)
-VEC_ISR_COST	equ 25		; ISR с музыкой: медиана 22, максимум 29 ед. (модель слотов; палитра по флагу, 8 z-байт)
+VEC_BUDGET_LIMIT equ 228	; кадр = 234 ед.; запас 6 на неучтённые накладные (стоимости откалиброваны стендом calib по реальным тактам)
+VEC_ISR_COST	equ 24		; ISR с музыкой: ур.2 медиана 20 / p90 24, ур.1 медиана 22 / макс 29 (calib)
 vec_budget:
 	push hl
 	ld l,a
@@ -343,8 +343,6 @@ drawTile:
 	push de
 	push bc
 	push af
-	ld a,19
-	call vec_budget
 	pop af
     if DEMO
 	ld l,a
@@ -379,6 +377,8 @@ dt_a0:
 	cp 80
 	jp nc,dt_direct		; $FE (грязный без слота) и $FF — прямо в VRAM
 	call vec_pool_addr
+	ld a,18			; бюджет DI: тайл в слот — медиана 17.5, p90 18.6 (calib, ур.2)
+	call vec_budget
 	ex de,hl		; DE = слот в окне
 	di
 	ld hl,0
@@ -439,6 +439,8 @@ dtb_loop:
 	jp dt_end
     endif
 dt_direct:
+	ld a,22			; бюджет DI: тайл прямо в VRAM — медиана 20.8, p90 27 (calib, ур.1; включая обход RedrawInvTiles до следующего блита)
+	call vec_budget
 	ld a,b
 	rrca
 	rrca
@@ -480,7 +482,7 @@ drawFGTile:
 	push de
 	push bc
 	push af
-	ld a,34			; FG: прямой путь ~29 ед. (макс 38), через пул 29
+	ld a,31			; FG: медиана 29–30, максимум 30.4 (calib)
 	call vec_budget
 	pop af
 	ld l,a
@@ -725,7 +727,7 @@ dft_exit:
 ; Кадр 384 Б: for col 0..2: for row 31..0: [p0,p1,p2,p3]; маска на лету.
 drawSprite:
 	push af
-	ld a,24			; накладные DrawSpriteList/пролога спрайта (EI-код, но время кадра)
+	ld a,10			; накладные DrawSpriteList/пролога спрайта: 9.8 ед. (calib)
 	call vec_budget
 	pop af
 	push af
@@ -792,29 +794,25 @@ drawSprite:
 	ld (vec_spr_hcol),a
 	pop af
 	ld (vec_spr_dir),a
-	; бюджет по колонкам (формат 6 Б/строка с готовой маской и пропуском), по замеру стенда:
-	; прямой ~1.1 ед. на строку (NY + NY/8), зеркальный ~1.75 (NY + NY/2 + NY/4), + 5 на колонку
+	; бюджет по колонкам, калибровка по стенду (calib: реальные такты между вызовами бюджета, сцена с големом):
+	; прямой через пул медиана 1.35 ед./строку (p90 1.7) -> NY + NY/2 + 5; зеркальный 2.25 (p90 2.4) -> 2*NY + NY/4 + 5
 	push de
 	ld a,(vec_spr_ny)
 	ld e,a
-	rrca
-	rrca
-	rrca
-	and $1f			; NY/8
-	ld d,a
 	ld a,(vec_spr_dir)
 	or a
 	ld a,e
 	jp z,ds_cost_fwd
 	rrca
-	and $7f			; NY/2
-	add a,d
-	add a,d
-	add a,d
-	add a,e			; зеркало: NY + NY/2 + 3*NY/8 ≈ 1.9
+	rrca
+	and $3f			; NY/4
+	add a,e
+	add a,e			; зеркало: 2*NY + NY/4
 	jp ds_cost
 ds_cost_fwd:
-	add a,d
+	rrca
+	and $7f			; NY/2
+	add a,e			; прямой: NY + NY/2
 ds_cost:
 	add a,5
 	ld (vec_spr_colcost),a
@@ -1139,10 +1137,7 @@ drawSprite_pool:
 	or KV_POOL_WIN
 	ld (vec_spr_curport),a
 	out (KV_PORT),a
-dsp_col:
-	ld hl,dsp_col_go
-	ld (vec_blit_ret),hl
-	jp vec_spr_colbud	; бюджет DI на колонку
+dsp_col:			; бюджет DI — по сегментам (dsp_seg), не по колонкам
 dsp_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_rows_left),a
@@ -1199,6 +1194,19 @@ dsp_n_ok:
 	ld a,(vec_spr_row)
 	sub b
 	ld (vec_spr_row),a
+	; бюджет DI на сегмент (calib: прямой 1.35 ед./строку + голова): n + n/2 + 2. HL — единственный живой регистр
+	ld (vec_spr_dst),hl
+	ld a,b
+	rrca
+	and $7f
+	add a,b
+	add a,2
+	ld (vec_spr_colcost),a
+	ld hl,dsp_seg_go
+	ld (vec_blit_ret),hl
+	jp vec_spr_colbud
+dsp_seg_go:
+	ld hl,(vec_spr_dst)
 dsp_row:
 	pop bc			; C = p0, B = маска
 	pop de			; E = p1, D = p2
@@ -1299,10 +1307,7 @@ dsp_mirror:
 	or KV_POOL_WIN
 	ld (vec_spr_curport),a
 	out (KV_PORT),a
-dspm_col:
-	ld hl,dspm_col_go
-	ld (vec_blit_ret),hl
-	jp vec_spr_colbud	; бюджет DI на колонку
+dspm_col:			; бюджет DI — по сегментам (dspm_seg)
 dspm_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_rows_left),a
@@ -1358,6 +1363,22 @@ dspm_n_ok:
 	ld a,(vec_spr_row)
 	sub b
 	ld (vec_spr_row),a
+	; бюджет DI на сегмент (calib: зеркальный медиана 2.25 ед./строку, p90 2.4; с 2.25 терялось 2 % прерываний): 2n + n/2 + 2. Живой регистр — DE (адрес в пуле)
+	ex de,hl
+	ld (vec_spr_dst),hl
+	ld a,b
+	rrca
+	and $7f
+	add a,b
+	add a,b
+	add a,2
+	ld (vec_spr_colcost),a
+	ld hl,dspm_seg_go
+	ld (vec_blit_ret),hl
+	jp vec_spr_colbud
+dspm_seg_go:
+	ld hl,(vec_spr_dst)
+	ex de,hl
 dspm_row:
 	ex de,hl
 	ld (vec_spr_dst),hl	; адрес в пуле — на время просмотра rev256

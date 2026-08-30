@@ -206,7 +206,7 @@ def main():
     t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
     old = 'DrawFGTile:\n'
     assert t.count(old) == 1
-    (TR / 'tiles.asm').write_text(t.replace(old, 'DrawFGTile:\n\tpush af\t; ВЕКТОР: накладные обхода — в бюджет DI\n\tld a,4\n\tcall vec_budget\n\tpop af\n'))
+    (TR / 'tiles.asm').write_text(t.replace(old, 'DrawFGTile:\n\tpush af\t; ВЕКТОР: накладные обхода — в бюджет DI\n\tld a,3\t; медиана 2.1, p90 2.6 (calib)\n\tcall vec_budget\n\tpop af\n'))
     translate(TR / 'ianna_main_src.asm', TR / 'ianna_main.asm')
     translate(TR / 'score_src.asm', TR / 'score.asm')
     translate(TR / 'font_src.asm', TR / 'font.asm')

@@ -102,23 +102,37 @@ def run_frames(cpu, n, budget=13000, sym=None):
             cpu.push(cpu.pc)
             cpu.pc = 0x38
 
+class Warmup:
+    """Прогрев до старта игры (общий для стендов): первый RunScripts + 60 кадров. Сообщение уровня
+    (action_string печатает текст ~200 кадров по кусочку панели за halt, потом крутится в wait_till_read)
+    снимается автоматически: увидев action_string, ждём wait_till_read, держим fire до следующего RunScripts.
+    Дольше 60 кадров без сообщения ждать нельзя — на экранах без него игра идёт сразу (враг убьёт героя)."""
+    def __init__(self, sym, keys, after=60):
+        self.RS = sym['RunScripts']; self.WT = sym.get('wait_till_read', -1); self.AS = sym.get('action_string', -1)
+        self.keys = keys; self.after = after; self.first = None; self.msg = False; self.in_wait = False
+    def step(self, pc, fr):
+        """Вызывать на каждой инструкции (pc до шага, fr — номер кадра). True = прогрев окончен."""
+        if pc == self.RS:
+            if self.first is None: self.first = fr
+            if self.in_wait: self.keys.clear(); self.in_wait = False; self.msg = False
+        elif pc == self.AS: self.msg = True
+        elif pc == self.WT and not self.in_wait: self.keys.append('fire'); self.in_wait = True
+        return self.first is not None and fr - self.first >= self.after and not self.msg and not self.in_wait
 def start_game(cpu, keys, sym, max_frames=1500):
-    """Прогрев: до первого RunScripts (старт игры). Если за 400 кадров игра не стартовала — экран сообщения
-    уровня: держать fire до старта. (На экранах без сообщения игра стартует сразу — ждать нельзя: враг убьёт героя.)"""
-    RS = sym['RunScripts']; started = False
+    w = Warmup(sym, keys); done = False
     for fr in range(max_frames):
-        if fr == 400: keys.append('fire')
         c = 0
         while not cpu.halted and c < 13000:
-            if START and not _start_done[0] and cpu.pc == sym['SaveCheckpoint']:
+            pc = cpu.pc
+            if START and not _start_done[0] and pc == sym['SaveCheckpoint']:
                 cpu.mem[sym['current_levelx']] = START[0]; cpu.mem[sym['current_levely']] = START[1]; _start_done[0] = True
-            if cpu.pc == RS: started = True
+            if w.step(pc, fr): done = True
             cpu.step(); c += 1
         cpu.halted = False
         if cpu.ie: cpu.ie = False; cpu.push(cpu.pc); cpu.pc = 0x38
-        if started: break
+        if done: break
     keys.clear(); run_frames(cpu, 10, sym=sym)
-    assert started, 'игра не стартовала'
+    assert done, 'игра не стартовала'
 def dump_state(cpu, sym):
     ent = sym.get('ENTITY_DATA'); spd = sym.get('SPDATA')
     if ent is None: return

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Профиль headless-прогона: инструкции по функциям (метки из build/ianna_vec.lst).
 python3 tools/profile_vec.py [frames_run=300]  — ждём сообщение, Z, бег вправо."""
-import sys, re, bisect, collections, pathlib
+import os, sys, re, bisect, collections, pathlib
 sys.argv = [sys.argv[0]]  # run_vec разбирает argv
 sys.path.insert(0, 'tools')
 import run_vec as rv
@@ -80,4 +80,4 @@ for k in WATCH: print(f'  {k}: {calls[k]} вызовов, {calls[k]/nt:.1f}/ти
 print('такты по тикам (5 кадров):', ' '.join(str(t//1000)+'K' for t in ticks))
 for k, v in cat.most_common(): print(f'  {v/total*100:5.1f}%  {k}')
 print('топ функций:')
-for k, v in cnt.most_common(32): print(f'  {v/total*100:5.1f}%  {k}')
+for k, v in cnt.most_common(int(os.environ.get('PROFILE_TOP', '32'))): print(f'  {v/total*100:5.1f}%  {k}')
