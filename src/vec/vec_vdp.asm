@@ -1338,7 +1338,8 @@ dspm_row:
 ; ---------------------------------------------------------------------------
 ; vec_pool_begin — вызывается в начале RedrawScreen_part1 / RedrawScreen:
 ; раздать слоты пула dirty-супертайлам (строки 0..9). Переполнение (>128) -> прямой режим.
-vec_pool_begin:
+; vec_slot_init: таблица слотов = $FF (единожды при старте; дальше её чистит сам сброс пула)
+vec_slot_init:
 	ld hl,vec_slot_tab
 	ld b,0
 vpb_clr:
@@ -1346,6 +1347,10 @@ vpb_clr:
 	inc l
 	dec b
 	jp nz,vpb_clr
+	ret
+vec_pool_begin:
+	; таблицу слотов НЕ чистим (256 байт = 40 ед. каждый тик): все помеченные $FE/слот записи
+	; проходит сброс пула и возвращает $FF; при переполнении чистится целиком
 	xor a
 	ld (vec_slot_next),a
 	ld (vec_pool_on),a
@@ -1666,7 +1671,10 @@ vpf_x:
 	ld h,vec_slot_tab/256
 	ld a,(hl)
 	cp 80
-	jp nc,vpf_x_next	; без слота (прямой) или уже выведен
+	jp c,vpf_slot
+	ld (hl),$ff		; прямой ($FE) или уже выведен — вернуть «пусто» (таблица не чистится)
+	jp vpf_x_next
+vpf_slot:
 	ld (hl),$ff		; слот выведен — больше не выводить (пересечения прямоугольников)
 	ld l,a			; адрес слота: $A000 + slot*128 (inline vec_pool_addr)
 	rrca

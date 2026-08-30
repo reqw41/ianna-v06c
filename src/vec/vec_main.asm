@@ -22,6 +22,9 @@ vec_start:
     endif
 	call cls
 	call vec_init_rev256
+    if !DEMO
+	call vec_slot_init	; таблица слотов пула = $FF
+    endif
 	call initROMbanks
 	call initVDPBuffers
 	call InitTiles

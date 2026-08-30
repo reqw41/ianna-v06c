@@ -55,6 +55,13 @@ vec_an_cnt:	db 0		; AnimateSTiles: счётчик, длина/начало се�
 vec_an_run:	db 0
 vec_an_x:	db 0
 vec_an_y:	db 0
+rit_cnt:	db 0		; RedrawInvTiles: счётчики обхода грязных прямоугольников
+rit_x0:		db 0
+rit_y:		db 0
+rit_nx:		db 0
+rit_ny:		db 0
+rit_cx:		db 0
+rit_ptr:	dw 0
 vec_spr_prev:	ds 64		; прошлые прямоугольники спрайтов (x,y,nx,ny) x16 — слоты и под старым местом
 vec_fill_color:	db 0
 vec_fill_xr:	db 0

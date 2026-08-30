@@ -186,6 +186,8 @@ def main():
     t = (SRC / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
     t = cut(t, lambda l: l.startswith('AnimStile_CheckSprites:'), lambda l: 'Get the value for the tile in the hardness map' in l, hot_t)
     t = cut(t, lambda l: l.startswith('AnimateSTiles:'), lambda l: '; Update a supertile on screen' in l, '; ВЕКТОР: AnimateSTiles — нативно (overlap_hot.asm)')
+    inner = ('dirtyrectloop','dirty_y_loop','dirty_x_loop','RedrawInvTiles_FG','dirtyrectloop_fg','dirty_y_loop_fg','dirty_x_loop_fg')
+    t = cut(t, lambda l: l.startswith('RedrawInvTiles:'), lambda l: re.match(r'^[A-Za-z_]\w*:', l) and not l.split(':')[0] in inner, '; ВЕКТОР: RedrawInvTiles/RedrawInvTiles_FG — нативно (overlap_hot.asm)')
     (TR / 'tiles_src.asm').write_text(t)
     d = (SRC / 'drawsprite.asm').read_text(encoding='utf-8', errors='replace')
     d = cut(d, lambda l: l.startswith('CheckSprOverlap:'), lambda l: l.startswith('; Redraw the sprite list'), hot_d)

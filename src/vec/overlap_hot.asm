@@ -140,6 +140,69 @@ an_check:			; AnimStile_CheckSprites(B = x0, C = y, D = 2*длина симво�
 	ld (vec_an_run),a
 	jp AnimStile_CheckSprites
 
+; RedrawInvTiles / RedrawInvTiles_FG — ВЕКТОР, нативно: обход грязных прямоугольников без exx
+; (в переводе два z_exx ≈ 700 тактов на тайл). DrawTile/DrawFGTile — как в оригинале (B = x+1, C = y+1).
+RedrawInvTiles:
+	ld hl,DrawTile
+	jp rit_common
+RedrawInvTiles_FG:
+	ld hl,DrawFGTile
+rit_common:
+	ld (rit_call+1),hl	; самомодификация: какой рисовальщик звать
+	ld a,(ndirtyrects)
+	or a
+	ret z
+	ld (rit_cnt),a
+	ld hl,tiles_dirty
+rit_rect:
+	ld a,(hl)		; Xmin
+	inc hl
+	ld (rit_x0),a
+	ld a,(hl)		; Ymin
+	inc hl
+	ld (rit_y),a
+	ld a,(hl)		; Xcount
+	inc hl
+	ld (rit_nx),a
+	ld a,(hl)		; Ycount
+	inc hl
+	ld (rit_ny),a
+	ld (rit_ptr),hl
+rit_yl:
+	ld a,(rit_nx)
+	ld (rit_cx),a
+	ld a,(rit_x0)
+	ld b,a
+rit_xl:
+	ld a,(rit_y)
+	ld c,a
+	push bc			; B = x, C = y (оригинал: push bc; exx; pop bc; inc b; inc c; call; exx)
+	inc b
+	inc c
+rit_call:
+	call 0
+	pop bc
+	ld a,(rit_cx)
+	dec a
+	ld (rit_cx),a
+	jp z,rit_ynext
+	inc b
+	jp rit_xl
+rit_ynext:
+	ld a,(rit_y)
+	inc a
+	ld (rit_y),a
+	ld a,(rit_ny)
+	dec a
+	ld (rit_ny),a
+	jp nz,rit_yl
+	ld hl,(rit_ptr)
+	ld a,(rit_cnt)
+	dec a
+	ld (rit_cnt),a
+	jp nz,rit_rect
+	ret
+
 ;;;SPLIT;;;
 ;;; overlap_hot.asm, часть drawsprite — MarkOverlappingSprites / check_sprite_overlap
 ; MarkOverlappingSprites: все спрайты, пересекающиеся с simulatedsprite и ещё не помеченные,

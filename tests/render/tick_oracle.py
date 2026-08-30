@@ -49,7 +49,7 @@ if bad:
     for y in range(ia.height):
         for x in range(ia.width):
             if pa[x,y]!=pb[x,y]: xs.append(x); ys.append(y)
-    print(f'   тик {i}: отличающихся пикселей {len(xs)}, область x {min(xs)//2}..{max(xs)//2}, y {min(ys)//2}..{max(ys)//2} (в координатах экрана)')
+    print(f'   тик {i}: отличающихся пикселей {len(xs)}' + (f', область x {min(xs)//2}..{max(xs)//2}, y {min(ys)//2}..{max(ys)//2} (в координатах экрана)' if xs else ' (цвета совпадают — различия в невидимых битах плоскостей)'))
     va=a[i][1]; vb=b[i][1]; dif=[]
     for pl,base in enumerate((0,0x2000,0x4000,0x6000)):
         for x in range(32):
