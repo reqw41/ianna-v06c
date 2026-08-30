@@ -42,7 +42,7 @@ def run(start):
         if k!='none': keys.append(k)
         rv.run_frames(cpu,n,sym=sym)
         # дорисовать хвост ожидания: в оригинале панель докрашивается в кадрах ожидания — дадим 6 кадров покоя
-        keys.clear(); rv.run_frames(cpu,6,sym=sym)
+        keys.clear(); rv.run_frames(cpu,14,sym=sym)   # куски панели рисуются по одному за halt ожидания — дать дорисовать все
         # до безопасной точки: halt в waitforVBlank (окно квазидиска закрыто, SP свой)
         n=0; HALT=sym['waitforvblank_halt_go']
         while n<2000000:

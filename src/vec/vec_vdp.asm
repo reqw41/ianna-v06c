@@ -374,8 +374,8 @@ dt_a0:
 	or a
 	jp z,dt_direct
 	call vec_slot_for_bc
-	cp $ff
-	jp z,dt_direct
+	cp 80
+	jp nc,dt_direct		; $FE (грязный без слота) и $FF — прямо в VRAM
 	call vec_pool_addr
 	ex de,hl		; DE = слот в окне
 	di
@@ -478,7 +478,7 @@ drawFGTile:
 	push de
 	push bc
 	push af
-	ld a,35
+	ld a,30			; FG: прямой путь с развёрнутыми строками ~24 ед., через пул 29
 	call vec_budget
 	pop af
 	ld l,a
@@ -496,8 +496,8 @@ drawFGTile:
 	or a
 	jp z,dft_direct
 	call vec_slot_for_bc
-	cp $ff
-	jp z,dft_direct
+	cp 80
+	jp nc,dft_direct
 	call vec_pool_addr
 	ex de,hl
 	di
@@ -595,19 +595,103 @@ dft_plane:
 	ld a,2
 	ld (vec_col_cnt),a
 dft_col:
-	ld a,16
-	ld (vec_row_cnt),a
-dft_row:
+	; 16 строк развёрнуто (счётчик в памяти стоил ~52 такта на байт)
 	pop bc
 	ld a,(hl)
 	and b
 	or c
 	ld (hl),a
 	dec l
-	ld a,(vec_row_cnt)
-	dec a
-	ld (vec_row_cnt),a
-	jp nz,dft_row
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	dec l
 	inc h
 	ld l,e
 	ld a,(vec_col_cnt)
@@ -943,8 +1027,8 @@ vss_x:
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
-	cp $ff
-	jp z,vss_no
+	cp 80
+	jp nc,vss_no
 	ld a,l
 	and $0f
 	ld l,a
@@ -1303,15 +1387,7 @@ vpb_x:
 	or c
 	ld l,a
 	ld h,vec_slot_tab/256
-	ld a,(hl)
-	cp $ff
-	jp nz,vpb_x_next
-	ld a,(vec_slot_next)
-	cp 80			; слоты 0..79 = $A000-$C7FF; выше $C980 — музыка
-	jp nc,vpb_overflow
-	ld (hl),a
-	inc a
-	ld (vec_slot_next),a
+	ld (hl),$fe		; грязный супертайл без слота: рисуется прямо в VRAM (и BG, и FG)
 vpb_x_next:
 	inc c
 	dec b
@@ -1328,7 +1404,124 @@ vpb_rect_done:
 	pop de
 	dec c
 	jp nz,vpb_rect
+	; слоты — только грязным супертайлам под спрайтами, которые рисуются в этом тике: тайл в пул
+	; нужен лишь там, где поверх ляжет спрайт; остальное идёт в VRAM одним проходом
+	ld de,SPDATA
+	ld c,MAX_SPRITES
+vpb_spr:
+	ld a,(de)		; включён?
+	inc de
+	ld l,a
+	ld a,(de)
+	dec de
+	or l
+	jp z,vpb_spr_next
+	ld hl,7
+	add hl,de
+	ld a,(hl)		; перерисовывается?
+	or a
+	jp z,vpb_spr_next
+	ld hl,3
+	add hl,de
+	ld a,(hl)		; x px
+	rrca
+	rrca
+	rrca
+	rrca
+	and $0f
+	ld (vec_tmp_sx),a	; sx0
+	inc hl
+	inc hl
+	ld b,(hl)		; nx (символы по 8)
+	dec hl
+	dec hl
+	ld a,(hl)		; x
+	dec a
+vpb_sx1:
+	add a,8
+	dec b
+	jp nz,vpb_sx1		; x + nx*8 - 1
+	rrca
+	rrca
+	rrca
+	rrca
+	and $0f
+	ld (vec_tmp_sx1),a	; sx1
+	inc hl
+	ld a,(hl)		; y px
+	cp 160
+	jp nc,vpb_spr_next	; панель
+	and $f0
+	ld (vec_tmp_sy),a	; sy0*16
+	inc hl
+	inc hl
+	ld b,(hl)		; ny
+	dec hl
+	dec hl
+	ld a,(hl)		; y
+	dec a
+vpb_sy1:
+	add a,8
+	dec b
+	jp nz,vpb_sy1		; y + ny*8 - 1
+	cp 160
+	jp c,vpb_sy_ok
+	ld a,159
+vpb_sy_ok:
+	and $f0
+	ld (vec_tmp_ny),a	; sy1*16
+vpb_sy:
+	ld a,(vec_tmp_sx)
+vpb_sxl:
+	ld b,a
+	ld a,(vec_tmp_sy)
+	or b
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld a,(hl)
+	cp $fe
+	jp nz,vpb_sx_next	; не грязный (или уже со слотом)
+	ld a,(vec_slot_next)
+	cp 80			; слоты 0..79 = $A000-$C7FF; выше $C980 — музыка
+	jp nc,vpb_overflow2
+	ld (hl),a
+	inc a
+	ld (vec_slot_next),a
+vpb_sx_next:
+	ld a,(vec_tmp_sx1)
+	cp b
+	jp z,vpb_sy_next
+	ld a,b
+	inc a
+	jp vpb_sxl
+vpb_sy_next:
+	ld a,(vec_tmp_sy)
+	ld b,a
+	ld a,(vec_tmp_ny)
+	cp b
+	jp z,vpb_spr_next
+	ld a,b
+	add a,16
+	ld (vec_tmp_sy),a
+	jp vpb_sy
+vpb_spr_next:
+	ld hl,8
+	add hl,de
+	ex de,hl
+	dec c
+	jp nz,vpb_spr
 	ld a,1
+	ld (vec_pool_on),a
+	ret
+vpb_overflow2:
+	ld hl,vec_slot_tab
+	ld b,0
+vpb_clr3:
+	ld (hl),$ff
+	inc l
+	dec b
+	jp nz,vpb_clr3
+	xor a
 	ld (vec_pool_on),a
 	ret
 vpb_overflow:
@@ -1348,107 +1541,133 @@ vpb_clr2:
 ; vec_pool_flush — вместо TransferDirtyTiles в RedrawScreen_part2: слоты -> VRAM,
 ; строками супертайлов сверху вниз (0..9), затем ndirtyrects=0.
 vec_pool_flush:
+	; Сброс идёт С РАЗРЕШЁННЫМИ прерываниями и БЕЗ единого обращения к настоящему стеку: порт весь
+	; сброс держится в стековом режиме (страница 3 = пул), цикл — на ячейках, адрес слота считается
+	; inline, блит возвращается через jp (vec_blit_ret). RST/push прерывания ложатся в страницу 3 под
+	; SP — это уже вытолкнутые байты пула или свободная область. ISR держит стековые биты порта
+	; (vec_kv_shadow = KV_STK_P3). Переходы режима (2 на сброс) — под коротким DI и только не у края
+	; кадра (по счётчику бюджета), чтобы не потерять прерывание.
+	ld a,(vec_kv_shadow)
+	ld (vec_kv_prev),a	; окно главного кода — вернуть в конце (и когда пула нет)
 	ld a,(vec_pool_on)
 	or a
 	jp z,vpf_done
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl	; настоящий SP
+	ld a,(vec_bud_used)	; у края кадра (> 205 ед.) — дождаться прерывания: переход режима не должен
+	cp 206			; совпасть с обратным ходом
+	jp c,vpf_go
+	halt
+vpf_go:
+	ld a,KV_STK_P3
+	di
+	ld (vec_kv_shadow),a
+	out (KV_PORT),a
+	ei
 	xor a
 	ld (vec_tmp_sy),a	; текущая строка
 vpf_yloop:
 	ld a,(ndirtyrects)
-	ld c,a
-	ld de,tiles_dirty
+	ld (vec_tmp_rc),a
+	ld hl,tiles_dirty
+	ld (vec_tmp_rp),hl
 vpf_rect:
-	ld a,(de)
+	ld hl,(vec_tmp_rp)
+	ld a,(hl)		; xs
 	ld (vec_tmp_sx),a
-	inc de
-	ld a,(de)
-	ld b,a			; ys
-	inc de
-	ld a,(de)
+	inc hl
+	ld b,(hl)		; ys
+	inc hl
+	ld a,(hl)		; nx
 	ld (vec_tmp_nx),a
-	inc de
-	ld a,(de)		; ny
-	inc de
+	inc hl
+	ld a,(hl)		; ny
+	inc hl
+	ld (vec_tmp_rp),hl
 	add a,b
-	ld l,a			; ys+ny
+	ld c,a			; ys+ny
 	ld a,(vec_tmp_sy)
 	cp b
 	jp c,vpf_next		; y < ys
-	cp l
+	cp c
 	jp nc,vpf_next		; y >= ys+ny
-	; строка y внутри прямоугольника: колонки xs..xs+nx-1
-	push de
-	push bc
 	ld a,(vec_tmp_nx)
-	ld b,a
+	ld (vec_tmp_bx),a	; счётчик колонок
 	ld a,(vec_tmp_sx)
-	ld c,a
+	ld (vec_tmp_cx),a	; текущая колонка
 vpf_x:
 	ld a,(vec_tmp_sy)
 	rlca
 	rlca
 	rlca
 	rlca
-	or c
+	ld b,a			; sy*16
+	ld a,(vec_tmp_cx)
+	or b
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
-	cp $ff
-	jp z,vpf_x_next
+	cp 80
+	jp nc,vpf_x_next	; без слота (прямой) или уже выведен
 	ld (hl),$ff		; слот выведен — больше не выводить (пересечения прямоугольников)
-	push bc
-	push af
-	ld a,20
-	call vec_budget
-	pop af
-	call vec_pool_addr
-	ld (vec_blit_src),hl
-	ld a,c
+	ld l,a			; адрес слота: $A000 + slot*128 (inline vec_pool_addr)
+	rrca
+	and $7f
+	add a,POOL_BASE/256
+	ld h,a
+	ld a,l
+	and 1
+	rrca
+	ld l,a
+	ld sp,hl
+	ld a,(vec_tmp_cx)
 	add a,a
 	add a,$80
 	ld d,a
-	ld a,(vec_tmp_sy)
-	rlca
-	rlca
-	rlca
-	rlca
-	ld b,a
 	ld a,Y_TOP_L
 	sub b
 	ld e,a
-	di
-	ld hl,0
-	add hl,sp
-	ld (vec_sp_save),hl
-	ld hl,(vec_blit_src)
-	ld sp,hl
-	ld a,KV_STK_P3
-	out (KV_PORT),a
-	ld hl,vpf_blit_ret
+	ld hl,(vec_bud_used)	; фаза кадра: считать и сброс (ISR обнулит при прерывании)
+	ld a,l
+	add a,20
+	jp nc,vpf_bud_ok
+	ld a,255
+vpf_bud_ok:
+	ld (vec_bud_used),a
+	ld hl,vpf_x_next
 	ld (vec_blit_ret),hl
 	jp vec_blit128_vram
-vpf_blit_ret:
-	xor a
-	out (KV_PORT),a
-	ld hl,(vec_sp_save)
-	ld sp,hl
-	ei
-	pop bc
 vpf_x_next:
-	inc c
-	dec b
+	ld a,(vec_tmp_cx)
+	inc a
+	ld (vec_tmp_cx),a
+	ld a,(vec_tmp_bx)
+	dec a
+	ld (vec_tmp_bx),a
 	jp nz,vpf_x
-	pop bc
-	pop de
 vpf_next:
-	dec c
+	ld a,(vec_tmp_rc)
+	dec a
+	ld (vec_tmp_rc),a
 	jp nz,vpf_rect
 	ld a,(vec_tmp_sy)
 	inc a
 	ld (vec_tmp_sy),a
 	cp 10
 	jp nz,vpf_yloop
+	ld hl,(vec_sp_save)
+	ld sp,hl		; настоящий SP (порт ещё в стековом режиме — стек не трогаем до перехода)
+	ld a,(vec_bud_used)
+	cp 206
+	jp c,vpf_done
+	halt			; halt в стековом режиме безопасен: ISR целиком работает в странице 3
 vpf_done:
+	ld a,(vec_kv_prev)
+	di
+	ld (vec_kv_shadow),a
+	out (KV_PORT),a		; вернуть окно, каким его держит главный код
+	ei
 	xor a
 	ld (ndirtyrects),a
 	ld (vec_pool_on),a

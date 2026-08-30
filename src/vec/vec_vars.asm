@@ -46,11 +46,16 @@ vec_tmp_sy:	db 0
 vec_tmp_nx:	db 0
 vec_tmp_ny:	db 0
 vec_tmp_row16:	db 0
+vec_tmp_rc:	db 0		; сброс пула без стека: счётчик прямоугольников, указатель, счётчик и текущая колонка
+vec_tmp_rp:	dw 0
+vec_tmp_bx:	db 0
+vec_tmp_cx:	db 0
 vec_fill_color:	db 0
 vec_fill_xr:	db 0
 vec_fill_mask:	db 0
 vec_fill_hgt:	db 0
-vec_kv_shadow:	db 0
+vec_kv_shadow:	db 0		; порт $10, каким его держит главный код (ISR возвращает его; во время сброса пула — стековый режим)
+vec_kv_prev:	db 0
 vec_bud_halts:	dw 0		; счётчик halt в vec_budget (статистика)
 vec_bud_used:	db 0		; бюджет DI: потрачено в кадре (ед. 256 тактов); ISR выставляет свою цену
 vec_wait_halted: db 0		; waitforVBlank: был ли halt в этом вызове

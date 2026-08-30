@@ -50,7 +50,9 @@ isr_zs:
 	inc de
 	dec b
 	jp nz,isr_zs
-	ld a,KV_WIN_MUSIC
+	ld a,(vec_kv_shadow)
+	and $1c			; сохранить стековые биты: сброс пула идёт с EI, стек — в странице 3
+	or KV_WIN_MUSIC
 	out (KV_PORT),a
 	call MUSIC_Play
 	ld a,(vec_kv_shadow)
