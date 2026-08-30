@@ -16,12 +16,6 @@ vec_start:
 	out ($02),a
 	ld a,$FF
 	out ($03),a
-	; ВИ53: счётчик 0, режим 0 (выход низкий, без звука), LSB+MSB, двоичный; старт $FFFF
-	ld a,$30
-	out ($08),a
-	ld a,$FF
-	out ($0B),a
-	out ($0B),a
     if !DEMO
 	xor a
 	out (KV_PORT),a		; квазидиск выкл

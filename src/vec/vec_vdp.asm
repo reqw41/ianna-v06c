@@ -215,8 +215,10 @@ vb_col:
 ; Универсальный блит колонок [p][col][row] -> VRAM для панели: SP установлен, порт выведен,
 ; D/E = dest, vec_bl_cols = колонок, vec_bl_pops = строк/2. Возврат jp (vec_blit_ret).
 vec_blit_cols:
-	ld a,4
+	ld a,(vec_bl_planes)
 	ld (vec_plane_cnt),a
+	ld a,4
+	ld (vec_bl_planes),a	; по умолчанию 4 плоскости (vec_load_panel просит по одной)
 vbc_plane:
 	ld a,(vec_bl_cols)
 	ld (vec_col_cnt),a
@@ -276,42 +278,61 @@ vec_stk_leave:
 
 
 ; ---------------------------------------------------------------------------
-; БЮДЖЕТ DI НА КАДР. На Векторе прерывание от кадра НЕ защёлкивается: если в момент
-; обратного хода включён DI, оно теряется (RTL MiSTer: int сбрасывается при inte=0; Emu80 —
-; так же; vector06js держит запрос). Стековые блиты идут под DI, поэтому перед каждым
-; блитом смотрим, сколько времени прошло с последнего прерывания (таймер ВИ53, счётчик 0,
-; режим 0, 1.5 МГц, ISR перезагружает $FFFF), и если блит не успевает до следующего
-; обратного хода — `halt` до него. Без таймера (headless) счётчик читается $FFFF -> 0 тиков.
-; Вход: A = стоимость блита в единицах 256 тактов (= 128 тиков). Портит A и флаги.
-PIT_CTRL	equ $08
-PIT_C0		equ $0B		; счётчик 0 (адреса ВИ53 на Векторе переставлены: $0B,$0A,$09)
-VEC_BUDGET_LIMIT equ 211	; 27000 тиков / 128 (кадр ~29950 тиков)
+; БЮДЖЕТ DI НА КАДР. На Векторе прерывание от кадра НЕ защёлкивается: если в момент обратного хода
+; включён DI, оно теряется (RTL MiSTer, Emu80; vector06js держит запрос — там дефекта не видно).
+; Стековые блиты идут под DI, поэтому перед каждым блитом проверяем программный счётчик потраченного
+; в кадре (vec_bud_used, ед. 256 тактов): ISR в конце выставляет свою цену (VEC_ISR_COST), вывод тика
+; начинается сразу после прерывания (waitforVBlank выходит только после halt, раздача слотов пула —
+; до ожидания), так что счётчик = фаза кадра. Если «потрачено + стоимость» не влезает до обратного
+; хода — `halt`. Стоимости откалиброваны headless по модели слотов шины Вектора (tools/profile_vec.py,
+; cpu_ready: 1 обращение к шине за 4 такта): тайл 16 + 6 накладных цикла RedrawInvTiles, FG 29 + 6,
+; слот сброса ~18, спрайт по КОЛОНКАМ: прямой ~1.5 ед./строку, зеркальный ~2.1 (+8 на колонку),
+; панель cols*pops/2 + 2. Таймер ВИ53 не трогаем — он нужен под музыку.
+; Вход: A = стоимость в единицах 256 тактов. Портит A и флаги.
+VEC_BUDGET_LIMIT equ 220	; кадр = 234 ед.; запас на неучтённые накладные
+VEC_ISR_COST	equ 50		; ISR с музыкой: медиана 35, максимум 50 ед. (модель слотов)
 vec_budget:
 	push hl
 	ld l,a
-	xor a
-	out (PIT_CTRL),a	; latch счётчика 0
-	in a,(PIT_C0)
-	cpl
-	ld h,a			; H = мл. байт (FFFF-V)
-	in a,(PIT_C0)
-	cpl			; A = ст. байт (FFFF-V) = прошло тиков / 256
-	cp 128
-	jp nc,vbg_wait		; прошло > 32K тиков — заведомо поздно
-	add a,a			; *2 -> единицы по 128 тиков (без ст. бита)
-	ld h,a			; (H мл. байт больше не нужен: точность 128 тиков достаточна)
+	ld a,(vec_bud_used)
 	add a,l
 	jp c,vbg_wait
 	cp VEC_BUDGET_LIMIT
 	jp c,vbg_ok
 vbg_wait:
+	push hl			; L = стоимость, нужна после halt
 	ld hl,(vec_bud_halts)	; статистика: сколько раз ждали кадр
 	inc hl
 	ld (vec_bud_halts),hl
-	halt			; следующий VBlank (вне блита, EI); ISR перезагрузит таймер
+	pop hl
+	halt			; следующий VBlank (вне блита, EI); ISR выставит свою цену
+	ld a,(vec_bud_used)
+	add a,l
 vbg_ok:
+	ld (vec_bud_used),a
 	pop hl
 	ret
+; Бюджет колонки спрайта ИЗНУТРИ стекового режима (SP подменён — call нельзя, вход jp, возврат
+; jp (vec_blit_ret)). Выходим из стекового режима, проверяем бюджет с EI, входим обратно.
+; Портит A, флаги и HL.
+vec_spr_colbud:
+	ld hl,0
+	add hl,sp
+	ld (vec_spr_src),hl	; текущая позиция источника
+	xor a
+	out (KV_PORT),a
+	ld hl,(vec_sp_save)
+	ld sp,hl
+	ei
+	ld a,(vec_spr_colcost)
+	call vec_budget
+	di
+	ld hl,(vec_spr_src)
+	ld sp,hl
+	ld a,(vec_spr_curport)
+	out (KV_PORT),a
+	ld hl,(vec_blit_ret)	; HL в головах колоночных циклов не жив
+	jp (hl)
 
 ; ---------------------------------------------------------------------------
 ; drawTile: A = тайл, B = X px, C = Y px
@@ -320,7 +341,7 @@ drawTile:
 	push de
 	push bc
 	push af
-	ld a,9
+	ld a,22
 	call vec_budget
 	pop af
     if DEMO
@@ -457,7 +478,7 @@ drawFGTile:
 	push de
 	push bc
 	push af
-	ld a,11
+	ld a,35
 	call vec_budget
 	pop af
 	ld l,a
@@ -618,7 +639,7 @@ dft_exit:
 ; Кадр 384 Б: for col 0..2: for row 31..0: [p0,p1,p2,p3]; маска на лету.
 drawSprite:
 	push af
-	ld a,105
+	ld a,40			; накладные DrawSpriteList/пролога спрайта (EI-код, но время кадра; с врагами — проверки пересечений)
 	call vec_budget
 	pop af
 	push af
@@ -675,6 +696,31 @@ drawSprite:
 	ld (vec_spr_hcol),a
 	pop af
 	ld (vec_spr_dir),a
+	; бюджет по колонкам: прямой ~1.5 ед. на строку (NY + NY/2), зеркальный ~2.1 (2*NY + NY/8), + 8
+	push de
+	ld a,(vec_spr_ny)
+	ld e,a
+	ld a,(vec_spr_dir)
+	or a
+	ld a,e
+	jp z,ds_cost_fwd
+	add a,a			; 2*NY
+	ld d,a
+	ld a,e
+	rrca
+	rrca
+	rrca
+	and $1f			; NY/8
+	add a,d
+	jp ds_cost
+ds_cost_fwd:
+	rrca
+	and $7f			; NY/2
+	add a,e
+ds_cost:
+	add a,8
+	ld (vec_spr_colcost),a
+	pop de
     if !DEMO
 	; буферный путь: пул включён и все супертайлы спрайта имеют слоты
 	ld a,(vec_pool_on)
@@ -698,9 +744,14 @@ ds_direct:
 	ld sp,hl
     if !DEMO
 	ld a,(vec_spr_port)
+	ld (vec_spr_curport),a
 	out (KV_PORT),a
     endif
 ds_col:
+	ld hl,ds_col_go
+	ld (vec_blit_ret),hl
+	jp vec_spr_colbud	; бюджет DI на колонку
+ds_col_go:
 	ld a,(vec_spr_hcol)
 	ld h,a
 	ld a,(vec_spr_lbot)
@@ -775,9 +826,14 @@ drawSprite_mirror:
 	ld sp,hl
     if !DEMO
 	ld a,(vec_spr_port)
+	ld (vec_spr_curport),a
 	out (KV_PORT),a
     endif
 dsm_col:
+	ld hl,dsm_col_go
+	ld (vec_blit_ret),hl
+	jp vec_spr_colbud	; бюджет DI на колонку
+dsm_col_go:
 	ld a,(vec_spr_hcol)
 	ld d,a
 	ld a,(vec_spr_lbot)
@@ -928,8 +984,13 @@ drawSprite_pool:
 	ld sp,hl
 	ld a,(vec_spr_port)
 	or KV_POOL_WIN
+	ld (vec_spr_curport),a
 	out (KV_PORT),a
 dsp_col:
+	ld hl,dsp_col_go
+	ld (vec_blit_ret),hl
+	jp vec_spr_colbud	; бюджет DI на колонку
+dsp_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_rows_left),a
 	ld a,(vec_spr_ybot)
@@ -1056,8 +1117,13 @@ dsp_mirror:
 	ld sp,hl
 	ld a,(vec_spr_port)
 	or KV_POOL_WIN
+	ld (vec_spr_curport),a
 	out (KV_PORT),a
 dspm_col:
+	ld hl,dspm_col_go
+	ld (vec_blit_ret),hl
+	jp vec_spr_colbud	; бюджет DI на колонку
+dspm_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_rows_left),a
 	ld a,(vec_spr_ybot)
@@ -1332,7 +1398,7 @@ vpf_x:
 	ld (hl),$ff		; слот выведен — больше не выводить (пересечения прямоугольников)
 	push bc
 	push af
-	ld a,9
+	ld a,20
 	call vec_budget
 	pop af
 	call vec_pool_addr
@@ -1540,6 +1606,26 @@ vec_panel_blit3:
 	sub c
 	ld e,a
 vec_panel_blit:
+	push bc
+	ld a,(vec_bl_cols)
+	ld b,a
+	ld a,(vec_bl_pops)
+	ld c,a
+	xor a
+vpn_cost:
+	add a,c			; cols * pops
+	dec b
+	jp nz,vpn_cost
+	ld c,a			; cols*pops (pop-ов на плоскость); цена ~0.69 ед. на pop x 4 плоскости -> *3/4
+	rrca
+	and $7f
+	ld b,a			; /2
+	rrca
+	and $7f			; /4
+	add a,b
+	add a,32		; + логика куска панели (draw_*_state, Div16_8) перед блитом — EI, но время кадра
+	call vec_budget
+	pop bc
 	di
 	ld hl,0
 	add hl,sp
@@ -1562,6 +1648,12 @@ vpn_ret:
 	pop hl
 	ret
     endif
+; vec_panel_blit_call: вызов vec_panel_blit как процедуры (сам он снимает hl/de/bc со стека и делает ret)
+vec_panel_blit_call:
+	push hl
+	push de
+	push bc
+	jp vec_panel_blit
 ; vec_load_panel: картинка панели 256x32 -> строки 160..191
 vec_load_panel:
     if DEMO
@@ -1571,15 +1663,36 @@ vec_load_panel:
 	push hl
 	push de
 	push bc
+	ld a,4
+	ld (vec_tmp_sx),a	; счётчик плоскостей
 	ld hl,P3_PANEL
+	ld d,$80
+vlp_plane:
 	ld (vec_blit_src),hl
 	ld a,32
 	ld (vec_bl_cols),a
 	ld a,16
 	ld (vec_bl_pops),a
-	ld d,$80
+	ld a,1
+	ld (vec_bl_planes),a	; одна плоскость за блит (512 pop, ~0.4 кадра) — влезает в бюджет DI
 	ld e,Y_TOP_L-160
-	jp vec_panel_blit
+	push de
+	call vec_panel_blit_call
+	pop de
+	ld hl,(vec_blit_src)
+	ld bc,32*32
+	add hl,bc		; следующая плоскость источника
+	ld a,d
+	add a,$20
+	ld d,a
+	ld a,(vec_tmp_sx)
+	dec a
+	ld (vec_tmp_sx),a
+	jp nz,vlp_plane
+	pop bc
+	pop de
+	pop hl
+	ret
     endif
 ; vec_pc_reset: весь кэш панели = $FF («неизвестно»). Портит A, HL, B.
 vec_pc_reset:

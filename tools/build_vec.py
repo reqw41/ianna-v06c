@@ -50,18 +50,29 @@ def slice_ianna():
     out += ['; ---- ENCODE / HEX_TO_TEXT (893-970) ----'] + rng(893, 970)
     out += ['; ---- таблицы (1006-1079) ----'] + rng(1006, 1079)
     text = '\n'.join(out) + '\n'
+    # ВЕКТОР: порядок тика — раздача слотов пула (EI) -> ждём кадр -> вывод. Вывод стартует сразу после
+    # прерывания (известная фаза кадра), программный бюджет DI (vec_budget) считает от цены ISR.
+    old = '\tcall RedrawScreen_part1\n\tcall waitforVBlank\n\tcall RedrawScreen_part2\n'
+    assert old in text
+    text = text.replace(old, ('' if DEMO else '\tcall vec_pool_begin\t; ВЕКТОР: слоты пула (до ожидания, с EI)\n') +
+                        '\tcall waitforVBlank\t; ВЕКТОР: ждём кадр ДО отрисовки\n\tcall RedrawScreen_part1\n\tcall RedrawScreen_part2\n')
+    # waitforVBlank выходит только сразу после halt (при тике > 5 кадров иначе вышли бы посреди кадра)
+    old = '\tld a, (frames_noredraw)\n    ld hl, frames_lock\n\tcp (hl)\t\t\t; wait until we have spent at least 5 (PÂL) or 6 (NTSC) frames without redrawing\n\tjr nc, vblank_done\n'
+    assert old in text, 'waitforVBlank_loop'
+    text = text.replace(old, '\tld a, (frames_noredraw)\n    ld hl, frames_lock\n\tcp (hl)\n\tld a, (vec_wait_halted)\t; ВЕКТОР: и выход, и куски панели — только после halt (известная фаза кадра)\n\tjr c, waitforVBlank_vec_score\n\tand a\n\tjr nz, vblank_done\n\tjr waitforvblank_halt_go\nwaitforVBlank_vec_score:\n\tand a\n\tjr z, waitforvblank_halt_go\n')
+    old = 'waitforvblank_halt_go:\t\n\thalt\n'
+    assert old in text, 'halt_go'
+    text = text.replace(old, 'waitforvblank_halt_go:\t\n\thalt\n\tld a, 1\t; ВЕКТОР\n\tld (vec_wait_halted), a\n')
+    old = 'waitforVBlank:\n\tpush af\n'
+    assert old in text, 'waitforVBlank entry'
+    text = text.replace(old, 'waitforVBlank:\n\tpush af\n\txor a\t; ВЕКТОР\n\tld (vec_wait_halted), a\n')
     if not DEMO:
-        # буферный рендер: part1 собирает в пул, part2 выбрасывает в VRAM
-        old = 'RedrawScreen_part1:\n\tcall RedrawInvTiles'
-        assert old in text; text = text.replace(old, 'RedrawScreen_part1:\n\tcall vec_pool_begin\t; ВЕКТОР: слоты пула\n\tcall RedrawInvTiles')
+        # буферный рендер: part1 собирает в пул, part2 выбрасывает в VRAM; полный RedrawScreen (смена экрана)
+        # синхронизируется с кадром сам (halt)
         old = 'RedrawScreen:\n\tcall RedrawInvTiles'
-        assert old in text; text = text.replace(old, 'RedrawScreen:\n\tcall vec_pool_begin\t; ВЕКТОР: слоты пула\n\tcall RedrawInvTiles')
+        assert old in text; text = text.replace(old, 'RedrawScreen:\n\tcall vec_pool_begin\t; ВЕКТОР: слоты пула\n\thalt\t\t; ВЕКТОР: к началу кадра — бюджет DI считает от прерывания\n\tcall RedrawInvTiles')
         old = '\tcall TransferDirtyTiles\t; Transfer dirty tiles to main screen'
         assert old in text; text = text.replace(old, '\tcall vec_pool_flush\t; ВЕКТОР: пул -> VRAM сверху вниз')
-    else:
-        old = '\tcall RedrawScreen_part1\n\tcall waitforVBlank\n\tcall RedrawScreen_part2\n'
-        assert old in text
-        text = text.replace(old, '\tcall waitforVBlank\t; ВЕКТОР: ждём кадр ДО отрисовки\n\tcall RedrawScreen_part1\n\tcall RedrawScreen_part2\n')
     assert 'ld      a,r' in text
     text = text.replace('ld      a,r', 'ld a,(FrameCounter)\t; ВЕКТОР: вместо ld a,r')
     text = re.sub(r'^blackpal: db 0.*\n\s+db 0.*\n', 'blackpal:\n', text, flags=re.M)
@@ -175,6 +186,11 @@ def main():
     old = 'InvalidateSTiles:\n\tpush de'
     assert old in t
     (TR / 'tiles.asm').write_text(t.replace(old, 'InvalidateSTiles:\n\tld a,c\t; ВЕКТОР: ряды панели не рисуются — прямоугольник не нужен\n\tcp 10\n\tret nc\n\tpush de'))
+    # накладные обхода грязных тайлов в RedrawInvTiles_FG (z_exx x2 на тайл, EI) — зарядить в бюджет DI
+    t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
+    old = 'DrawFGTile:\n'
+    assert t.count(old) == 1
+    (TR / 'tiles.asm').write_text(t.replace(old, 'DrawFGTile:\n\tpush af\t; ВЕКТОР: накладные обхода — в бюджет DI\n\tld a,4\n\tcall vec_budget\n\tpop af\n'))
     translate(TR / 'ianna_main_src.asm', TR / 'ianna_main.asm')
     translate(TR / 'score_src.asm', TR / 'score.asm')
     translate(TR / 'font_src.asm', TR / 'font.asm')

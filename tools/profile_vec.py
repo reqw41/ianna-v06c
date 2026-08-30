@@ -14,33 +14,40 @@ addrs = sorted(syms); names = [syms[a] for a in addrs]
 def fn(pc):
     i = bisect.bisect_right(addrs, pc) - 1
     return names[i] if i >= 0 else '?'
-# такты i8080 по опкоду (условные переходы/вызовы — по максимуму)
+# Такты ВЕКТОРА-06Ц по опкоду: модель слотов шины (cpu_ready — не более одного обращения к шине
+# за 4 такта): слоты = M1 + обращения к памяти + порты + ceil(внутренние/4), такт = 4 слота;
+# внутренние = T(8080) - 4*M1 - 3*память - 4*порты. Совпадает с таблицей vector06js (MOV r,r=8, LHLD=20,
+# CALL=24, PUSH=16). Условные переходы/вызовы — как взятые (верхняя граница).
+def _vec_cycles(t, mem, port=0):
+    internal = t - 4 - 3*mem - 4*port
+    slots = 1 + mem + port + max(0, (internal + 3)//4)
+    return 4*slots
 CYC=[4]*256
 for op in range(256):
-    hi,lo=op>>6,op&7
-    if hi==1: CYC[op]=7 if (op&7)==6 or ((op>>3)&7)==6 else 5      # MOV
-    elif hi==2: CYC[op]=7 if lo==6 else 4                            # ALU r/M
+    hi,lo=op>>6,op&7; d=(op>>3)&7
+    if hi==1: CYC[op]=_vec_cycles(7,1) if (lo==6 or d==6) else _vec_cycles(5,0)        # MOV (HLT: op 0x76)
+    elif hi==2: CYC[op]=_vec_cycles(7,1) if lo==6 else _vec_cycles(4,0)                   # ALU r/M
     elif hi==0:
-        if lo==6: CYC[op]=10 if op==0x36 else 7                     # MVI
-        elif lo==1: CYC[op]=10                                       # LXI/DAD
-        elif lo==2: CYC[op]={0x22:16,0x2A:16,0x32:13,0x3A:13}.get(op,7)  # STAX/LDAX/SHLD/LHLD/STA/LDA
-        elif lo in (3,): CYC[op]=5                                   # INX/DCX
-        elif lo in (4,5): CYC[op]=10 if (op>>3)&7==6 else 5          # INR/DCR
-        else: CYC[op]=4
+        if lo==6: CYC[op]=_vec_cycles(10,2) if d==6 else _vec_cycles(7,1)                 # MVI M / MVI r
+        elif lo==1: CYC[op]=_vec_cycles(10,2) if (op&8)==0 else _vec_cycles(10,0)          # LXI / DAD
+        elif lo==2: CYC[op]={0x22:_vec_cycles(16,4),0x2A:_vec_cycles(16,4),0x32:_vec_cycles(13,3),0x3A:_vec_cycles(13,3)}.get(op,_vec_cycles(7,1))  # SHLD/LHLD/STA/LDA/STAX/LDAX
+        elif lo==3: CYC[op]=_vec_cycles(5,0)                                                # INX/DCX
+        elif lo in (4,5): CYC[op]=_vec_cycles(10,2) if d==6 else _vec_cycles(5,0)           # INR/DCR
+        else: CYC[op]=_vec_cycles(4,0)
     else:
-        if lo==0: CYC[op]=11    # Rcc
-        elif lo==1: CYC[op]={0xC9:10,0xE9:5,0xF9:5}.get(op,10)       # POP/RET/PCHL/SPHL
-        elif lo==2: CYC[op]=10  # Jcc
-        elif lo==3: CYC[op]={0xC3:10,0xD3:10,0xDB:10,0xE3:18,0xEB:4,0xF3:4,0xFB:4}.get(op,10)
-        elif lo==4: CYC[op]=17  # Ccc
-        elif lo==5: CYC[op]={0xCD:17}.get(op,11)                     # PUSH/CALL
-        elif lo==6: CYC[op]=7   # ALU imm
-        else: CYC[op]=11        # RST
-CYC[0x76]=7
+        if lo==0: CYC[op]=_vec_cycles(11,2)     # Rcc (взятый)
+        elif lo==1: CYC[op]={0xC9:_vec_cycles(10,2),0xE9:_vec_cycles(5,0),0xF9:_vec_cycles(5,0)}.get(op,_vec_cycles(10,2))  # POP/RET/PCHL/SPHL
+        elif lo==2: CYC[op]=_vec_cycles(10,2)   # Jcc
+        elif lo==3: CYC[op]={0xC3:_vec_cycles(10,2),0xD3:_vec_cycles(10,1,1),0xDB:_vec_cycles(10,1,1),0xE3:_vec_cycles(18,4),0xEB:_vec_cycles(4,0),0xF3:_vec_cycles(4,0),0xFB:_vec_cycles(4,0)}.get(op,_vec_cycles(10,2))
+        elif lo==4: CYC[op]=_vec_cycles(17,4)   # Ccc (взятый)
+        elif lo==5: CYC[op]=_vec_cycles(17,4) if op==0xCD else _vec_cycles(11,2)   # CALL / PUSH
+        elif lo==6: CYC[op]=_vec_cycles(7,1)    # ALU imm
+        else: CYC[op]=_vec_cycles(11,2)         # RST
+CYC[0x76]=_vec_cycles(7,0)
 keys = []
 cpu = rv.make_cpu(keys)
 sym = rv.load_syms(pathlib.Path('build/ianna_vec.lst'))
-rv.run_frames(cpu, 500, sym=sym); keys.append('fire'); rv.run_frames(cpu, 40, sym=sym); keys.clear(); rv.run_frames(cpu, 10, sym=sym)
+rv.start_game(cpu, keys, sym)
 keys.append('right')
 cnt = collections.Counter(); total = 0; per_frame = []
 WATCH = ['RedrawScreen','drawTile','drawFGTile','drawSprite','drawChar','fillArea','draw_barbarian_state','draw_enemy_state','draw_score_status','z_exx','Div16_8','vec_pool_flush','LoadScreen','InvalidateSTiles','AnimateSTiles','RunScripts','CheckSprOverlap']

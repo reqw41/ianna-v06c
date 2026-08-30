@@ -37,6 +37,7 @@ vec_blit_src:	dw 0
 vec_blit_ret:	dw 0
 vec_bl_cols:	db 0
 vec_bl_pops:	db 0
+vec_bl_planes:	db 4		; vec_blit_cols: плоскостей за блит (сбрасывается в 4)
 vec_pool_on:	db 0
 vec_slot_next:	db 0
 vec_tmp_sx:	db 0
@@ -50,9 +51,11 @@ vec_fill_xr:	db 0
 vec_fill_mask:	db 0
 vec_fill_hgt:	db 0
 vec_kv_shadow:	db 0
-vec_bud_frame:	db 0		; бюджет DI: кадр (мл. байт FrameCounter) и потрачено (x256 тактов)
-vec_bud_used:	db 0		; текущее значение порта $10 вне блитов (для ISR)
 vec_bud_halts:	dw 0		; счётчик halt в vec_budget (статистика)
+vec_bud_used:	db 0		; бюджет DI: потрачено в кадре (ед. 256 тактов); ISR выставляет свою цену
+vec_wait_halted: db 0		; waitforVBlank: был ли halt в этом вызове
+vec_spr_colcost: db 0		; бюджет DI: стоимость колонки спрайта
+vec_spr_curport: db 0		; порт квазидиска текущего варианта спрайта (для возврата в стековый режим)
 ; --- кэш панели («по изменению»): что уже стоит в VRAM панели, $FF = неизвестно ---
 vec_pc_char:	ds 128		; символы, ряды 20..23 x 32 колонки (код 0..63)
 vec_pc_onoff:	ds 32		; drawScoreOnOff по колонке: 1 = выкл, 2 = вкл

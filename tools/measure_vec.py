@@ -12,7 +12,7 @@ FRAMES=int(next((o[9:] for o in OPTS if o.startswith('--frames=')),'600'))
 ROUTE=next((o[8:] for o in OPTS if o.startswith('--route=')),'none:300,right:300')
 START=next((tuple(int(v) for v in o[8:].split(',')) for o in OPTS if o.startswith('--start=')),None)
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
-src=open('tools/profile_vec.py').read(); i=src.index('CYC=[4]*256'); j=src.index('keys = []'); exec(src[i:j])
+src=open('tools/profile_vec.py').read(); i=src.index('# Такты ВЕКТОРА'); j=src.index('keys = []'); exec(src[i:j])
 FRAME=59904
 syms={}
 for line in open(LST,encoding='utf-8',errors='replace'):
@@ -64,7 +64,21 @@ def run(nframes):
             else:
                 lost+=1; lost_at[fn(cpu.pc)]+=1
 def rd(a): return mem[a]
-run(500); keys.append('fire'); run(40); keys.clear(); run(10)
+run(400); keys.append('fire'); RS=sym['RunScripts']; started=False
+for _ in range(1500):
+    end=cyc[0]+FRAME
+    while cyc[0]<end:
+        if cpu.halted: cyc[0]=next_irq
+        else:
+            if cpu.pc==RS: started=True
+            cyc[0]+=CYC[mem[cpu.pc]]; cpu.step()
+        if cyc[0]>=next_irq:
+            next_irq+=FRAME
+            if cpu.ie: cpu.ie=False; cpu.halted=False; cpu.push(cpu.pc); cpu.pc=0x38; delivered+=1
+            else: lost+=1
+    if started: break
+assert started, 'игра не стартовала'
+keys.clear(); run(10)
 print(f'{ROM}: старт {"экран "+str(START) if START else "начало уровня"}; прогрев: доставлено {delivered}, потеряно {lost}')
 for seg in ROUTE.split(','):
     k,n=seg.split(':'); n=int(n)

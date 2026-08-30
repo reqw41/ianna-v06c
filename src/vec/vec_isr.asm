@@ -7,10 +7,6 @@ vec_isr:
 	push bc
 	push de
 	push hl
-	; --- таймер ВИ53 счётчик 0 := $FFFF (отсчёт времени от VBlank для vec_budget) ---
-	ld a,$FF
-	out ($0B),a
-	out ($0B),a
 	; --- палитра (латч по лучу: пишем в VBlank, сразу после входа в ISR) ---
 	ld hl,vec_palette
 	ld c,0
@@ -71,6 +67,8 @@ isr_zr:
 	jp nz,isr_zr
 isr_nomusic:
     endif
+	ld a,VEC_ISR_COST
+	ld (vec_bud_used),a	; бюджет DI: фаза кадра на выходе из ISR
 	pop hl
 	pop de
 	pop bc

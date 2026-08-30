@@ -102,6 +102,21 @@ def run_frames(cpu, n, budget=13000, sym=None):
             cpu.push(cpu.pc)
             cpu.pc = 0x38
 
+def start_game(cpu, keys, sym, max_frames=1500):
+    """Прогрев: дождаться сообщения уровня, держать fire до первого RunScripts (старт игры), отпустить."""
+    run_frames(cpu, 400, sym=sym)
+    RS = sym['RunScripts']; keys.append('fire'); started = False
+    for _ in range(max_frames):
+        c = 0
+        while not cpu.halted and c < 13000:
+            if cpu.pc == RS: started = True
+            cpu.step(); c += 1
+        cpu.halted = False
+        if cpu.ie: cpu.ie = False; cpu.push(cpu.pc); cpu.pc = 0x38
+        if started: break
+    keys.clear(); run_frames(cpu, 10, sym=sym)
+    assert started, 'игра не стартовала'
+
 def dump_state(cpu, sym):
     ent = sym.get('ENTITY_DATA'); spd = sym.get('SPDATA')
     if ent is None: return

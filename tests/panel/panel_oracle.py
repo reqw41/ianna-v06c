@@ -16,11 +16,14 @@ def forced_redraw(cpu,sym):
     st=(cpu.pc,cpu.sp,cpu.a,cpu.b,cpu.c,cpu.d,cpu.e,cpu.h,cpu.l,cpu.f if hasattr(cpu,'f') else None,cpu.ie,cpu.halted)
     if 'vec_pc_char' in sym:
         for i in range(224): cpu.mem[sym['vec_pc_char']+i]=0xFF
-    cpu.mem[0]=0x76  # halt
     cpu.sp=0x7F00; cpu.push(0x0000); cpu.pc=sym['draw_score_status']; cpu.halted=False; cpu.ie=False
     n=0
-    while not cpu.halted and n<400000: cpu.step(); n+=1
-    assert cpu.halted, 'draw_score_status не вернулся'
+    while cpu.pc!=0 and n<400000:
+        if cpu.halted:   # halt бюджета DI внутри блита панели: «прерывание пришло» — счётчик кадра обнулён
+            cpu.halted=False
+            if 'vec_bud_used' in sym: cpu.mem[sym['vec_bud_used']]=0
+        cpu.step(); n+=1
+    assert cpu.pc==0, 'draw_score_status не вернулся'
     cpu.pc,cpu.sp,cpu.a,cpu.b,cpu.c,cpu.d,cpu.e,cpu.h,cpu.l=st[:9]
     if st[9] is not None: cpu.f=st[9]
     cpu.ie,cpu.halted=st[10],st[11]
@@ -32,7 +35,7 @@ def run(start):
     rv.START=start; rv._start_done[0]=False
     keys=[]; cpu=rv.make_cpu(keys); sym=rv.load_syms(pathlib.Path(LST))
     rom=open(ROM,'rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom; cpu.pc=0x100
-    rv.run_frames(cpu,500,sym=sym); keys.append('fire'); rv.run_frames(cpu,40,sym=sym); keys.clear(); rv.run_frames(cpu,10,sym=sym)
+    rv.start_game(cpu, keys, sym)
     bad=0
     for i,(k,n) in enumerate(ROUTE):
         keys.clear()
@@ -41,8 +44,14 @@ def run(start):
         # дорисовать хвост ожидания: в оригинале панель докрашивается в кадрах ожидания — дадим 6 кадров покоя
         keys.clear(); rv.run_frames(cpu,6,sym=sym)
         # до безопасной точки: halt в waitforVBlank (окно квазидиска закрыто, SP свой)
-        n=0
-        while not cpu.halted and n<200000: cpu.step(); n+=1
+        n=0; HALT=sym['waitforvblank_halt_go']
+        while n<2000000:
+            if cpu.halted:
+                if cpu.pc==HALT+1: break          # halt цикла ожидания: окно закрыто, SP свой, vec_blit_ret не жив
+                cpu.halted=False                  # halt бюджета внутри блита — прерывание «пришло», идём дальше
+                if 'vec_bud_used' in sym: cpu.mem[sym['vec_bud_used']]=0
+                if cpu.ie: cpu.ie=False; cpu.push(cpu.pc); cpu.pc=0x38
+            cpu.step(); n+=1
         assert cpu.halted, 'нет halt'
         before=panel_vram(cpu); pal=list(cpu.mem[sym['vec_palette']:sym['vec_palette']+16]); img0=bytes(cpu.mem[0x8000:0x10000]); forced_redraw(cpu,sym); after=panel_vram(cpu)
         if before!=after:
