@@ -185,6 +185,7 @@ def main():
         return '\n'.join(L[:a] + repl.split('\n') + L[b:])
     t = (SRC / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
     t = cut(t, lambda l: l.startswith('AnimStile_CheckSprites:'), lambda l: 'Get the value for the tile in the hardness map' in l, hot_t)
+    t = cut(t, lambda l: l.startswith('AnimateSTiles:'), lambda l: '; Update a supertile on screen' in l, '; ВЕКТОР: AnimateSTiles — нативно (overlap_hot.asm)')
     (TR / 'tiles_src.asm').write_text(t)
     d = (SRC / 'drawsprite.asm').read_text(encoding='utf-8', errors='replace')
     d = cut(d, lambda l: l.startswith('CheckSprOverlap:'), lambda l: l.startswith('; Redraw the sprite list'), hot_d)

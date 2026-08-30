@@ -51,6 +51,10 @@ vec_tmp_rp:	dw 0
 vec_tmp_bx:	db 0
 vec_tmp_cx:	db 0
 vec_tmp_ovf:	db 0		; раздача слотов: переполнение
+vec_an_cnt:	db 0		; AnimateSTiles: счётчик, длина/начало серии
+vec_an_run:	db 0
+vec_an_x:	db 0
+vec_an_y:	db 0
 vec_spr_prev:	ds 64		; прошлые прямоугольники спрайтов (x,y,nx,ny) x16 — слоты и под старым местом
 vec_fill_color:	db 0
 vec_fill_xr:	db 0
@@ -67,7 +71,8 @@ vec_spr_curport: db 0		; порт квазидиска текущего вари
 vec_pc_char:	ds 128		; символы, ряды 20..23 x 32 колонки (код 0..63)
 vec_pc_onoff:	ds 32		; drawScoreOnOff по колонке: 1 = выкл, 2 = вкл
 vec_pc_meter:	ds 64		; шкалы draw_meter по колонке: [0] Y цветной части, [1] высота пустой
-vec_zsave:	ds 18		; сохранение z_ix..z_hl2 на время плеера в ISR
+vec_pal_dirty:	db 1		; палитра: записать в ISR (старт / смена)
+vec_zsave:	ds 8		; z_ix..z_ret на время плеера в ISR		; сохранение z_ix..z_hl2 на время плеера в ISR
 ply_sd_cnt:	db 0		; Arkos: сдвиг частоты (4k) вместо самомодификации jr
 ply_hd_cnt:	db 0
 ply_sd_loop:	db 0

@@ -7,7 +7,13 @@ vec_isr:
 	push bc
 	push de
 	push hl
-	; --- палитра (латч по лучу: пишем в VBlank, сразу после входа в ISR) ---
+	; --- палитра (латч по лучу: пишем в VBlank, сразу после входа в ISR) — только когда изменилась
+	; (vec_pal_dirty: 1 при старте и после смены палитры уровня); каждый кадр это ~1.7К тактов зря ---
+	ld a,(vec_pal_dirty)
+	or a
+	jp z,isr_nopal
+	xor a
+	ld (vec_pal_dirty),a
 	ld hl,vec_palette
 	ld c,0
 isr_pal:
@@ -22,6 +28,7 @@ isr_pal:
 	ld a,c
 	cp 16
 	jp nz,isr_pal
+isr_nopal:
 	ld a,1
 	out ($02),a		; бордюр = цвет 1 (чёрный, как backdrop MSX2)
 	; --- клавиатура -> joystick_state (биты: 0 up,1 down,2 left,3 right,4 fire,5 fire2) ---
@@ -39,17 +46,16 @@ isr_pal:
 	ld a,(music_playing)
 	or a
 	jp z,isr_nomusic
-	; сохранить ячейки эмуляции Z80 (главный код мог быть прерван внутри хелпера)
-	ld hl,z_ix
-	ld de,vec_zsave
-	ld b,18
-isr_zs:
-	ld a,(hl)
-	ld (de),a
-	inc hl
-	inc de
-	dec b
-	jp nz,isr_zs
+	; сохранить ячейки эмуляции Z80 (главный код мог быть прерван внутри хелпера): холодная часть
+	; плеера трогает только z_ix, z_a, z_ret (+ z_iy/z_tmp рядом) — 8 байт z_ix..z_ret, без циклов
+	ld hl,(z_ix)
+	ld (vec_zsave),hl
+	ld hl,(z_iy)
+	ld (vec_zsave+2),hl
+	ld hl,(z_a)
+	ld (vec_zsave+4),hl
+	ld hl,(z_ret)
+	ld (vec_zsave+6),hl
 	ld a,(vec_kv_shadow)
 	and $1c			; сохранить стековые биты: сброс пула идёт с EI, стек — в странице 3
 	or KV_WIN_MUSIC
@@ -57,16 +63,14 @@ isr_zs:
 	call MUSIC_Play
 	ld a,(vec_kv_shadow)
 	out (KV_PORT),a
-	ld hl,vec_zsave
-	ld de,z_ix
-	ld b,18
-isr_zr:
-	ld a,(hl)
-	ld (de),a
-	inc hl
-	inc de
-	dec b
-	jp nz,isr_zr
+	ld hl,(vec_zsave)
+	ld (z_ix),hl
+	ld hl,(vec_zsave+2)
+	ld (z_iy),hl
+	ld hl,(vec_zsave+4)
+	ld (z_a),hl
+	ld hl,(vec_zsave+6)
+	ld (z_ret),hl
 isr_nomusic:
     endif
 	ld a,VEC_ISR_COST

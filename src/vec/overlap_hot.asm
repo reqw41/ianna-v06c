@@ -42,6 +42,104 @@ AnimStile_CheckSprites:
 	ld (simulatedsprite),hl
 	ret
 
+; AnimateSTiles — ВЕКТОР, нативно: как оригинал (tiles.asm), но проверка пересечения со спрайтами
+; (AnimStile_CheckSprites: 16 проверок + инвалидация) — не на каждый тайл, а на горизонтальную СЕРИЮ
+; соседних анимированных тайлов одной строки (полоса воды = одна проверка вместо семи). Карта и
+; InvalidateSTiles — по-прежнему на каждый тайл. Список curscreen_animtiles идёт в порядке карты.
+AnimateSTiles:
+	ld a,(curscreen_numanimtiles)
+	or a
+	ret z
+	ld (vec_an_cnt),a
+	xor a
+	ld (vec_an_run),a
+	ld hl,curscreen_animtiles
+an_loop:
+	ld b,(hl)		; X супертайла
+	inc hl
+	ld c,(hl)		; Y
+	inc hl
+	push hl
+	ld a,c
+	rrca
+	rrca
+	rrca
+	rrca
+	and $f0
+	or b
+	ld e,a			; индекс Y*16+X
+	ld d,0
+	ld hl,CURRENT_SCREEN_MAP
+	add hl,de
+	ld a,(hl)
+	cp 240
+	jp nc,an_do		; фоновый супертайл >= 240 — анимируем его
+	ld hl,CURRENT_SCREEN_MAP_FG
+	add hl,de
+	ld a,(hl)
+	cp 240
+	jp c,an_skip		; и FG < 240 — нечего анимировать
+an_do:
+	and $fc			; старшие 6 бит + следующий кадр анимации
+	ld e,a
+	ld a,(hl)
+	inc a
+	and 3
+	or e
+	ld (hl),a
+	push bc
+	ld de,$0101
+	call InvalidateSTiles	; как UpdateSuperTile: тайл — в грязные
+	pop bc
+	ld a,(vec_an_run)	; серия: продолжается, если та же строка и X = x0 + длина
+	or a
+	jp z,an_new
+	ld a,(vec_an_y)
+	cp c
+	jp nz,an_flush
+	ld a,(vec_an_x)
+	ld d,a
+	ld a,(vec_an_run)
+	add a,d
+	cp b
+	jp nz,an_flush
+	ld a,(vec_an_run)
+	inc a
+	ld (vec_an_run),a
+	jp an_skip
+an_flush:
+	push bc
+	call an_check
+	pop bc
+an_new:
+	ld a,b
+	ld (vec_an_x),a
+	ld a,c
+	ld (vec_an_y),a
+	ld a,1
+	ld (vec_an_run),a
+an_skip:
+	pop hl
+	ld a,(vec_an_cnt)
+	dec a
+	ld (vec_an_cnt),a
+	jp nz,an_loop
+	ld a,(vec_an_run)
+	or a
+	ret z
+an_check:			; AnimStile_CheckSprites(B = x0, C = y, D = 2*длина символов, E = 2)
+	ld a,(vec_an_x)
+	ld b,a
+	ld a,(vec_an_y)
+	ld c,a
+	ld a,(vec_an_run)
+	add a,a
+	ld d,a
+	ld e,2
+	xor a
+	ld (vec_an_run),a
+	jp AnimStile_CheckSprites
+
 ;;;SPLIT;;;
 ;;; overlap_hot.asm, часть drawsprite — MarkOverlappingSprites / check_sprite_overlap
 ; MarkOverlappingSprites: все спрайты, пересекающиеся с simulatedsprite и ещё не помеченные,
