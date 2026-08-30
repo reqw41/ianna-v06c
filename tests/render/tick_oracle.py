@@ -8,16 +8,18 @@ import sys, pathlib, hashlib
 ARGS=[a for a in sys.argv[1:] if not a.startswith('--')]; OPTS=[a for a in sys.argv[1:] if a.startswith('--')]
 ROUTE=next((o[8:] for o in OPTS if o.startswith('--route=')),'none:20,right:40,fire+right:40,left:30,none:10')
 START=next((tuple(int(v) for v in o[8:].split(',')) for o in OPTS if o.startswith('--start=')),None)
-FIXRAND='--fixrand' in OPTS   # FrameCounter := номер тика перед RunScripts: генератор случайных чисел (ld a,r -> FrameCounter) не зависит от скорости сборки
+FIXRAND='--fixrand' in OPTS
+EDDS=[next((o[7:] for o in OPTS if o.startswith('--eddA=')),None), next((o[7:] for o in OPTS if o.startswith('--eddB=')),None)]   # свой EDD для каждой сборки (формат данных мог измениться)   # FrameCounter := номер тика перед RunScripts: генератор случайных чисел (ld a,r -> FrameCounter) не зависит от скорости сборки
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 def field(mem):
     h=hashlib.md5()
     for base in (0x8000,0xA000,0xC000,0xE000):
         for x in range(32): h.update(bytes(mem[base+x*256+64:base+x*256+224]))   # L 64..223 = y 159..0
     return h.hexdigest()
-def run(rom,lst):
+def run(rom,lst,edd=None):
     rv.START=START; rv._start_done[0]=False
     sym=rv.load_syms(pathlib.Path(lst)); keys=[]; cpu=rv.make_cpu(keys)
+    if edd: cpu.load_edd(pathlib.Path(edd))
     r=open(rom,'rb').read(); cpu.mem[0x100:0x100+len(r)]=r; cpu.pc=0x100
     rv.start_game(cpu, keys, sym)
     RS=sym['RunScripts']; out=[]
@@ -36,7 +38,7 @@ def run(rom,lst):
             st=bytes(cpu.mem[sym['SPDATA']:sym['SPDATA']+128])+bytes(cpu.mem[sym['ENTITY_DATA']:sym['ENTITY_DATA']+96])+bytes([cpu.mem[sym['ndirtyrects']]])+bytes(cpu.mem[sym['tiles_dirty']:sym['tiles_dirty']+4*cpu.mem[sym['ndirtyrects']]])
             out.append((field(cpu.mem), bytes(cpu.mem[0x8000:0x10000]), list(cpu.mem[sym['vec_palette']:sym['vec_palette']+16], ), hashlib.md5(st).hexdigest())); cpu.step()
     return out
-a=run(ARGS[0],ARGS[1]); b=run(ARGS[2],ARGS[3])
+a=run(ARGS[0],ARGS[1],EDDS[0]); b=run(ARGS[2],ARGS[3],EDDS[1])
 bad=[i for i,(x,y) in enumerate(zip(a,b)) if x[0]!=y[0]]
 badst=[i for i,(x,y) in enumerate(zip(a,b)) if x[3]!=y[3]]
 print(f'состояние (спрайты/сущности/грязные): различий {len(badst)}' + (f' — первый в тике {badst[0]}' if badst else ' — ИДЕНТИЧНО'))

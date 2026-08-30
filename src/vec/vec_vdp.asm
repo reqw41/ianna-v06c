@@ -101,12 +101,12 @@ cls_l:
 ; Таблица банков MSX -> (порт стека, старший байт базы) для кадров спрайтов.
 ; банк 2 варвар общий -> стр.0 $0000; 3 прыжки -> стр.1 $0000;
 ; 7 скелет, 8 орк, 9 мумия, 12 камень -> стр.2 по $4000; остальные -> стр.0 (мусор, но безопасно)
-vec_bank_tab:
-	db KV_STK_P0,$00, KV_STK_P1,$00		; 2,3
+vec_bank_tab:			; кадры по 576 Б (см. build_edd.SPRITE_BANKS)
+	db KV_STK_P0,$00, KV_STK_P1,$A2		; 2,3 варвар: стр.0 $0000, стр.1 $A200
 	db KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00	; 4,5,6 (оружие — пока нет)
-	db KV_STK_P2,$00, KV_STK_P2,$40, KV_STK_P2,$80	; 7,8,9
+	db KV_STK_P1,$00, KV_STK_P2,$00, KV_STK_P2,$60	; 7 скелет стр.1, 8 орк стр.2, 9 мумия стр.2 $6000
 	db KV_STK_P0,$00, KV_STK_P0,$00			; 10,11
-	db KV_STK_P2,$C0				; 12
+	db KV_STK_P3,$28				; 12 камень стр.3 $2800
 	db KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00, KV_STK_P0,$00	; 13..21
 
 ; ---------------------------------------------------------------------------
@@ -361,7 +361,7 @@ dt_a0:
 	ld d,a
 	rrca
 	and $7f
-	add a,$80
+	add a,BG_TILES_BASE/256
 	ld h,a
 	ld a,d
 	and 1
@@ -506,7 +506,7 @@ drawFGTile:
 	ld (vec_sp_save),hl
 	ld hl,(vec_blit_src)
 	ld sp,hl
-	ld a,KV_POOL_WIN|KV_STK_P1
+	ld a,KV_POOL_WIN|KV_STK_P0	; FG-тайлы — страница 0 ($5D00)
 	out (KV_PORT),a
 	ex de,hl
 	ld a,16
@@ -584,7 +584,7 @@ dft_direct:
 	ld hl,(vec_blit_src)
 	ld sp,hl
     if !DEMO
-	ld a,KV_STK_P1
+	ld a,KV_STK_P0		; FG-тайлы — страница 0
 	out (KV_PORT),a
     endif
 	ld a,4
@@ -728,6 +728,14 @@ drawSprite:
 	pop af
 	push af
 	ld de,-$8000
+	add hl,de		; n*384 (MSX) -> n*576: + половина
+	ld a,h
+	or a
+	rra
+	ld d,a
+	ld a,l
+	rra
+	ld e,a
 	add hl,de
     if DEMO
 	ld de,DEMO_FRAMES_BASE
@@ -756,7 +764,9 @@ drawSprite:
 	ld a,32
 	sub e
 	add a,a
+	ld d,a
 	add a,a
+	add a,d			; (32-NY)*6: строка = 6 байт [p0,маска,p1,p2,p3,пропуск]
 	ld (vec_spr_skip),a
 	ld e,a
 	ld d,0
@@ -780,27 +790,26 @@ drawSprite:
 	ld (vec_spr_hcol),a
 	pop af
 	ld (vec_spr_dir),a
-	; бюджет по колонкам: прямой ~1.5 ед. на строку (NY + NY/2), зеркальный ~2.1 (2*NY + NY/8), + 8
+	; бюджет по колонкам (формат 6 Б/строка с готовой маской и пропуском): прямой ~1.25 ед. на строку
+	; (NY + NY/4), зеркальный ~1.75 (NY + NY/2 + NY/4), + 8 на колонку
 	push de
 	ld a,(vec_spr_ny)
 	ld e,a
+	rrca
+	rrca
+	and $3f			; NY/4
+	ld d,a
 	ld a,(vec_spr_dir)
 	or a
 	ld a,e
 	jp z,ds_cost_fwd
-	add a,a			; 2*NY
-	ld d,a
-	ld a,e
-	rrca
-	rrca
-	rrca
-	and $1f			; NY/8
-	add a,d
-	jp ds_cost
-ds_cost_fwd:
 	rrca
 	and $7f			; NY/2
+	add a,d
 	add a,e
+	jp ds_cost
+ds_cost_fwd:
+	add a,d
 ds_cost:
 	add a,8
 	ld (vec_spr_colcost),a
@@ -843,37 +852,33 @@ ds_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_row_cnt),a
 ds_row:
-	pop de
-	pop bc
-	ld a,e
-	or d
+	pop bc			; C = p0, B = маска (готовая)
+	pop de			; E = p1, D = p2
+	ld a,b
+	and (hl)
 	or c
-	or b
-	cpl
-	ld (vec_spr_mask),a
+	ld (hl),a
+	ld a,h
+	add a,$20
+	ld h,a
+	ld a,b
 	and (hl)
 	or e
 	ld (hl),a
 	ld a,h
 	add a,$20
 	ld h,a
-	ld a,(vec_spr_mask)
+	ld a,b
 	and (hl)
 	or d
 	ld (hl),a
 	ld a,h
 	add a,$20
 	ld h,a
-	ld a,(vec_spr_mask)
+	pop de			; E = p3, D = пропуск (пустых строк выше)
+	ld a,b
 	and (hl)
-	or c
-	ld (hl),a
-	ld a,h
-	add a,$20
-	ld h,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or b
+	or e
 	ld (hl),a
 	ld a,h
 	sub $60
@@ -882,7 +887,38 @@ ds_row:
 	ld a,(vec_row_cnt)
 	dec a
 	ld (vec_row_cnt),a
-	jp nz,ds_row
+	jp z,ds_col_end
+	ld e,a			; осталось строк
+	ld a,d			; пропуск: k = min(пропуск, осталось-1)
+	or a
+	jp z,ds_row
+	ld a,e
+	dec a
+	jp z,ds_row
+	cp d
+	jp c,ds_k
+	ld a,d
+ds_k:
+	ld d,a
+	ld a,e
+	sub d
+	ld (vec_row_cnt),a
+	ld a,l
+	add a,d
+	ld l,a			; k строк вверх
+	ld (vec_spr_p01),hl
+	ld a,d
+	add a,a
+	ld e,a
+	add a,a
+	add a,e		; 6k байт источника
+	ld l,a
+	ld h,0
+	add hl,sp
+	ld sp,hl
+	ld hl,(vec_spr_p01)
+	jp ds_row
+ds_col_end:
 	ld a,(vec_spr_skip)
 	ld l,a
 	ld h,0
@@ -925,62 +961,90 @@ dsm_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_row_cnt),a
 dsm_row:
-	ld h,rev256/256
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ld a,c
-	ld (vec_spr_p01),a
-	ld a,b
-	ld (vec_spr_p01+1),a
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ld hl,(vec_spr_p01)
-	ld a,l
-	or h
-	or c
-	or b
-	cpl
-	ld (vec_spr_mask),a
 	ex de,hl
+	ld (vec_spr_dst),hl	; адрес VRAM (H колонки, L строки) — на время просмотра rev256
+	ld h,rev256/256
+	pop bc			; C = p0, B = маска
+	ld l,c
+	ld a,(hl)
+	ld (vec_spr_p01),a	; p0 зеркально
+	ld l,b
+	ld a,(hl)
+	ld (vec_spr_mask),a	; маска зеркально
+	pop de			; E = p1, D = p2
+	ld l,e
+	ld e,(hl)
+	ld l,d
+	ld d,(hl)
+	pop bc			; C = p3, B = пропуск
+	ld l,c
+	ld c,(hl)
+	ld hl,(vec_spr_dst)
+	ld a,h
+	add a,$60
+	ld h,a			; плоскость 3
+	ld a,(vec_spr_mask)
 	and (hl)
-	or e
+	or c
 	ld (hl),a
 	ld a,h
-	add a,$20
+	sub $20
 	ld h,a
 	ld a,(vec_spr_mask)
 	and (hl)
 	or d
 	ld (hl),a
 	ld a,h
-	add a,$20
+	sub $20
 	ld h,a
 	ld a,(vec_spr_mask)
 	and (hl)
-	or c
+	or e
 	ld (hl),a
 	ld a,h
-	add a,$20
+	sub $20
 	ld h,a
+	ld a,(vec_spr_p01)
+	ld e,a
 	ld a,(vec_spr_mask)
 	and (hl)
-	or b
+	or e
 	ld (hl),a
-	ld a,h
-	sub $60
-	ld h,a
 	inc l
-	ex de,hl
+	ex de,hl		; DE = адрес следующей строки
 	ld a,(vec_row_cnt)
 	dec a
 	ld (vec_row_cnt),a
-	jp nz,dsm_row
+	jp z,dsm_col_end
+	ld c,a			; осталось строк
+	ld a,b			; пропуск
+	or a
+	jp z,dsm_row
+	ld a,c
+	dec a
+	jp z,dsm_row
+	cp b
+	jp c,dsm_k
+	ld a,b
+dsm_k:
+	ld b,a
+	ld a,c
+	sub b
+	ld (vec_row_cnt),a
+	ld a,e
+	add a,b
+	ld e,a			; k строк вверх
+	ld a,b
+	add a,a
+	ld c,a
+	add a,a
+	add a,c
+	ld l,a
+	ld h,0
+	add hl,sp
+	ld sp,hl		; 6k байт источника
+	jp dsm_row
+dsm_col_end:
 	ld a,(vec_spr_skip)
 	ld l,a
 	ld h,0
@@ -1131,37 +1195,33 @@ dsp_n_ok:
 	sub b
 	ld (vec_spr_row),a
 dsp_row:
-	pop de
-	pop bc
-	ld a,e
-	or d
+	pop bc			; C = p0, B = маска
+	pop de			; E = p1, D = p2
+	ld a,b
+	and (hl)
 	or c
-	or b
-	cpl
-	ld (vec_spr_mask),a
+	ld (hl),a
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,b
 	and (hl)
 	or e
 	ld (hl),a
 	ld a,l
 	add a,32
 	ld l,a
-	ld a,(vec_spr_mask)
+	ld a,b
 	and (hl)
 	or d
 	ld (hl),a
 	ld a,l
 	add a,32
 	ld l,a
-	ld a,(vec_spr_mask)
+	pop de			; E = p3, D = пропуск
+	ld a,b
 	and (hl)
-	or c
-	ld (hl),a
-	ld a,l
-	add a,32
-	ld l,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or b
+	or e
 	ld (hl),a
 	ld a,l
 	sub 96+1		; назад на плоскость 0 и строкой выше
@@ -1169,7 +1229,38 @@ dsp_row:
 	ld a,(vec_seg_cnt)
 	dec a
 	ld (vec_seg_cnt),a
-	jp nz,dsp_row
+	jp z,dsp_seg_end
+	ld e,a			; осталось строк в сегменте
+	ld a,d
+	or a
+	jp z,dsp_row
+	ld a,e
+	dec a
+	jp z,dsp_row
+	cp d
+	jp c,dsp_k
+	ld a,d
+dsp_k:
+	ld d,a
+	ld a,e
+	sub d
+	ld (vec_seg_cnt),a
+	ld a,l
+	sub d
+	ld l,a			; k строк вверх (в пуле строка = -1)
+	ld (vec_spr_p01),hl
+	ld a,d
+	add a,a
+	ld e,a
+	add a,a
+	add a,e
+	ld l,a
+	ld h,0
+	add hl,sp
+	ld sp,hl
+	ld hl,(vec_spr_p01)
+	jp dsp_row
+dsp_seg_end:
 	ld a,(vec_rows_left)
 	or a
 	jp nz,dsp_seg
@@ -1263,61 +1354,90 @@ dspm_n_ok:
 	sub b
 	ld (vec_spr_row),a
 dspm_row:
-	ld h,rev256/256
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ld a,c
-	ld (vec_spr_p01),a
-	ld a,b
-	ld (vec_spr_p01+1),a
-	pop bc
-	ld l,c
-	ld c,(hl)
-	ld l,b
-	ld b,(hl)
-	ld hl,(vec_spr_p01)
-	ld a,l
-	or h
-	or c
-	or b
-	cpl
-	ld (vec_spr_mask),a
 	ex de,hl
+	ld (vec_spr_dst),hl	; адрес в пуле — на время просмотра rev256
+	ld h,rev256/256
+	pop bc			; C = p0, B = маска
+	ld l,c
+	ld a,(hl)
+	ld (vec_spr_p01),a
+	ld l,b
+	ld a,(hl)
+	ld (vec_spr_mask),a
+	pop de			; E = p1, D = p2
+	ld l,e
+	ld e,(hl)
+	ld l,d
+	ld d,(hl)
+	pop bc			; C = p3, B = пропуск
+	ld l,c
+	ld c,(hl)
+	ld hl,(vec_spr_dst)
+	ld a,l
+	add a,96
+	ld l,a			; плоскость 3
+	ld a,(vec_spr_mask)
 	and (hl)
-	or e
+	or c
 	ld (hl),a
 	ld a,l
-	add a,32
+	sub 32
 	ld l,a
 	ld a,(vec_spr_mask)
 	and (hl)
 	or d
 	ld (hl),a
 	ld a,l
-	add a,32
+	sub 32
 	ld l,a
 	ld a,(vec_spr_mask)
 	and (hl)
-	or c
+	or e
 	ld (hl),a
 	ld a,l
-	add a,32
+	sub 32
 	ld l,a
+	ld a,(vec_spr_p01)
+	ld e,a
 	ld a,(vec_spr_mask)
 	and (hl)
-	or b
+	or e
 	ld (hl),a
-	ld a,l
-	sub 96+1
-	ld l,a
+	dec l			; строкой выше
 	ex de,hl
 	ld a,(vec_seg_cnt)
 	dec a
 	ld (vec_seg_cnt),a
-	jp nz,dspm_row
+	jp z,dspm_seg_end
+	ld c,a
+	ld a,b
+	or a
+	jp z,dspm_row
+	ld a,c
+	dec a
+	jp z,dspm_row
+	cp b
+	jp c,dspm_k
+	ld a,b
+dspm_k:
+	ld b,a
+	ld a,c
+	sub b
+	ld (vec_seg_cnt),a
+	ld a,e
+	sub b
+	ld e,a			; k строк вверх
+	ld a,b
+	add a,a
+	ld c,a
+	add a,a
+	add a,c
+	ld l,a
+	ld h,0
+	add hl,sp
+	ld sp,hl
+	jp dspm_row
+dspm_seg_end:
 	ld a,(vec_rows_left)
 	or a
 	jp nz,dspm_seg

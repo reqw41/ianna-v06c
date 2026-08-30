@@ -29,6 +29,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / 'ref/msx2/src'
 BUILD = ROOT / 'build'
 STRING_AREA_KVAZ = 0x6C00   # vars наверху ОЗУ (см. build_vec.py): string_area квазидисковой сборки
+BG_TILES_BASE = 0x8000      # страница 0: 256 тайлов x 128 = 32К
+FG_TILES_BASE = 0x5D00      # страница 0 (до 35 FG-тайлов x 256)
+SPRITE_BANKS = [            # (страница, база, файл, предел) — согласовано с vec_bank_tab (vec_vdp.asm); база кратна 256
+    (0, 0x0000, 'sprite_barbaro_1', 0x5D00), (1, 0xA200, 'sprite_barbaro_2', 0x10000),
+    (1, 0x0000, 'sprite_esqueleto', 0x8000), (2, 0x0000, 'sprite_orc', 0x6000), (2, 0x6000, 'sprite_mummy', 0x10000),
+    (3, 0x2800, 'sprite_rollingstone', 0xA000)]
 STRING_AREA_DEMO = 0x7400   # демо: string_area 512 Б, vars короче (до $8000 ровно)
 DEMO_DATA_ADDR = 0x0200     # блок данных демо-ROM сразу за jp по $0100
 DEMO_FRAMES = 10            # idle, gira, camina x6, cae x2 (см. sprites.asm)
@@ -101,13 +107,25 @@ def parse_sprite_asm(path):
     assert len(rows) % 32 == 0, (path, len(rows))
     return [rows[i:i+32] for i in range(0, len(rows), 32)]
 
+FRAME_BYTES = 576   # 3 колонки x 32 строки x 6 байт
+
 def sprite_frame_bytes(frame):
-    """384 Б: for col(0..2): for row 31..0: [p0,p1,p2,p3]"""
+    """576 Б: for col(0..2): for row 31..0: [p0, маска, p1, p2, p3, пропуск]; маска = ~(p0|p1|p2|p3);
+    пропуск = сколько строк ВЫШЕ (следующих в потоке) полностью прозрачны подряд — компоновщик их не трогает.
+    Адрес кадра: MSX n*384 -> n*576 (drawSprite прибавляет половину)."""
     pl = [planes_of_row(r) for r in frame]
     out = bytearray()
     for col in range(3):
+        trans = [all(pl[y][p][col] == 0 for p in range(4)) for y in range(32)]
         for y in range(31, -1, -1):
-            out += bytes(pl[y][p][col] for p in range(4))
+            p0, p1, p2, p3 = (pl[y][p][col] for p in range(4))
+            mask = (~(p0 | p1 | p2 | p3)) & 0xFF
+            skip = 0
+            yy = y - 1
+            while yy >= 0 and trans[yy]: skip += 1; yy -= 1
+            if skip < 2: skip = 0          # код пропуска стоит ~250 тактов — окупается от двух строк
+            out += bytes((p0, mask, p1, p2, p3, skip))
+    assert len(out) == FRAME_BYTES
     return bytes(out)
 
 def column_blob(pixels_rows, x0, w_cols, y0, h):
@@ -158,20 +176,20 @@ def build_kvaz():
     pages = [bytearray(65536) for _ in range(4)]
     sr5 = pletter_depack((SRC / 'tiles_nivel01.SR5.plet1').read_bytes())
     assert len(sr5) == 32768
+    # Раскладка (кадры спрайтов по 576 Б, банки по 41 кадру = 23616 Б; см. vec_bank_tab в vec_vdp.asm):
+    #   стр.0: банк 2 варвар $0000-$5C40, FG $5D00, тайлы BG $8000-$FFFF (256 x 128)
+    #   стр.1: банк 7 скелет $0000-$5C40, карта $8000 (8.6К), банк 3 варвар $A200-$E340
+    #   стр.2: банк 8 орк $0000, банк 9 мумия $6000
+    #   стр.3: банк 12 камень $2800; шрифт/панель/оружие $0000-$27FF, пул $A000, музыка $C980, эффекты $D980
     for n in range(256):
-        pages[0][0x8000 + n*128: 0x8000 + (n+1)*128] = bg_tile_bytes(tile_pixels(sr5, n))
-    b2 = parse_sprite_asm(SRC / 'sprite_barbaro_1.asm')
-    b3 = parse_sprite_asm(SRC / 'sprite_barbaro_2.asm')
-    for i, fr in enumerate(b2):
-        pages[0][i*384:(i+1)*384] = sprite_frame_bytes(fr)
-    for i, fr in enumerate(b3):
-        pages[1][i*384:(i+1)*384] = sprite_frame_bytes(fr)
-    # страница 2: враги уровня 1 — банки 7 скелет, 8 орк, 9 мумия, 12 камень (по $4000)
-    for i, name in enumerate(('sprite_esqueleto', 'sprite_orc', 'sprite_mummy', 'sprite_rollingstone')):
+        pages[0][BG_TILES_BASE + n*128: BG_TILES_BASE + (n+1)*128] = bg_tile_bytes(tile_pixels(sr5, n))
+    def put_bank(page, base, name, limit):
         frames = parse_sprite_asm(SRC / f'{name}.asm')
-        assert len(frames)*384 <= 0x4000
+        assert base + len(frames)*FRAME_BYTES <= limit, (name, len(frames))
         for k, fr in enumerate(frames):
-            pages[2][i*0x4000 + k*384: i*0x4000 + (k+1)*384] = sprite_frame_bytes(fr)
+            pages[page][base + k*FRAME_BYTES: base + (k+1)*FRAME_BYTES] = sprite_frame_bytes(fr)
+    for page, base, name, limit in SPRITE_BANKS:
+        put_bank(page, base, name, limit)
     # страница 3: шрифт $0000 (64 символа x 32 Б), панель $1000 (256x32), оружие $2000 (4 x 192), вкл/выкл $2400 (2 x 288)
     font = sr5_rows(pletter_depack((SRC / 'font.SR5.plet1').read_bytes()), 16)
     for c in range(64):
@@ -192,17 +210,18 @@ def build_kvaz():
     level = (SRC / 'level1.map').read_bytes()
     fg = sorted(set().union(*(set(s[160:320]) for s in screens_of(level))) - {0})
     for i, t in enumerate(fg):
-        addr = 0x6000 + i*256
-        pages[1][addr:addr+256] = fg_tile_bytes(tile_pixels(sr5, t))
-    assert 0x6000 + len(fg)*256 <= 0x8000
+        addr = FG_TILES_BASE + i*256
+        pages[0][addr:addr+256] = fg_tile_bytes(tile_pixels(sr5, t))
+    assert FG_TILES_BASE + len(fg)*256 <= BG_TILES_BASE
     info = parse_level(level)
     level2 = build_level(info, STRING_AREA_KVAZ)          # строки/скрипты -> string_area Вектора
     pages[1][0x8000:0x8000+len(level2)] = level2
+    assert all(len(p) == 65536 for p in pages), [len(p) for p in pages]
     edd = b''.join(bytes(p) for p in pages)
     (BUILD / 'ianna.edd').write_bytes(edd)
-    lines = ['; сгенерировано build_edd.py (квазидиск)', 'FG_TILES_BASE\tequ $6000\t; страница 1'] + palette_lines() + [''] + fg_lut_lines(fg)
+    lines = ['; сгенерировано build_edd.py (квазидиск)', f'FG_TILES_BASE\tequ ${FG_TILES_BASE:04X}\t; страница 0', f'BG_TILES_BASE\tequ ${BG_TILES_BASE:04X}\t; страница 0'] + palette_lines() + [''] + fg_lut_lines(fg)
     (BUILD / 'gen_data.asm').write_text('\n'.join(lines) + '\n')
-    print(f'ianna.edd: {len(edd)} Б; кадров банк2={len(b2)} банк3={len(b3)}; FG-тайлов={len(fg)}; level {len(level2)} Б')
+    print(f'ianna.edd: {len(edd)} Б; банки спрайтов: {len(SPRITE_BANKS)} по {FRAME_BYTES} Б/кадр; FG-тайлов={len(fg)}; level {len(level2)} Б')
 
 def trim_scripts(block, nstrings, nscripts, keep):
     """Оставить в блоке строк/скриптов только скрипты keep (остальные -> пустой ACTION_NONE).
