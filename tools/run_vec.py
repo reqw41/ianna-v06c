@@ -5,7 +5,7 @@
   маршрут: "none" | "left" | "right:100,none:20,left:50" (клавиши: up/down/left/right/fire/action)
 Печатает состояние игрока (entity/sprite), PC и такты.
 """
-import sys, re, pathlib
+import sys, re, os, pathlib
 sys.path.insert(0, str(pathlib.Path.home() / 'projects/metalgear-v06c/tools'))
 sys.path.insert(0, str(pathlib.Path.home() / 'projects/knightmare-v06c/tools'))
 from emu_kvaz import I8080Kvaz as I8080
@@ -63,7 +63,7 @@ ROM_NAME = 'ianna_demo' if DEMO else 'ianna'
 def make_cpu(keys):
     cpu = I8080()
     if not DEMO:
-        cpu.load_edd(ROOT / 'build/ianna.edd')
+        cpu.load_edd(pathlib.Path(os.environ.get('IANNA_EDD', ROOT / 'build/ianna.edd')))
     rom = (ROOT / f'build/{ROM_NAME}.rom').read_bytes()
     cpu.mem[0x100:0x100+len(rom)] = rom
     cpu.pc = 0x100
@@ -103,12 +103,15 @@ def run_frames(cpu, n, budget=13000, sym=None):
             cpu.pc = 0x38
 
 def start_game(cpu, keys, sym, max_frames=1500):
-    """Прогрев: дождаться сообщения уровня, держать fire до первого RunScripts (старт игры), отпустить."""
-    run_frames(cpu, 400, sym=sym)
-    RS = sym['RunScripts']; keys.append('fire'); started = False
-    for _ in range(max_frames):
+    """Прогрев: до первого RunScripts (старт игры). Если за 400 кадров игра не стартовала — экран сообщения
+    уровня: держать fire до старта. (На экранах без сообщения игра стартует сразу — ждать нельзя: враг убьёт героя.)"""
+    RS = sym['RunScripts']; started = False
+    for fr in range(max_frames):
+        if fr == 400: keys.append('fire')
         c = 0
         while not cpu.halted and c < 13000:
+            if START and not _start_done[0] and cpu.pc == sym['SaveCheckpoint']:
+                cpu.mem[sym['current_levelx']] = START[0]; cpu.mem[sym['current_levely']] = START[1]; _start_done[0] = True
             if cpu.pc == RS: started = True
             cpu.step(); c += 1
         cpu.halted = False
@@ -116,7 +119,6 @@ def start_game(cpu, keys, sym, max_frames=1500):
         if started: break
     keys.clear(); run_frames(cpu, 10, sym=sym)
     assert started, 'игра не стартовала'
-
 def dump_state(cpu, sym):
     ent = sym.get('ENTITY_DATA'); spd = sym.get('SPDATA')
     if ent is None: return

@@ -28,13 +28,23 @@ from level_tools import parse_level, build_level, relocate_strings, pack
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / 'ref/msx2/src'
 BUILD = ROOT / 'build'
-STRING_AREA_KVAZ = 0x6C00   # vars наверху ОЗУ (см. build_vec.py): string_area квазидисковой сборки
+STRING_AREA_KVAZ = 0x6A00   # vars наверху ОЗУ (см. build_vec.py): string_area квазидисковой сборки (2048 Б: уровень 7 — 1994)
 BG_TILES_BASE = 0x8000      # страница 0: 256 тайлов x 128 = 32К
 FG_TILES_BASE = 0x5D00      # страница 0 (до 35 FG-тайлов x 256)
-SPRITE_BANKS = [            # (страница, база, файл, предел) — согласовано с vec_bank_tab (vec_vdp.asm); база кратна 256
-    (0, 0x0000, 'sprite_barbaro_1', 0x5D00), (1, 0xA200, 'sprite_barbaro_2', 0x10000),
-    (1, 0x0000, 'sprite_esqueleto', 0x8000), (2, 0x0000, 'sprite_orc', 0x6000), (2, 0x6000, 'sprite_mummy', 0x10000),
-    (3, 0x2800, 'sprite_rollingstone', 0xA000)]
+BANK_FILE = {2: 'sprite_barbaro_1', 3: 'sprite_barbaro_2', 7: 'sprite_esqueleto', 8: 'sprite_orc', 9: 'sprite_mummy',
+             10: 'sprite_troll', 11: 'sprite_dalgurak', 12: 'sprite_rollingstone', 13: 'sprite_caballerorenegado',
+             14: 'sprite_golem_inf', 15: 'sprite_golem_sup', 16: 'sprite_ogro_inf', 17: 'sprite_ogro_sup',
+             18: 'sprite_minotauro_inf', 19: 'sprite_minotauro_sup', 20: 'sprite_demonio_inf', 21: 'sprite_demonio_sup'}
+# Раскладка банков спрайтов (страница ROM MSX -> страница квазидиска, база, предел) по уровням; база кратна 256.
+# Таблица vec_bank_tab генерируется в gen_data.asm. Банк = 41 кадр x 576 = 23616 Б ($5C40).
+LEVEL_BANKS = {
+    1: [(2, 0, 0x0000, 0x5D00), (3, 1, 0xA200, 0x10000), (7, 1, 0x0000, 0x8000), (8, 2, 0x0000, 0x6000),
+        (9, 2, 0x6000, 0x10000), (12, 3, 0x2800, 0xA000)],
+    # уровень 2, оценка сцены с големом (экран 4,6): в 256К не помещаются скелет/орк/тролль/камень — на их
+    # экранах будут кадры варвара (см. ANALYSIS.md, «великаны»)
+    2: [(2, 0, 0x0000, 0x5D00), (3, 1, 0x0000, 0x8000), (14, 2, 0x0000, 0x5D00), (15, 2, 0x5D00, 0xC000)],
+}
+LEVEL_MUSIC = [1, 5, 3, 4, 5, 6, 7, 8]   # music_levels (music.asm): уровень N -> music-level{M}.mus
 STRING_AREA_DEMO = 0x7400   # демо: string_area 512 Б, vars короче (до $8000 ровно)
 DEMO_DATA_ADDR = 0x0200     # блок данных демо-ROM сразу за jp по $0100
 DEMO_FRAMES = 10            # idle, gira, camina x6, cae x2 (см. sprites.asm)
@@ -168,13 +178,23 @@ def fg_lut_lines(fg):
         lines.append('\tdb ' + ', '.join(str(v) for v in lut[i:i+16]))
     return lines
 
+def bank_tab_lines(banks):
+    by = {b: (pg, base) for b, pg, base, _ in banks}
+    lines = ['; Таблица банков MSX 2..21 -> (порт стека квазидиска, старший байт базы) кадров спрайтов; неизвестные -> стр.0 $0000',
+             'vec_bank_tab:']
+    for b in range(2, 22):
+        pg, base = by.get(b, (0, 0))
+        lines.append(f'\tdb KV_STK_P{pg},${base >> 8:02X}\t; {b} {BANK_FILE.get(b, "-")}{"" if b in by else " (нет)"}')
+    return lines
+
 def palette_lines():
     pal = msx_palette((SRC / 'test.plt').read_bytes())
     return ['vec_palette:', '\tdb ' + ', '.join(f'${c:02X}' for c in pal)]
 
-def build_kvaz():
+def build_kvaz(level_no=1, start=None):
     pages = [bytearray(65536) for _ in range(4)]
-    sr5 = pletter_depack((SRC / 'tiles_nivel01.SR5.plet1').read_bytes())
+    banks = LEVEL_BANKS[level_no]
+    sr5 = pletter_depack((SRC / f'tiles_nivel{level_no:02d}.SR5.plet1').read_bytes())
     assert len(sr5) == 32768
     # Раскладка (кадры спрайтов по 576 Б, банки по 41 кадру = 23616 Б; см. vec_bank_tab в vec_vdp.asm):
     #   стр.0: банк 2 варвар $0000-$5C40, FG $5D00, тайлы BG $8000-$FFFF (256 x 128)
@@ -185,11 +205,12 @@ def build_kvaz():
         pages[0][BG_TILES_BASE + n*128: BG_TILES_BASE + (n+1)*128] = bg_tile_bytes(tile_pixels(sr5, n))
     def put_bank(page, base, name, limit):
         frames = parse_sprite_asm(SRC / f'{name}.asm')
+        assert base % 256 == 0, (name, hex(base))
         assert base + len(frames)*FRAME_BYTES <= limit, (name, len(frames))
         for k, fr in enumerate(frames):
             pages[page][base + k*FRAME_BYTES: base + (k+1)*FRAME_BYTES] = sprite_frame_bytes(fr)
-    for page, base, name, limit in SPRITE_BANKS:
-        put_bank(page, base, name, limit)
+    for bank, page, base, limit in banks:
+        put_bank(page, base, BANK_FILE[bank], limit)
     # страница 3: шрифт $0000 (64 символа x 32 Б), панель $1000 (256x32), оружие $2000 (4 x 192), вкл/выкл $2400 (2 x 288)
     font = sr5_rows(pletter_depack((SRC / 'font.SR5.plet1').read_bytes()), 16)
     for c in range(64):
@@ -203,25 +224,30 @@ def build_kvaz():
         pages[3][0x2400 + k*288: 0x2400 + (k+1)*288] = column_blob(armas, x0, 3, 0, 24)
     # страница 3: музыка уровня 1 по $C980 и эффекты по $D980 — РОВНО как music_addr/music_sfx на MSX
     # (внутри .mus абсолютные указатели под эти адреса); читаются через окно $A000-$DFFF (пул — ниже $C800)
-    mus = (SRC / 'music-level1.mus').read_bytes(); sfx = (SRC / 'iannafx.mus').read_bytes()
+    mus = (SRC / f'music-level{LEVEL_MUSIC[level_no-1]}.mus').read_bytes(); sfx = (SRC / 'iannafx.mus').read_bytes()
     assert len(mus) <= 0x1000 and len(sfx) <= 0x0680
     pages[3][0xC980:0xC980+len(mus)] = mus
     pages[3][0xD980:0xD980+len(sfx)] = sfx
-    level = (SRC / 'level1.map').read_bytes()
+    level = (SRC / f'level{level_no}.map').read_bytes()
     fg = sorted(set().union(*(set(s[160:320]) for s in screens_of(level))) - {0})
     for i, t in enumerate(fg):
         addr = FG_TILES_BASE + i*256
         pages[0][addr:addr+256] = fg_tile_bytes(tile_pixels(sr5, t))
     assert FG_TILES_BASE + len(fg)*256 <= BG_TILES_BASE
     info = parse_level(level)
+    if start:                                              # стартовый экран (x,y) — для стендов
+        hdr = bytearray(info['header']); hdr[17], hdr[18] = start; info['header'] = bytes(hdr)
     level2 = build_level(info, STRING_AREA_KVAZ)          # строки/скрипты -> string_area Вектора
-    pages[1][0x8000:0x8000+len(level2)] = level2
+    lvl_end = 0x8000 + len(level2)
+    for bank, page, base, limit in banks:                  # карта не должна лечь на банк страницы 1
+        assert page != 1 or lvl_end <= base or base >= lvl_end or limit <= 0x8000, (bank, hex(lvl_end))
+    pages[1][0x8000:lvl_end] = level2
     assert all(len(p) == 65536 for p in pages), [len(p) for p in pages]
     edd = b''.join(bytes(p) for p in pages)
     (BUILD / 'ianna.edd').write_bytes(edd)
-    lines = ['; сгенерировано build_edd.py (квазидиск)', f'FG_TILES_BASE\tequ ${FG_TILES_BASE:04X}\t; страница 0', f'BG_TILES_BASE\tequ ${BG_TILES_BASE:04X}\t; страница 0'] + palette_lines() + [''] + fg_lut_lines(fg)
+    lines = ['; сгенерировано build_edd.py (квазидиск)', f'FG_TILES_BASE\tequ ${FG_TILES_BASE:04X}\t; страница 0', f'BG_TILES_BASE\tequ ${BG_TILES_BASE:04X}\t; страница 0'] + palette_lines() + [''] + bank_tab_lines(banks) + [''] + fg_lut_lines(fg)
     (BUILD / 'gen_data.asm').write_text('\n'.join(lines) + '\n')
-    print(f'ianna.edd: {len(edd)} Б; банки спрайтов: {len(SPRITE_BANKS)} по {FRAME_BYTES} Б/кадр; FG-тайлов={len(fg)}; level {len(level2)} Б')
+    print(f'ianna.edd: уровень {level_no}{" старт "+str(start) if start else ""}; {len(edd)} Б; банки спрайтов: {[b for b,*_ in banks]} по {FRAME_BYTES} Б/кадр; FG-тайлов={len(fg)}; level {len(level2)} Б')
 
 def trim_scripts(block, nstrings, nscripts, keep):
     """Оставить в блоке строк/скриптов только скрипты keep (остальные -> пустой ACTION_NONE).
@@ -306,4 +332,6 @@ if __name__ == '__main__':
     if '--demo' in sys.argv:
         build_demo()
     else:
-        build_kvaz()
+        lv = int(next((a[8:] for a in sys.argv if a.startswith('--level=')), '1'))
+        st = next((tuple(int(v) for v in a[8:].split(',')) for a in sys.argv if a.startswith('--start=')), None)
+        build_kvaz(lv, st)

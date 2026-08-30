@@ -64,12 +64,14 @@ def run(nframes):
             else:
                 lost+=1; lost_at[fn(cpu.pc)]+=1
 def rd(a): return mem[a]
-run(400); keys.append('fire'); RS=sym['RunScripts']; started=False
-for _ in range(1500):
+RS=sym['RunScripts']; started=False; patched=False   # прогрев: до первого RunScripts; fire с 400-го кадра (экран сообщения, если есть)
+for fr in range(1500):
+    if fr==400: keys.append('fire')
     end=cyc[0]+FRAME
     while cyc[0]<end:
         if cpu.halted: cyc[0]=next_irq
         else:
+            if START and not patched and cpu.pc==SC: mem[sym['current_levelx']]=START[0]; mem[sym['current_levely']]=START[1]; patched=True
             if cpu.pc==RS: started=True
             cyc[0]+=CYC[mem[cpu.pc]]; cpu.step()
         if cyc[0]>=next_irq:

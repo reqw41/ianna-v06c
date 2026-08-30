@@ -155,8 +155,8 @@ def make_vars():
     text = text.replace('music_addr: ds 4096', 'music_addr: ds 2')
     text = text.replace('music_sfx:  ds 1100', 'music_sfx:  ds 2')
     text = text.replace('MUSIC_CODE: ds 2000', 'MUSIC_CODE: ds 2')
-    # string_area: 1536 хватает (1362 макс. в уровне 1); OBJECT_DATA остаётся на границе страницы
-    text = text.replace('string_area: ds 2048', 'string_area: ds 512' if DEMO else 'string_area: ds 1536')
+    # string_area: как в оригинале 2048 (уровень 7 — 1994 Б; с 1536 уровень 2 затирал OBJECT_DATA); OBJECT_DATA на границе страницы
+    if DEMO: text = text.replace('string_area: ds 2048', 'string_area: ds 512')
     # неиспользуемые буферы VDP-команд (кроме vdpCmdSprite: там NY для drawSprite) и палитры
     text = re.sub(r'^(tileDat|fgtileDat|dirtyTileDat|cmdDat|charDat|charDat2|charDat3|fillDat|vdpCmdWeapon|lineMoveDat|vdpCopyDat|scoreDat): ds 15', r'\1: ds 0', text, flags=re.M)
     text = text.replace('currentPal: ds 32', 'currentPal: ds 0')
@@ -257,6 +257,9 @@ def main():
         lst = (ROOT / f'build/{name}_vec.lst').read_text(errors='replace')
         m = re.search(r'^string_area\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) == VARS_ADDR, 'string_area не по VARS_ADDR!'
+        code_end = max(int(a, 16) for a in re.findall(r'^([0-9A-F]{4}): [0-9A-F]{2}', lst, re.M) if int(a, 16) < VARS_ADDR)
+        assert code_end < VARS_ADDR, f'код ${code_end:04X} наехал на переменные ${VARS_ADDR:04X}'
+        print(f'код до ${code_end:04X}, переменные с ${VARS_ADDR:04X} (зазор {VARS_ADDR-code_end-1} Б)')
         m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'
         print(f'OK: build/{name}.rom {size} Б, конец = ${0x100+size:04X} (граница VRAM $8000, свободно {0x8000-0x100-size} Б)')
