@@ -31,16 +31,16 @@ def sample():
     mcp("emu_run")
     return r
 def run(label, keys, secs):
-    if keys: mcp("kbd_send", {"action": "down", "keys": keys})
+    if keys: mcp("kbd_send", {"action": "press", "keys": keys})
     t0, f0, h0 = sample(); time.sleep(secs); t1, f1, h1 = sample()
-    if keys: mcp("kbd_send", {"action": "up", "keys": keys})
+    if keys: mcp("kbd_send", {"action": "release", "keys": keys})
     dt = (t1 - t0) / 3.125e6; df = (f1 - f0) & 0xFFFF; dh = (h1 - h0) & 0xFFFF
     print(f"{label}: {dt:.2f} с, ISR {df} -> {df/dt:.1f} Гц, halt бюджета {dh} ({dh/dt:.1f}/с)")
 if __name__ == "__main__":
     if "--norestart" not in sys.argv:
         subprocess.run(["sh", "tools/emu80_run.sh"], check=True, capture_output=True)
         time.sleep(3); run("экран сообщения", None, 4); time.sleep(7)
-        mcp("kbd_send", {"action": "down", "keys": ["z"]}); time.sleep(0.2); mcp("kbd_send", {"action": "up", "keys": ["z"]}); mcp("kbd_reset"); time.sleep(1.5)  # press с duration оставлял Z зажатой
+        mcp("kbd_send", {"action": "press", "keys": ["z"]}); time.sleep(0.2); mcp("kbd_send", {"action": "release", "keys": ["z"]}); mcp("kbd_reset"); time.sleep(1.5)  # press с duration оставлял Z зажатой
     run("стоя", None, 4)
     run("бег вправо", ["right"], 6)
     run("бег влево", ["left"], 6)

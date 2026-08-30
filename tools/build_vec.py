@@ -111,6 +111,13 @@ def make_music():
     mu = mu.replace('atInit: equ MUSIC_CODE\natPlay: equ MUSIC_CODE + 3\natStop: equ MUSIC_CODE + 6\natSfxInit: equ MUSIC_CODE + 9\natSfxPlay: equ MUSIC_CODE + 12\natSfxStop: equ MUSIC_CODE + 15',
                     '; ВЕКТОР: плеер ассемблируется на месте, точки входа — его метки (atInit/atPlay/atStop/atSfxInit/atSfxPlay/atSfxStopAll)')
     mu = mu.replace('\tcall atSfxStop\n', '\tcall atSfxStopAll\n')
+    # ВЕКТОР: данные эффектов лежат в окне квазидиска ($D980, страница 3); atSfxPlay читает оттуда таблицу
+    # инструментов — из игровой логики окно закрыто, поэтому открыть на время вызова и вернуть прежнюю страницу
+    # (через setROM2, чтобы тень окна для ISR была согласована).
+    m = re.search(r'\n(\tld l, a[^\n]*; effect\n)', mu); assert m, 'FX_Play: ld l,a'
+    mu = mu[:m.start(1)] + '\tld l, a\t\t\t; ВЕКТОР: окно квазидиска на страницу музыки/эффектов\n\tld a, (ROMBank1)\n\tpush af\n\tld a, MUSIC_ROM_PAGE\n\tcall setROM2\n\tld a, l\n' + mu[m.start(1):]
+    old2 = '\tld bc, 0\n\tcall atSfxPlay\n'; assert mu.count(old2) == 1, 'FX_Play: call atSfxPlay'
+    mu = mu.replace(old2, '\tld bc, 0\n\tcall atSfxPlay\n\tpop af\t\t\t; ВЕКТОР: вернуть прежнюю страницу окна\n\tcall setROM2\n')
     (TR / 'music_src.asm').write_text(mu)
     pl = (SRC / 'ArkosTrackerPlayer_CPC_MSX.asm').read_text(encoding='utf-8', errors='replace')
     pl = pl.replace('org $DDCC', '; ВЕКТОР: org снят — плеер на месте в коде')
