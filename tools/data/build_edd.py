@@ -21,6 +21,11 @@ build_edd.py — данные для Ianna/Вектор.
 """
 import sys, re, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
+# Режим цвета: None = 16 цветов (4 плоскости); 'c8' = 8 цветов, 3 плоскости (VRAM $A000/$C000/$E000,
+# плоскость 0 $8000-$9FFF свободна, бит 3 индекса всегда 0, палитра зеркалится pal[c|8]=pal[c]);
+# 'ref8' = ЭТАЛОН для оракула: те же переназначенные данные (значения-слоты 0..7), но в 4-плоскостных
+# форматах для текущего 16-цветного движка — плоскости 1..3 совпадают с c8 байт в байт.
+C8MODE = 'c8' if '--colors8' in sys.argv else ('ref8' if '--ref8' in sys.argv else None)
 from pletter import depack as pletter_depack
 from aplib import depack as aplib_depack
 from level_tools import parse_level, build_level, relocate_strings, pack
@@ -29,6 +34,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / 'ref/msx2/src'
 BUILD = ROOT / 'build'
 STRING_AREA_KVAZ = 0x6A00   # vars наверху ОЗУ (см. build_vec.py): string_area квазидисковой сборки (2048 Б: уровень 7 — 1994)
+STRING_AREA_C8 = 0x6C00     # c8: rev256/slot_tab в свободной плоскости 0 ($8000) — vars выше, коду +512 Б
 BG_TILES_BASE = 0x8000      # страница 0: 256 тайлов x 128 = 32К
 FG_TILES_BASE = 0x5D00      # страница 0 (до 35 FG-тайлов x 256)
 BANK_FILE = {2: 'sprite_barbaro_1', 3: 'sprite_barbaro_2', 7: 'sprite_esqueleto', 8: 'sprite_orc', 9: 'sprite_mummy',
@@ -38,7 +44,7 @@ BANK_FILE = {2: 'sprite_barbaro_1', 3: 'sprite_barbaro_2', 7: 'sprite_esqueleto'
 # Раскладка банков спрайтов (страница ROM MSX -> страница квазидиска, база, предел) по уровням; база кратна 256.
 # Таблица vec_bank_tab генерируется в gen_data.asm. Банк = 41 кадр x 576 = 23616 Б ($5C40).
 LEVEL_BANKS = {
-    1: [(2, 0, 0x0000, 0x5D00), (3, 1, 0xA200, 0x10000), (7, 1, 0x0000, 0x8000), (8, 2, 0x0000, 0x6000),
+    1: [(2, 0, 0x0000, 0x5D00), (3, 1, 0xA300, 0x10000), (7, 1, 0x0000, 0x8000), (8, 2, 0x0000, 0x6000),
         (9, 2, 0x6000, 0x10000), (12, 3, 0x2800, 0xA000)],
     # уровень 2, оценка сцены с големом (экран 4,6): в 256К не помещаются скелет/орк/тролль/камень — на их
     # экранах будут кадры варвара (см. ANALYSIS.md, «великаны»)
@@ -49,12 +55,14 @@ STRING_AREA_DEMO = 0x7400   # демо: string_area 512 Б, vars короче (�
 DEMO_DATA_ADDR = 0x0200     # блок данных демо-ROM сразу за jp по $0100
 DEMO_FRAMES = 10            # idle, gira, camina x6, cae x2 (см. sprites.asm)
 
-def planes_of_row(pixels):
-    out = [[], [], [], []]
+def planes_of_row(pixels, pmap=None, nplanes=4):
+    """pmap: список 16->значение (слот); nplanes=3 — плоскости несут биты 2..0 (VRAM 1..3)."""
+    if pmap is not None: pixels = [pmap[v] for v in pixels]
+    out = [[] for _ in range(nplanes)]
     for i in range(0, len(pixels), 8):
         chunk = pixels[i:i+8]
-        for p in range(4):
-            bit = 3 - p
+        for p in range(nplanes):
+            bit = nplanes - 1 - p
             b = 0
             for k, v in enumerate(chunk):
                 if (v >> bit) & 1:
@@ -83,20 +91,21 @@ def tile_pixels(sr5, n):
         rows.append(row)
     return rows
 
-def bg_tile_bytes(rows):
-    pl = [planes_of_row(r) for r in rows]
+def n_planes(): return 3 if C8MODE == 'c8' else 4
+def bg_tile_bytes(rows, pmap=None):
+    pl = [planes_of_row(r, pmap, n_planes()) for r in rows]
     out = bytearray()
-    for p in range(4):
+    for p in range(n_planes()):
         for col in range(2):
             for y in range(16):
                 out.append(pl[y][p][col])
     return bytes(out)
 
-def fg_tile_bytes(rows):
-    pl = [planes_of_row(r) for r in rows]
-    mk = [mask_of_row(r) for r in rows]
+def fg_tile_bytes(rows, pmap=None):
+    pl = [planes_of_row(r, pmap, n_planes()) for r in rows]
+    mk = [mask_of_row(r) for r in rows]     # маска по исходному пикселю (0 = прозрачно), не по слоту
     out = bytearray()
-    for p in range(4):
+    for p in range(n_planes()):
         for col in range(2):
             for y in range(16):
                 out += bytes([pl[y][p][col], mk[y][col]])
@@ -119,35 +128,48 @@ def parse_sprite_asm(path):
 
 FRAME_BYTES = 576   # 3 колонки x 32 строки x 6 байт
 
-def sprite_frame_bytes(frame):
-    """576 Б: for col(0..2): for row 31..0: [p0, маска, p1, p2, p3, пропуск]; маска = ~(p0|p1|p2|p3);
-    пропуск = сколько строк ВЫШЕ (следующих в потоке) полностью прозрачны подряд — компоновщик их не трогает.
-    Адрес кадра: MSX n*384 -> n*576 (drawSprite прибавляет половину)."""
-    pl = [planes_of_row(r) for r in frame]
+def sprite_frame_bytes(frame, pmap=None):
+    """576 Б, строка 6 Б. 16 цветов: [p0,маска,p1,p2,p3,пропуск], маска = ~(p0|..|p3).
+    c8 (3 плоскости, биты 2..0): [pl1,маска,pl2,pl3,пропуск,0]; ref8: 4 плоскости переназначенных
+    значений (плоскость 0 = нули). Маска и пропуск ВСЕГДА по исходному пикселю (0 = прозрачно):
+    слот 0 в спрайте — полноценный чёрный. Адрес кадра: MSX n*384 -> n*576."""
+    np = n_planes()
+    pl = [planes_of_row(r, pmap, np) for r in frame]
     out = bytearray()
     for col in range(3):
-        trans = [all(pl[y][p][col] == 0 for p in range(4)) for y in range(32)]
+        trans = [all(v == 0 for v in frame[y][col*8:col*8+8]) for y in range(32)] if pmap is not None else \
+                [all(pl[y][p][col] == 0 for p in range(np)) for y in range(32)]
         for y in range(31, -1, -1):
-            p0, p1, p2, p3 = (pl[y][p][col] for p in range(4))
-            mask = (~(p0 | p1 | p2 | p3)) & 0xFF
+            pv = [pl[y][p][col] for p in range(np)]
+            if pmap is not None:
+                mask = 0
+                for k, v in enumerate(frame[y][col*8:col*8+8]):
+                    if v == 0: mask |= 0x80 >> k
+            else:
+                mask = (~(pv[0] | pv[1] | pv[2] | pv[3])) & 0xFF
             skip = 0
             yy = y - 1
             while yy >= 0 and trans[yy]: skip += 1; yy -= 1
             if skip < 2: skip = 0          # код пропуска стоит ~250 тактов — окупается от двух строк
-            out += bytes((p0, mask, p1, p2, p3, skip))
+            if np == 3:
+                out += bytes((pv[0], mask, pv[1], pv[2], 0, skip))   # пропуск последним: регистры пропуска в движке те же
+            else:
+                out += bytes((pv[0], mask, pv[1], pv[2], pv[3], skip))
     assert len(out) == FRAME_BYTES
     return bytes(out)
 
-def column_blob(pixels_rows, x0, w_cols, y0, h):
-    """[p][col][row 0..h-1] — для стекового блита сверху вниз (DCR L). pixels_rows: список строк значений 0..15"""
+def column_blob(pixels_rows, x0, w_cols, y0, h, pmap=None):
+    """[p][col][row 0..h-1] — для стекового блита сверху вниз (DCR L). c8: 3 плоскости (биты 2..0)."""
+    np = n_planes()
     out = bytearray()
-    for p in range(4):
+    for p in range(np):
         for col in range(w_cols):
             for y in range(h):
                 chunk = pixels_rows[y0+y][x0+col*8: x0+col*8+8]
+                if pmap is not None: chunk = [pmap[v] for v in chunk]
                 b = 0
                 for k, v in enumerate(chunk):
-                    if (v >> (3-p)) & 1: b |= 0x80 >> k
+                    if (v >> (np-1-p)) & 1: b |= 0x80 >> k
                 out.append(b)
     return bytes(out)
 
@@ -191,9 +213,22 @@ def palette_lines():
     pal = msx_palette((SRC / 'test.plt').read_bytes())
     return ['vec_palette:', '\tdb ' + ', '.join(f'${c:02X}' for c in pal)]
 
+BANK_ENEMY = {7:20, 8:21, 9:22, 10:23, 11:26, 12:24, 13:25, 14:27, 15:27, 16:28, 17:28, 18:29, 19:29, 20:30, 21:30}
 def build_kvaz(level_no=1, start=None):
     pages = [bytearray(65536) for _ in range(4)]
     banks = LEVEL_BANKS[level_no]
+    if C8MODE:
+        import colors8 as c8x
+        msx16, pm_tiles, scrsys, scrpals = c8x.level_system(SRC, level_no)
+        pm_panel = [0] + [c8x.nearest(msx16[c], c8x.SLOT_RGB) for c in range(1, 16)]
+        def bank_pmap(bank):
+            if bank in (2, 3, 4, 5, 6): return [c8x.HREMAP[c] for c in range(16)]
+            ident = c8x.ENEMY_SLOT6.get(BANK_ENEMY.get(bank), (5, 5, 5))
+            pal7 = c8x.SLOT_RGB + [ident]          # слоты 0..6; слот 7 врагу не даём (меняется по экранам)
+            return [0] + [c8x.nearest(msx16[c], pal7) for c in range(1, 16)]
+    else:
+        pm_tiles = pm_panel = None; scrpals = None
+        def bank_pmap(bank): return None
     sr5 = pletter_depack((SRC / f'tiles_nivel{level_no:02d}.SR5.plet1').read_bytes())
     assert len(sr5) == 32768
     # Раскладка (кадры спрайтов по 576 Б, банки по 41 кадру = 23616 Б; см. vec_bank_tab в vec_vdp.asm):
@@ -202,26 +237,27 @@ def build_kvaz(level_no=1, start=None):
     #   стр.2: банк 8 орк $0000, банк 9 мумия $6000
     #   стр.3: банк 12 камень $2800; шрифт/панель/оружие $0000-$27FF, пул $A000, музыка $C980, эффекты $D980
     for n in range(256):
-        pages[0][BG_TILES_BASE + n*128: BG_TILES_BASE + (n+1)*128] = bg_tile_bytes(tile_pixels(sr5, n))
-    def put_bank(page, base, name, limit):
+        b = bg_tile_bytes(tile_pixels(sr5, n), pm_tiles)   # c8: 96 Б, шаг 128 (хвост нули)
+        pages[0][BG_TILES_BASE + n*128: BG_TILES_BASE + n*128 + len(b)] = b
+    def put_bank(page, base, name, limit, pmap):
         frames = parse_sprite_asm(SRC / f'{name}.asm')
         assert base % 256 == 0, (name, hex(base))
         assert base + len(frames)*FRAME_BYTES <= limit, (name, len(frames))
         for k, fr in enumerate(frames):
-            pages[page][base + k*FRAME_BYTES: base + (k+1)*FRAME_BYTES] = sprite_frame_bytes(fr)
+            pages[page][base + k*FRAME_BYTES: base + (k+1)*FRAME_BYTES] = sprite_frame_bytes(fr, pmap)
     for bank, page, base, limit in banks:
-        put_bank(page, base, BANK_FILE[bank], limit)
+        put_bank(page, base, BANK_FILE[bank], limit, bank_pmap(bank))
     # страница 3: шрифт $0000 (64 символа x 32 Б), панель $1000 (256x32), оружие $2000 (4 x 192), вкл/выкл $2400 (2 x 288)
     font = sr5_rows(pletter_depack((SRC / 'font.SR5.plet1').read_bytes()), 16)
     for c in range(64):
-        pages[3][c*32:(c+1)*32] = column_blob(font, (c % 32)*8, 1, (c // 32)*8, 8)
+        b = column_blob(font, (c % 32)*8, 1, (c // 32)*8, 8, pm_panel); pages[3][c*32:c*32+len(b)] = b
     panel = sr5_rows(pletter_depack((SRC / 'marcador.SR5.plet1').read_bytes()), 32)
-    pages[3][0x1000:0x2000] = column_blob(panel, 0, 32, 0, 32)
+    b = column_blob(panel, 0, 32, 0, 32, pm_panel); pages[3][0x1000:0x1000+len(b)] = b
     armas = sr5_rows(pletter_depack((SRC / 'armas.SR5.plet1').read_bytes()), 24)
     for w in range(4):
-        pages[3][0x2000 + w*192: 0x2000 + (w+1)*192] = column_blob(armas, w*32, 3, 0, 16)
+        b = column_blob(armas, w*32, 3, 0, 16, pm_panel); pages[3][0x2000 + w*192: 0x2000 + w*192 + len(b)] = b
     for k, x0 in enumerate((128, 152)):
-        pages[3][0x2400 + k*288: 0x2400 + (k+1)*288] = column_blob(armas, x0, 3, 0, 24)
+        b = column_blob(armas, x0, 3, 0, 24, pm_panel); pages[3][0x2400 + k*288: 0x2400 + k*288 + len(b)] = b
     # страница 3: музыка уровня 1 по $C980 и эффекты по $D980 — РОВНО как music_addr/music_sfx на MSX
     # (внутри .mus абсолютные указатели под эти адреса); читаются через окно $A000-$DFFF (пул — ниже $C800)
     mus = (SRC / f'music-level{LEVEL_MUSIC[level_no-1]}.mus').read_bytes(); sfx = (SRC / 'iannafx.mus').read_bytes()
@@ -232,22 +268,46 @@ def build_kvaz(level_no=1, start=None):
     fg = sorted(set().union(*(set(s[160:320]) for s in screens_of(level))) - {0})
     for i, t in enumerate(fg):
         addr = FG_TILES_BASE + i*256
-        pages[0][addr:addr+256] = fg_tile_bytes(tile_pixels(sr5, t))
+        b = fg_tile_bytes(tile_pixels(sr5, t), pm_tiles)   # c8: 192 Б, шаг 256
+        pages[0][addr:addr+len(b)] = b
     assert FG_TILES_BASE + len(fg)*256 <= BG_TILES_BASE
     info = parse_level(level)
     if start:                                              # стартовый экран (x,y) — для стендов
         hdr = bytearray(info['header']); hdr[17], hdr[18] = start; info['header'] = bytes(hdr)
-    level2 = build_level(info, STRING_AREA_KVAZ)          # строки/скрипты -> string_area Вектора
+    sa = STRING_AREA_C8 if C8MODE == 'c8' else STRING_AREA_KVAZ
+    level2 = build_level(info, sa)                        # строки/скрипты -> string_area Вектора
     lvl_end = 0x8000 + len(level2)
     for bank, page, base, limit in banks:                  # карта не должна лечь на банк страницы 1
         assert page != 1 or lvl_end <= base or base >= lvl_end or limit <= 0x8000, (bank, hex(lvl_end))
     pages[1][0x8000:lvl_end] = level2
+    scrpal_addr = 0
+    if C8MODE:
+        scrpal_addr = (lvl_end + 15) & ~15
+        blob = bytearray()
+        for pal in scrpals:
+            blob += bytes(((c[2] >> 1) << 6) | (c[1] << 3) | c[0] for c in pal)
+        for bank, page, base, limit in banks:
+            assert page != 1 or base >= scrpal_addr + len(blob) or limit <= 0x8000, 'палитры легли на банк'
+        pages[1][scrpal_addr:scrpal_addr+len(blob)] = blob
     assert all(len(p) == 65536 for p in pages), [len(p) for p in pages]
     edd = b''.join(bytes(p) for p in pages)
     (BUILD / 'ianna.edd').write_bytes(edd)
-    lines = ['; сгенерировано build_edd.py (квазидиск)', f'FG_TILES_BASE\tequ ${FG_TILES_BASE:04X}\t; страница 0', f'BG_TILES_BASE\tequ ${BG_TILES_BASE:04X}\t; страница 0'] + palette_lines() + [''] + bank_tab_lines(banks) + [''] + fg_lut_lines(fg)
+    lines = ['; сгенерировано build_edd.py (квазидиск' + (f', режим {C8MODE}' if C8MODE else '') + ')',
+             f'FG_TILES_BASE\tequ ${FG_TILES_BASE:04X}\t; страница 0', f'BG_TILES_BASE\tequ ${BG_TILES_BASE:04X}\t; страница 0']
+    if C8MODE:
+        if C8MODE == 'c8': lines.append('C8\tequ 1\t\t; 8 цветов: 3 плоскости (VRAM $A000/$C000/$E000), $8000-$9FFF свободна')
+        lines.append(f'VEC_SCRPAL\tequ ${scrpal_addr:04X}\t; таблица палитр экранов (8 Б на экран, окно уровня)')
+        st = info['header'][18] * info['w'] + info['header'][17]
+        pal0 = [(((c[2] >> 1) << 6) | (c[1] << 3) | c[0]) for c in scrpals[st]]
+        lines += ['vec_palette:', '\tdb ' + ', '.join(f'${c:02X}' for c in pal0 + pal0) + '\t; стартовый экран, зеркалом (бит 3 = 0)']
+    else:
+        lines += palette_lines()
+    lines += [''] + bank_tab_lines(banks) + [''] + fg_lut_lines(fg)
+    if C8MODE == 'c8':
+        lines += ['; карта «цвет кода 0..15 -> слот» для fillArea (шкалы панели); лежит сразу за fg_tile_lut (страница)',
+                  'vec_color_map:', '\tdb ' + ', '.join(str(v) for v in pm_panel)]
     (BUILD / 'gen_data.asm').write_text('\n'.join(lines) + '\n')
-    print(f'ianna.edd: уровень {level_no}{" старт "+str(start) if start else ""}; {len(edd)} Б; банки спрайтов: {[b for b,*_ in banks]} по {FRAME_BYTES} Б/кадр; FG-тайлов={len(fg)}; level {len(level2)} Б')
+    print(f'ianna.edd:{" "+C8MODE if C8MODE else ""} уровень {level_no}{" старт "+str(start) if start else ""}; {len(edd)} Б; банки спрайтов: {[b for b,*_ in banks]} по {FRAME_BYTES} Б/кадр; FG-тайлов={len(fg)}; level {len(level2)} Б')
 
 def trim_scripts(block, nstrings, nscripts, keep):
     """Оставить в блоке строк/скриптов только скрипты keep (остальные -> пустой ACTION_NONE).

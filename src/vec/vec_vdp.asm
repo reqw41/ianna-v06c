@@ -16,6 +16,10 @@
 ; напрямую. Окно открывается только внутри буферных блитов (панель рисуется между ними).
 
 KV_PORT		equ $10
+; C8 (из vdp_consts): 1 = 8 цветов, 3 плоскости. Индекс пикселя 0..7 живёт в битах 2..0 -> VRAM
+; $A000/$C000/$E000; плоскость 0 ($8000-$9FFF) свободна и НИКОГДА не пишется (палитра зеркалит бит 3).
+VEC_P0H		equ $80 + C8*$20	; старший байт первой пишущейся плоскости
+VEC_NPL		equ 4 - C8		; плоскостей в данных/блитах
 KV_STK_P0	equ $10
 KV_STK_P1	equ $14
 KV_STK_P2	equ $18
@@ -150,8 +154,8 @@ vec_pool_addr:
 ; ---------------------------------------------------------------------------
 ; Общий стековый блит 128 Б «формат тайла» -> VRAM: SP уже установлен, порт выведен,
 ; D = H колонки 0 плоскости 0, E = L верхней строки. Возврат: jp (vec_blit_ret).
-vec_blit128_vram:
-	ld a,4
+vec_blit128_vram:		; C8: 96 Б (3 плоскости)
+	ld a,VEC_NPL
 	ld (vec_plane_cnt),a
 vb_plane:
 	ld h,d
@@ -219,8 +223,8 @@ vb_col:
 vec_blit_cols:
 	ld a,(vec_bl_planes)
 	ld (vec_plane_cnt),a
-	ld a,4
-	ld (vec_bl_planes),a	; по умолчанию 4 плоскости (vec_load_panel просит по одной)
+	ld a,VEC_NPL
+	ld (vec_bl_planes),a	; по умолчанию все плоскости (vec_load_panel просит по одной)
 vbc_plane:
 	ld a,(vec_bl_cols)
 	ld (vec_col_cnt),a
@@ -337,6 +341,62 @@ vec_spr_colbud:
 	jp (hl)
 
 ; ---------------------------------------------------------------------------
+    if C8
+; Палитра экрана: VEC_SCRPAL + (levely*width+levelx)*8 -> vec_palette (0..7 и зеркало 8..15), флаг ISR.
+; Зовётся из DrawScreen (патч build_vec). Окно уровня открывается через setROM2 (тень для ISR согласована).
+vec_scr_palette:
+	push hl
+	push de
+	push bc
+	ld a,(ROMBank1)
+	push af
+	ld a,22
+	call setROM2
+	ld a,(current_levely)
+	ld b,a
+	ld a,(level_width)
+	ld c,a
+	xor a
+vsp_mul:
+	dec b
+	jp m,vsp_muld
+	add a,c
+	jp vsp_mul
+vsp_muld:
+	ld c,a
+	ld a,(current_levelx)
+	add a,c
+	ld l,a
+	ld h,0
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	ld de,VEC_SCRPAL
+	add hl,de
+	ld de,vec_palette
+	ld b,8
+vsp_cp:
+	ld a,(hl)
+	ld (de),a
+	push hl
+	ld hl,8
+	add hl,de
+	ld (hl),a
+	pop hl
+	inc hl
+	inc de
+	dec b
+	jp nz,vsp_cp
+	pop af
+	call setROM2
+	ld a,1
+	ld (vec_pal_dirty),a
+	pop bc
+	pop de
+	pop hl
+	ret
+    endif
+; ---------------------------------------------------------------------------
 ; drawTile: A = тайл, B = X px, C = Y px
 drawTile:
 	push hl
@@ -389,7 +449,7 @@ dt_a0:
 	ld a,KV_POOL_WIN|KV_STK_P0
 	out (KV_PORT),a
 	ex de,hl		; HL = dest
-	ld a,8
+	ld a,8 - C8*2		; C8: 96 Б = 6 итераций по 16
 	ld (vec_row_cnt),a
 dtb_loop:
 	pop bc
@@ -446,7 +506,7 @@ dt_direct:
 	rrca
 	rrca
 	and $1f
-	add a,$80
+	add a,VEC_P0H
 	ld d,a
 	ld a,Y_TOP_L
 	sub c
@@ -513,7 +573,7 @@ drawFGTile:
 	ld a,KV_POOL_WIN|KV_STK_P0	; FG-тайлы — страница 0 ($5D00)
 	out (KV_PORT),a
 	ex de,hl
-	ld a,16
+	ld a,16 - C8*4		; C8: 192 Б = 12 итераций
 	ld (vec_row_cnt),a
 dftb_loop:
 	pop bc
@@ -576,7 +636,7 @@ dft_direct:
 	rrca
 	rrca
 	and $1f
-	add a,$80
+	add a,VEC_P0H
 	ld d,a
 	ld a,Y_TOP_L
 	sub c
@@ -591,7 +651,7 @@ dft_direct:
 	ld a,KV_STK_P0		; FG-тайлы — страница 0
 	out (KV_PORT),a
     endif
-	ld a,4
+	ld a,VEC_NPL
 	ld (vec_plane_cnt),a
 dft_plane:
 	ld h,d
@@ -790,7 +850,7 @@ drawSprite:
 	rrca
 	and $1f
 	ld (vec_spr_cx),a	; колонка экрана 0..31
-	add a,$80
+	add a,VEC_P0H
 	ld (vec_spr_hcol),a
 	pop af
 	ld (vec_spr_dir),a
@@ -878,6 +938,12 @@ ds_row:
 	ld a,h
 	add a,$20
 	ld h,a
+    if C8
+	pop de			; E = 0, D = пропуск (пустых строк выше)
+	ld a,h
+	sub $60			; указатель уже шагнул за 3-ю плоскость (+$60)
+	ld h,a
+    else
 	pop de			; E = p3, D = пропуск (пустых строк выше)
 	ld a,b
 	and (hl)
@@ -886,6 +952,7 @@ ds_row:
 	ld a,h
 	sub $60
 	ld h,a
+    endif
 	inc l
 	ld a,(vec_row_cnt)
 	dec a
@@ -979,6 +1046,17 @@ dsm_row:
 	ld e,(hl)
 	ld l,d
 	ld d,(hl)
+    if C8
+	pop bc			; C = 0, B = пропуск
+	ld hl,(vec_spr_dst)
+	ld a,h
+	add a,$40
+	ld h,a			; плоскость 2 из трёх ($E000)
+	ld a,(vec_spr_mask)
+	and (hl)
+	or d
+	ld (hl),a
+    else
 	pop bc			; C = p3, B = пропуск
 	ld l,c
 	ld c,(hl)
@@ -997,6 +1075,7 @@ dsm_row:
 	and (hl)
 	or d
 	ld (hl),a
+    endif
 	ld a,h
 	sub $20
 	ld h,a
@@ -1231,6 +1310,11 @@ dsp_row:
 	ld a,l
 	add a,32
 	ld l,a
+    if C8
+	pop de			; E = 0 (заполнитель), D = пропуск
+	ld a,l
+	sub 96+1		; указатель уже шагнул за 3-ю плоскость (+96) — назад на плоскость 0 и строкой выше
+    else
 	pop de			; E = p3, D = пропуск
 	ld a,b
 	and (hl)
@@ -1238,6 +1322,7 @@ dsp_row:
 	ld (hl),a
 	ld a,l
 	sub 96+1		; назад на плоскость 0 и строкой выше
+    endif
 	ld l,a
 	ld a,(vec_seg_cnt)
 	dec a
@@ -1395,6 +1480,17 @@ dspm_row:
 	ld e,(hl)
 	ld l,d
 	ld d,(hl)
+    if C8
+	pop bc			; C = 0, B = пропуск
+	ld hl,(vec_spr_dst)
+	ld a,l
+	add a,64
+	ld l,a			; плоскость 2 из трёх
+	ld a,(vec_spr_mask)
+	and (hl)
+	or d
+	ld (hl),a
+    else
 	pop bc			; C = p3, B = пропуск
 	ld l,c
 	ld c,(hl)
@@ -1413,6 +1509,7 @@ dspm_row:
 	and (hl)
 	or d
 	ld (hl),a
+    endif
 	ld a,l
 	sub 32
 	ld l,a
@@ -1834,7 +1931,7 @@ vpf_slot:
 	ld sp,hl
 	ld a,(vec_tmp_cx)
 	add a,a
-	add a,$80
+	add a,VEC_P0H
 	ld d,a
 	ld a,Y_TOP_L
 	sub b
@@ -1931,7 +2028,7 @@ dc_draw:
 	add hl,hl
 	ld (vec_blit_src),hl
 	ld a,b
-	add a,$80
+	add a,VEC_P0H
 	ld d,a
 	ld a,c
 	rlca
@@ -2030,7 +2127,7 @@ vec_panel_blit3:
 	rrca
 	rrca
 	and $1f
-	add a,$80
+	add a,VEC_P0H
 	ld d,a
 	ld a,Y_TOP_L
 	sub c
@@ -2093,10 +2190,10 @@ vec_load_panel:
 	push hl
 	push de
 	push bc
-	ld a,4
+	ld a,VEC_NPL
 	ld (vec_tmp_sx),a	; счётчик плоскостей
 	ld hl,P3_PANEL
-	ld d,$80
+	ld d,VEC_P0H
 vlp_plane:
 	ld (vec_blit_src),hl
 	ld a,32
@@ -2237,6 +2334,20 @@ fa_go:
 	push hl
 	push de
 	push bc
+    if C8
+	cp $11			; «пустая» часть шкалы -> слот 0 (чёрный)
+	jp nz,fa_c8map
+	xor a
+	jp fa_c8ok
+fa_c8map:
+	push hl
+	ld hl,vec_color_map	; выровнена (сразу за fg_tile_lut)
+	add a,l
+	ld l,a
+	ld a,(hl)
+	pop hl
+fa_c8ok:
+    endif
 	ld (vec_fill_color),a
 	ld a,e
 	ld (vec_fill_hgt),a
@@ -2294,13 +2405,13 @@ fa_m2d:
 	rrca
 	rrca
 	and $1f
-	add a,$80
+	add a,VEC_P0H
 	ld h,a
 	ld a,Y_TOP_L
 	sub c
 	ld l,a
 	push bc
-	ld a,4
+	ld a,VEC_NPL
 	ld (vec_plane_cnt),a
 fa_plane:
 	push hl

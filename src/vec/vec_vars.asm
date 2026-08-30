@@ -38,7 +38,7 @@ vec_blit_src:	dw 0
 vec_blit_ret:	dw 0
 vec_bl_cols:	db 0
 vec_bl_pops:	db 0
-vec_bl_planes:	db 4		; vec_blit_cols: плоскостей за блит (сбрасывается в 4)
+vec_bl_planes:	db 4 - C8	; vec_blit_cols: плоскостей за блит (сбрасывается кодом в VEC_NPL; C8 из vdp_consts)
 vec_pool_on:	db 0
 vec_slot_next:	db 0
 vec_tmp_sx:	db 0
@@ -89,9 +89,15 @@ ply_sd_loop:	db 0
 	ds 200
 	ds ($ + 255) & $FF00 - $
 vec_stack_top:
+    if C8
+; C8: обе таблицы заполняются на старте — живут в свободной плоскости 0 (VRAM бит 3 не отображается)
+rev256		equ $8000
+vec_slot_tab	equ $8100
+    else
 ; --- таблица разворота байта: ровно страница ---
 rev256:
 	ds 256
 ; --- таблица слотов пула (160 супертайлов, индекс = (y&$F0)|x), страница ---
 vec_slot_tab:
 	ds 256
+    endif

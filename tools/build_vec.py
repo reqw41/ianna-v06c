@@ -18,9 +18,10 @@ ZASM = ROOT / 'tools/bin/sjasm'
 TRANS = ROOT / 'tools/z80to8080.py'
 OVR = ROOT / 'tools/overrides.py'
 DEMO = '--demo' in sys.argv
+C8 = '--colors8' in sys.argv        # 8 цветов: 3 плоскости; данные готовит build_edd --colors8
 sys.path.insert(0, str(ROOT / 'tools/data'))
-from build_edd import STRING_AREA_KVAZ, STRING_AREA_DEMO
-VARS_ADDR = STRING_AREA_DEMO if DEMO else STRING_AREA_KVAZ
+from build_edd import STRING_AREA_KVAZ, STRING_AREA_DEMO, STRING_AREA_C8
+VARS_ADDR = STRING_AREA_DEMO if DEMO else (STRING_AREA_C8 if C8 else STRING_AREA_KVAZ)
 
 def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
@@ -177,7 +178,7 @@ def consts_from(path):
 def main():
     TR.mkdir(parents=True, exist_ok=True)
     slice_ianna(); make_vars(); make_score_font(); make_music()
-    (TR / 'vdp_consts.asm').write_text('; константы из vdp.asm/sprites.asm/music.asm/input.asm\n' + consts_from('vdp.asm') + consts_from('sprites.asm') + consts_from('music.asm') + consts_from('input.asm'))
+    (TR / 'vdp_consts.asm').write_text('; константы из vdp.asm/sprites.asm/music.asm/input.asm\n' + f'C8\tequ {1 if C8 else 0}\t; 8 цветов (3 плоскости)\n' + consts_from('vdp.asm') + consts_from('sprites.asm') + consts_from('music.asm') + consts_from('input.asm'))
     # ВЕКТОР: цепочка пересечений спрайтов — нативно (src/vec/overlap_hot.asm) вместо перевода
     hot = (VEC / 'overlap_hot.asm').read_text(encoding='utf-8'); hot_t, hot_d = hot.split(';;;SPLIT;;;\n')
     def cut(text, start_pred, end_pred, repl):
@@ -199,6 +200,9 @@ def main():
     # ряды панели (>= 10) DrawTile/DrawFGTile никогда не рисуют (cp 11 / ret nc) — не копить
     # пустые прямоугольники: каждый стоил обход 16x2 тайлов с двумя z_exx на тайл
     t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
+    if C8:
+        assert t.count('DrawScreen:\n') == 1
+        t = t.replace('DrawScreen:\n', 'DrawScreen:\n\tcall vec_scr_palette\t; ВЕКТОР C8: палитра экрана\n')
     old = 'InvalidateSTiles:\n\tpush de'
     assert old in t
     (TR / 'tiles.asm').write_text(t.replace(old, 'InvalidateSTiles:\n\tld a,c\t; ВЕКТОР: ряды панели не рисуются — прямоугольник не нужен\n\tcp 10\n\tret nc\n\tpush de'))
@@ -257,8 +261,13 @@ def main():
         lst = (ROOT / f'build/{name}_vec.lst').read_text(errors='replace')
         m = re.search(r'^string_area\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) == VARS_ADDR, 'string_area не по VARS_ADDR!'
-        code_end = max(int(a, 16) for a in re.findall(r'^([0-9A-F]{4}): [0-9A-F]{2}', lst, re.M) if int(a, 16) < VARS_ADDR)
-        assert code_end < VARS_ADDR, f'код ${code_end:04X} наехал на переменные ${VARS_ADDR:04X}'
+        # конец кода: максимальный адрес байтовой строки ДО org vars (наезд на vars sjasm молчит!)
+        code_end = 0
+        for line in lst.split('\n'):
+            if 'vars наверху ОЗУ' in line: break
+            mm = re.match(r'^([0-9A-F]{4}): [0-9A-F]{2}', line)
+            if mm: code_end = max(code_end, int(mm.group(1), 16))
+        assert code_end < VARS_ADDR, f'код до ${code_end:04X} НАЕХАЛ на переменные ${VARS_ADDR:04X}'
         print(f'код до ${code_end:04X}, переменные с ${VARS_ADDR:04X} (зазор {VARS_ADDR-code_end-1} Б)')
         m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'

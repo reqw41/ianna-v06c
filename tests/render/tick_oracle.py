@@ -9,11 +9,12 @@ ARGS=[a for a in sys.argv[1:] if not a.startswith('--')]; OPTS=[a for a in sys.a
 ROUTE=next((o[8:] for o in OPTS if o.startswith('--route=')),'none:20,right:40,fire+right:40,left:30,none:10')
 START=next((tuple(int(v) for v in o[8:].split(',')) for o in OPTS if o.startswith('--start=')),None)
 FIXRAND='--fixrand' in OPTS
+PLANES3='--planes3' in OPTS   # сравнивать только плоскости 1..3 ($A000+): C8-сборка против эталона ref8
 EDDS=[next((o[7:] for o in OPTS if o.startswith('--eddA=')),None), next((o[7:] for o in OPTS if o.startswith('--eddB=')),None)]   # свой EDD для каждой сборки (формат данных мог измениться)   # FrameCounter := номер тика перед RunScripts: генератор случайных чисел (ld a,r -> FrameCounter) не зависит от скорости сборки
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 def field(mem):
     h=hashlib.md5()
-    for base in (0x8000,0xA000,0xC000,0xE000):
+    for base in ((0xA000,0xC000,0xE000) if PLANES3 else (0x8000,0xA000,0xC000,0xE000)):
         for x in range(32): h.update(bytes(mem[base+x*256+64:base+x*256+224]))   # L 64..223 = y 159..0
     return h.hexdigest()
 def run(rom,lst,edd=None):
