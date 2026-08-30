@@ -178,7 +178,20 @@ def main():
     TR.mkdir(parents=True, exist_ok=True)
     slice_ianna(); make_vars(); make_score_font(); make_music()
     (TR / 'vdp_consts.asm').write_text('; константы из vdp.asm/sprites.asm/music.asm/input.asm\n' + consts_from('vdp.asm') + consts_from('sprites.asm') + consts_from('music.asm') + consts_from('input.asm'))
-    for m in ['tiles', 'drawsprite', 'entities', 'scripts', 'objects', 'depack']:
+    # ВЕКТОР: цепочка пересечений спрайтов — нативно (src/vec/overlap_hot.asm) вместо перевода
+    hot = (VEC / 'overlap_hot.asm').read_text(encoding='utf-8'); hot_t, hot_d = hot.split(';;;SPLIT;;;\n')
+    def cut(text, start_pred, end_pred, repl):
+        L = text.split('\n'); a = next(i for i, l in enumerate(L) if start_pred(l)); b = next(i for i in range(a + 1, len(L)) if end_pred(L[i]))
+        return '\n'.join(L[:a] + repl.split('\n') + L[b:])
+    t = (SRC / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
+    t = cut(t, lambda l: l.startswith('AnimStile_CheckSprites:'), lambda l: 'Get the value for the tile in the hardness map' in l, hot_t)
+    (TR / 'tiles_src.asm').write_text(t)
+    d = (SRC / 'drawsprite.asm').read_text(encoding='utf-8', errors='replace')
+    d = cut(d, lambda l: l.startswith('CheckSprOverlap:'), lambda l: l.startswith('; Redraw the sprite list'), hot_d)
+    (TR / 'drawsprite_src.asm').write_text(d)
+    translate(TR / 'tiles_src.asm', TR / 'tiles.asm')
+    translate(TR / 'drawsprite_src.asm', TR / 'drawsprite.asm')
+    for m in ['entities', 'scripts', 'objects', 'depack']:
         translate(SRC / f'{m}.asm', TR / f'{m}.asm')
     # ряды панели (>= 10) DrawTile/DrawFGTile никогда не рисуют (cp 11 / ret nc) — не копить
     # пустые прямоугольники: каждый стоил обход 16x2 тайлов с двумя z_exx на тайл

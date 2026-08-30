@@ -2,12 +2,13 @@
 """Гейт рендера «по тикам»: две сборки (ROM+LST) гонятся по одному маршруту (клавиши меняются по
 номеру ТИКА, не кадра), в начале каждого тика (вход в RunScripts) сверяется VRAM игрового поля
 (строки 0..159, 4 плоскости). Логика игры одинакова, значит различие = разный вывод.
-  python3 tests/render/tick_oracle.py romA lstA romB lstB [--start=3,1] [--route=none:20,right:40,fire+right:40]
+  python3 tests/render/tick_oracle.py romA lstA romB lstB [--start=3,1] [--route=...] [--fixrand]
 """
 import sys, pathlib, hashlib
 ARGS=[a for a in sys.argv[1:] if not a.startswith('--')]; OPTS=[a for a in sys.argv[1:] if a.startswith('--')]
 ROUTE=next((o[8:] for o in OPTS if o.startswith('--route=')),'none:20,right:40,fire+right:40,left:30,none:10')
 START=next((tuple(int(v) for v in o[8:].split(',')) for o in OPTS if o.startswith('--start=')),None)
+FIXRAND='--fixrand' in OPTS   # FrameCounter := номер тика перед RunScripts: генератор случайных чисел (ld a,r -> FrameCounter) не зависит от скорости сборки
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 def field(mem):
     h=hashlib.md5()
@@ -31,10 +32,14 @@ def run(rom,lst):
                     cpu.halted=False
                     if cpu.ie: cpu.ie=False; cpu.push(cpu.pc); cpu.pc=0x38
                 cpu.step(); c+=1
-            out.append((field(cpu.mem), bytes(cpu.mem[0x8000:0x10000]), list(cpu.mem[sym['vec_palette']:sym['vec_palette']+16]))); cpu.step()
+            if FIXRAND: cpu.mem[sym['FrameCounter']]=len(out)&0xFF; cpu.mem[sym['FrameCounter']+1]=0
+            st=bytes(cpu.mem[sym['SPDATA']:sym['SPDATA']+128])+bytes(cpu.mem[sym['ENTITY_DATA']:sym['ENTITY_DATA']+96])+bytes([cpu.mem[sym['ndirtyrects']]])+bytes(cpu.mem[sym['tiles_dirty']:sym['tiles_dirty']+4*cpu.mem[sym['ndirtyrects']]])
+            out.append((field(cpu.mem), bytes(cpu.mem[0x8000:0x10000]), list(cpu.mem[sym['vec_palette']:sym['vec_palette']+16], ), hashlib.md5(st).hexdigest())); cpu.step()
     return out
 a=run(ARGS[0],ARGS[1]); b=run(ARGS[2],ARGS[3])
 bad=[i for i,(x,y) in enumerate(zip(a,b)) if x[0]!=y[0]]
+badst=[i for i,(x,y) in enumerate(zip(a,b)) if x[3]!=y[3]]
+print(f'состояние (спрайты/сущности/грязные): различий {len(badst)}' + (f' — первый в тике {badst[0]}' if badst else ' — ИДЕНТИЧНО'))
 print(f'тиков {len(a)}/{len(b)}, различий {len(bad)}' + (f' — первый в тике {bad[0]}' if bad else ' — ВЫВОД ИДЕНТИЧЕН ПО ТИКАМ'))
 if bad:
     i=bad[0]; rv.render(a[i][1],a[i][2],'build/tick_oracle_A.png'); rv.render(b[i][1],b[i][2],'build/tick_oracle_B.png')
