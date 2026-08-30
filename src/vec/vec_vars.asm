@@ -50,6 +50,8 @@ vec_tmp_rc:	db 0		; сброс пула без стека: счётчик пря
 vec_tmp_rp:	dw 0
 vec_tmp_bx:	db 0
 vec_tmp_cx:	db 0
+vec_tmp_ovf:	db 0		; раздача слотов: переполнение
+vec_spr_prev:	ds 64		; прошлые прямоугольники спрайтов (x,y,nx,ny) x16 — слоты и под старым местом
 vec_fill_color:	db 0
 vec_fill_xr:	db 0
 vec_fill_mask:	db 0

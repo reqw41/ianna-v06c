@@ -1404,10 +1404,15 @@ vpb_rect_done:
 	pop de
 	dec c
 	jp nz,vpb_rect
-	; слоты — только грязным супертайлам под спрайтами, которые рисуются в этом тике: тайл в пул
-	; нужен лишь там, где поверх ляжет спрайт; остальное идёт в VRAM одним проходом
+	; Слоты — только грязным супертайлам под спрайтами, которые рисуются в этом тике: и под текущей,
+	; и под ПРОШЛОЙ позицией (иначе старое место стирается прямым путём в фазе сборки, а спрайт на новом
+	; появляется лишь при сбросе — на кадр герой пропадает/режется). Остальное — в VRAM одним проходом.
+	xor a
+	ld (vec_tmp_ovf),a
 	ld de,SPDATA
 	ld c,MAX_SPRITES
+	ld hl,vec_spr_prev
+	ld (vec_tmp_rp),hl
 vpb_spr:
 	ld a,(de)		; включён?
 	inc de
@@ -1415,30 +1420,94 @@ vpb_spr:
 	ld a,(de)
 	dec de
 	or l
-	jp z,vpb_spr_next
+	jp z,vpb_spr_off
 	ld hl,7
 	add hl,de
 	ld a,(hl)		; перерисовывается?
 	or a
-	jp z,vpb_spr_next
+	jp z,vpb_spr_copy
+	push de
+	push bc
 	ld hl,3
 	add hl,de
-	ld a,(hl)		; x px
+	call vpb_rect_assign	; текущий прямоугольник
+	ld hl,(vec_tmp_rp)
+	call vpb_rect_assign	; прошлый
+	pop bc
+	pop de
+vpb_spr_copy:
+	ld hl,3			; prev := текущий (x,y,nx,ny)
+	add hl,de
+	push de
+	ex de,hl
+	ld hl,(vec_tmp_rp)
+	ld b,4
+vpb_cp:
+	ld a,(de)
+	ld (hl),a
+	inc hl
+	inc de
+	dec b
+	jp nz,vpb_cp
+	pop de
+	jp vpb_spr_adv
+vpb_spr_off:
+	ld hl,(vec_tmp_rp)	; выключен: prev.nx = 0
+	inc hl
+	inc hl
+	ld (hl),0
+vpb_spr_adv:
+	ld hl,(vec_tmp_rp)
+	inc hl
+	inc hl
+	inc hl
+	inc hl
+	ld (vec_tmp_rp),hl
+	ld hl,8
+	add hl,de
+	ex de,hl
+	dec c
+	jp nz,vpb_spr
+	ld a,(vec_tmp_ovf)
+	or a
+	jp nz,vpb_overflow2
+	ld a,1
+	ld (vec_pool_on),a
+	ret
+vpb_overflow2:
+	ld hl,vec_slot_tab
+	ld b,0
+vpb_clr3:
+	ld (hl),$ff
+	inc l
+	dec b
+	jp nz,vpb_clr3
+	xor a
+	ld (vec_pool_on),a
+	ret
+; vpb_rect_assign: HL -> [x px, y px, nx, ny (символы по 8)]; грязным ($FE) супертайлам под ним — слоты.
+; nx = 0 — пропуск. Переполнение слотов -> vec_tmp_ovf = 1.
+vpb_rect_assign:
+	inc hl
+	inc hl
+	ld a,(hl)		; nx
+	or a
+	ret z
+	ld b,a
+	dec hl
+	dec hl
+	ld a,(hl)		; x
 	rrca
 	rrca
 	rrca
 	rrca
 	and $0f
 	ld (vec_tmp_sx),a	; sx0
-	inc hl
-	inc hl
-	ld b,(hl)		; nx (символы по 8)
-	dec hl
-	dec hl
-	ld a,(hl)		; x
+	ld a,(hl)
 	dec a
 vpb_sx1:
 	add a,8
+	jp c,vpb_sx1_clip
 	dec b
 	jp nz,vpb_sx1		; x + nx*8 - 1
 	rrca
@@ -1446,11 +1515,15 @@ vpb_sx1:
 	rrca
 	rrca
 	and $0f
+	jp vpb_sx1_ok
+vpb_sx1_clip:
+	ld a,15
+vpb_sx1_ok:
 	ld (vec_tmp_sx1),a	; sx1
 	inc hl
 	ld a,(hl)		; y px
 	cp 160
-	jp nc,vpb_spr_next	; панель
+	ret nc			; панель
 	and $f0
 	ld (vec_tmp_sy),a	; sy0*16
 	inc hl
@@ -1483,7 +1556,7 @@ vpb_sxl:
 	jp nz,vpb_sx_next	; не грязный (или уже со слотом)
 	ld a,(vec_slot_next)
 	cp 80			; слоты 0..79 = $A000-$C7FF; выше $C980 — музыка
-	jp nc,vpb_overflow2
+	jp nc,vpb_ovf
 	ld (hl),a
 	inc a
 	ld (vec_slot_next),a
@@ -1499,30 +1572,14 @@ vpb_sy_next:
 	ld b,a
 	ld a,(vec_tmp_ny)
 	cp b
-	jp z,vpb_spr_next
+	ret z
 	ld a,b
 	add a,16
 	ld (vec_tmp_sy),a
 	jp vpb_sy
-vpb_spr_next:
-	ld hl,8
-	add hl,de
-	ex de,hl
-	dec c
-	jp nz,vpb_spr
+vpb_ovf:
 	ld a,1
-	ld (vec_pool_on),a
-	ret
-vpb_overflow2:
-	ld hl,vec_slot_tab
-	ld b,0
-vpb_clr3:
-	ld (hl),$ff
-	inc l
-	dec b
-	jp nz,vpb_clr3
-	xor a
-	ld (vec_pool_on),a
+	ld (vec_tmp_ovf),a
 	ret
 vpb_overflow:
 	pop bc
