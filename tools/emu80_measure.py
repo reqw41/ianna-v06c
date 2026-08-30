@@ -40,7 +40,7 @@ if __name__ == "__main__":
     if "--norestart" not in sys.argv:
         subprocess.run(["sh", "tools/emu80_run.sh"], check=True, capture_output=True)
         time.sleep(3); run("экран сообщения", None, 4); time.sleep(7)
-        mcp("kbd_send", {"action": "press", "keys": ["z"], "duration_ms": 150}); time.sleep(1.5)
+        mcp("kbd_send", {"action": "down", "keys": ["z"]}); time.sleep(0.2); mcp("kbd_send", {"action": "up", "keys": ["z"]}); mcp("kbd_reset"); time.sleep(1.5)  # press с duration оставлял Z зажатой
     run("стоя", None, 4)
     run("бег вправо", ["right"], 6)
     run("бег влево", ["left"], 6)
