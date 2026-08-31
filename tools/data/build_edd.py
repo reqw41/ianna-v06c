@@ -251,6 +251,9 @@ def build_kvaz(level_no=1, start=None):
     font = sr5_rows(pletter_depack((SRC / 'font.SR5.plet1').read_bytes()), 16)
     for c in range(64):
         b = column_blob(font, (c % 32)*8, 1, (c // 32)*8, 8, pm_panel); pages[3][c*32:c*32+len(b)] = b
+    from font_ru import extra_glyphs                     # позиции 64..95 А..Я, 96 стрелка (коды 96..128)
+    for k, g in enumerate(extra_glyphs(font)):
+        b = column_blob(g, 0, 1, 0, 8, pm_panel); pages[3][(64+k)*32:(64+k)*32+len(b)] = b
     panel = sr5_rows(pletter_depack((SRC / 'marcador.SR5.plet1').read_bytes()), 32)
     b = column_blob(panel, 0, 32, 0, 32, pm_panel); pages[3][0x1000:0x1000+len(b)] = b
     armas = sr5_rows(pletter_depack((SRC / 'armas.SR5.plet1').read_bytes()), 24)
@@ -273,6 +276,8 @@ def build_kvaz(level_no=1, start=None):
         pages[0][addr:addr+len(b)] = b
     assert FG_TILES_BASE + len(fg)*256 <= BG_TILES_BASE
     info = parse_level(level)
+    from texts_ru import LEVEL_TEXTS, build_block        # русский блок строк на месте испанского (language=0)
+    info['strings']['es'] = build_block(info['strings']['en'], info['nstrings'], info['nscripts'], LEVEL_TEXTS[level_no])
     if start:                                              # стартовый экран (x,y) — для стендов
         hdr = bytearray(info['header']); hdr[17], hdr[18] = start; info['header'] = bytes(hdr)
     sa = STRING_AREA_C8 if C8MODE == 'c8' else STRING_AREA_KVAZ

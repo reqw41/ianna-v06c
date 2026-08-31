@@ -173,7 +173,7 @@ ovl_o2:
 	ld d,a
 	ld a,(ovl_opt)
 	cp d
-	ld a,'>'
+	ld a,128		; курсор-стрелка (глиф 96)
 	jp z,ovl_o3
 	ld a,' '
 ovl_o3:
@@ -294,12 +294,10 @@ ovl_ct:		db 0
 ovl_slide:	db 0
 
 ovl_opts_en:	dw o_play,o_pass,o_eng,o_mus
-ovl_opts_es:	dw o_play_es,o_pass,o_esp,o_mus
+ovl_opts_es:	dw o_play_es,o_pass_es,o_esp,o_mus_es	; language=0: русский (menu_ru.asm)
 o_play:		db "  PLAY  ",0
-o_play_es:	db " JUGAR  ",0
 o_pass:		db "PASSWORD",0
 o_eng:		db "ENGLISH ",0
-o_esp:		db "ESPANOL ",0
 o_mus:		db "MUSIC/FX",0
 ovl_credtab:	dw c_code,c_art,c_snd
 c_code:		db "  CODE: UTOPIAN ",0
@@ -311,6 +309,4 @@ ovl_txt_es:	dw t1s,t2s,t3s
 t1e: db "A LONG TIME AGO, THE WORLD WAS RULED BY THE NOCUOUS LORD OF CHAOS.",0
 t2e: db "THE GODDESS IANNA APPOINTED TUKARAM TO WIELD THE SACRED SWORD THAT COULD DEFEAT EVILNESS.",0
 t3e: db "TUKARAM BROUGHT PEACE TO OUR LANDS, AND HIS LINEAGE WAS BLESSED AS SERVANTS OF THE GODDESS.",0
-t1s: db "HACE TIEMPO, EL MUNDO ESTUVO DOMINADO POR EL SENOR DEL CAOS.",0
-t2s: db "ANTE TAL SITUACION, LA DIOSA IANNA ELIGIO A TUKARAM PARA PORTAR LA ESPADA SAGRADA QUE ELIMINARIA EL MAL.",0
-t3s: db "TUKARAM CONSIGUIO TRAER LA PAZ A NUESTRAS TIERRAS, SIENDO SU ESTIRPE BENDECIDA COMO SIERVOS DE LA DIOSA.",0
+	include "menu_ru.asm"

@@ -294,6 +294,13 @@ def build_menu_bins(lst):
         out.append(f'{n}\tequ ${v:04X}')
     out += [f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 40', 'MB_TRK_SLIDES\tequ 44']
     (ROOT / 'build/menu_syms.asm').write_text('\n'.join(out) + '\n')
+    sys.path.insert(0, str(ROOT / 'tools/data'))
+    from texts_ru import encode, MENU, INTRO
+    def db(label, text): return f"{label}:\tdb " + ','.join(str(b) for b in encode(text)) + ',0'
+    ru = ['; сгенерировано build_vec из tools/data/texts_ru.py (кодировка шрифта: кириллица 96..127)',
+          db('o_play_es', MENU['play']), db('o_pass_es', MENU['pass']), db('o_esp', MENU['lang']), db('o_mus_es', MENU['music']),
+          db('t1s', INTRO[0]), db('t2s', INTRO[1]), db('t3s', INTRO[2])]
+    (ROOT / 'build/menu_ru.asm').write_text('\n'.join(ru) + '\n')
     for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x400),
                                 (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9C00 - 0x8440)):
         work = ROOT / f'build/{src.name}'
