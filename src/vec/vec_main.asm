@@ -19,6 +19,7 @@ vec_start:
     if !DEMO
 	xor a
 	out (KV_PORT),a		; квазидиск выкл
+	call vec_fdd_load	; загрузка с дискеты, если квазидиск пуст (маркер 'IA' в стр.3 $C800)
     endif
 	call cls
 	call vec_init_rev256

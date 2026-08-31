@@ -33,7 +33,7 @@ from level_tools import parse_level, build_level, relocate_strings, pack
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / 'ref/msx2/src'
 BUILD = ROOT / 'build'
-STRING_AREA_KVAZ = 0x6A00   # vars наверху ОЗУ (см. build_vec.py): string_area квазидисковой сборки (2048 Б: уровень 7 — 1994)
+STRING_AREA_KVAZ = 0x6B00   # vars наверху ОЗУ (см. build_vec.py); хвост таблиц упирается ровно в $8000 (драйвер НГМД занял +256 кода)
 STRING_AREA_C8 = 0x6C00     # c8: rev256/slot_tab в свободной плоскости 0 ($8000) — vars выше, коду +512 Б
 BG_TILES_BASE = 0x8000      # страница 0: 256 тайлов x 128 = 32К
 FG_TILES_BASE = 0x5D00      # страница 0 (до 35 FG-тайлов x 256)
@@ -260,6 +260,7 @@ def build_kvaz(level_no=1, start=None):
         b = column_blob(armas, x0, 3, 0, 24, pm_panel); pages[3][0x2400 + k*288: 0x2400 + k*288 + len(b)] = b
     # страница 3: музыка уровня 1 по $C980 и эффекты по $D980 — РОВНО как music_addr/music_sfx на MSX
     # (внутри .mus абсолютные указатели под эти адреса); читаются через окно $A000-$DFFF (пул — ниже $C800)
+    pages[3][0xC800:0xC802] = b'IA'   # маркер «квазидиск загружен» для vec_fdd_load
     mus = (SRC / f'music-level{LEVEL_MUSIC[level_no-1]}.mus').read_bytes(); sfx = (SRC / 'iannafx.mus').read_bytes()
     assert len(mus) <= 0x1000 and len(sfx) <= 0x0680
     pages[3][0xC980:0xC980+len(mus)] = mus

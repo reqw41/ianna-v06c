@@ -13,6 +13,10 @@ pkill -f "Emu80qt-mcp.*ianna" 2>/dev/null || true
 if [ "$1" = "--demo" ]; then
   cp "$ROOT/build/ianna_demo.rom" "$TMP/ianna_demo.rom"
   ARGS="--run $TMP/ianna_demo.rom"
+elif [ "$1" = "--fdd" ]; then
+  # загрузочная дискета: ПЗУ грузит ROM по дескриптору, драйвер ВГ93 закачивает EDD в квазидиск
+  cp "$ROOT/build/ianna.fdd" "$TMP/ianna.fdd"
+  ARGS="--run $TMP/ianna.fdd"
 else
   cp "$ROOT/build/ianna.rom" "$TMP/ianna.rom"; cp "$ROOT/build/ianna.edd" "$TMP/ianna.edd"
   printf 'ramDisk.fileName = "%s"\n' "$TMP/ianna.edd" > "$TMP/ianna_post.conf"

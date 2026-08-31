@@ -226,7 +226,7 @@ def main():
     order += [VEC / 'vec_main.asm', TR / 'ianna_main.asm', TR / 'tiles.asm', TR / 'drawsprite.asm',
               TR / 'entities.asm', TR / 'scripts.asm', TR / 'objects.asm', TR / 'depack.asm',
               TR / 'score.asm', TR / 'font.asm'] + ([TR / 'music.asm', TR / 'arkos.asm'] if not DEMO else []) + [
-              VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm', VEC / 'vec_stubs.asm']
+              VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm', VEC / 'vec_fdd.asm', VEC / 'vec_stubs.asm']
     if not DEMO:
         order.append(data)
     # z80rt: только используемые хелперы

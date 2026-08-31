@@ -84,6 +84,11 @@ vec_zsave:	ds 8		; z_ix..z_ret на время плеера в ISR		; сохра
 ply_sd_cnt:	db 0		; Arkos: сдвиг частоты (4k) вместо самомодификации jr
 ply_hd_cnt:	db 0
 ply_sd_loop:	db 0
+vec_fdd_ctl:	db $34		; НГМД: управление ($1C), бит 2 — сторона
+vec_fdd_kv:	db 0
+vec_fdd_sec:	db 1
+vec_fdd_dst:	dw 0
+vec_fdd_sp:	dw 0
 
 ; --- стек: до ближайшей границы страницы (минимум ~200 Б) ---
 	ds 200
