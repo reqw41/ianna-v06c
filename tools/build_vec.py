@@ -333,9 +333,22 @@ def build_menu_bins(lst):
     ps.append('pz_strings_en:\tdw ' + ','.join(f'pz_en{i}' for i in range(6)))
     ps.append('pz_strings_ru:\tdw ' + ','.join(f'pz_ru{i}' for i in range(6)))
     (ROOT / 'build/pause_str.asm').write_text('\n'.join(ps) + '\n')
+    # полосы валика меню: каждая его строка одного цвета -> фон под пунктами восстанавливается
+    # заливкой байтами-константами (без чтения квазидиска и без DI), а не копией из квазидиска
+    from build_edd import sr5_rows as _sr5
+    from pletter import depack as _pd
+    _menu = _sr5(_pd((SRC / 'menu_screen.SR5.plet1').read_bytes()), 192)
+    _rows = []
+    for y in range(144, 176):
+        c = _menu[y][120]   # середина валика: края попадают на декор
+        _rows.append([0xFF if (c >> (3 - p)) & 1 else 0x00 for p in range(4)])
+    st = ['; сгенерировано build_vec: полосы валика (32 строки x 4 плоскости)', 'ovl_stripes:']
+    for p in range(4):
+        st.append('\tdb ' + ','.join(str(_rows[y][p]) for y in range(32)))
+    (ROOT / 'build/menu_stripes.asm').write_text('\n'.join(st) + '\n')
     for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x800),
-                                (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9800 - 0x8440),
-                                (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x8B00)):
+                                (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9000 - 0x8440),
+                                (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x9000)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())
         r = subprocess.run([str(ZASM), '--8080', '-uwy', work.name, f'{binout}.lst', binout],

@@ -13,6 +13,7 @@ MB_VSAVE	equ MB_ORG+21
 MB_VREST	equ MB_ORG+24
 MB_MCHR		equ MB_ORG+27
 MB_WAVE		equ MB_ORG+30
+MB_STRIPES	equ MB_ORG+33
 	org $8440
 
 ovl_entry:
@@ -41,10 +42,11 @@ ovl_cp:
 	call ovl_light
 	pop af
 	jp nz,ovl_start		; дисковода нет (стенд) — сразу в игру
-	ld b,0			; фон под пунктами и кредитами -> квазидиск (для перерисовки без мигания)
-	ld c,18
+	ld a,1			; слот 1: фон нижней строки (кредиты / пароль)
+	ld b,0
+	ld c,23
 	ld d,32
-	ld e,6
+	ld e,1
 	call MB_VSAVE
 	xor a
 	ld (ovl_opt),a
@@ -162,13 +164,13 @@ ovl_go:
 ; --- пункты меню: 4 строки на синей полосе (11..14), стрелка у выбранного ---
 ovl_options:
 	push af
-	ld b,0
+	ld hl,ovl_stripes	; фон валика — заливка полосами (быстро, без DI и без квазидиска)
+	ld b,11
 	ld c,18
-	ld d,32
-	ld e,6
-	call MB_VREST		; чистый фон валика (печать поверх — прозрачная)
+	ld d,10			; ровно валик: x=88..167 (колонки 11..20)
+	ld e,4
+	call MB_STRIPES
 	pop af
-	call ovl_credit
 ovl_opts_only:			; только пункты (для экрана пароля: строку 19 занимает приглашение)
 	; как в оригинале: предыдущий пункт сверху, текущий двойной высоты, следующий снизу
 	ld a,(ovl_opt)
@@ -281,8 +283,14 @@ ovl_palapply:
 	ret
 ovl_palsave:	ds 16
 
-ovl_credit:			; текущая строка кредитов (строка 19)
+ovl_credit:			; текущая строка кредитов (строка 23)
 	push af
+	ld a,1
+	ld b,0
+	ld c,23
+	ld d,32
+	ld e,1
+	call MB_VREST		; вернуть фон нижней строки
 	ld a,(ovl_cred)
 	ld hl,ovl_credtab
 	call ovl_tab3
@@ -428,14 +436,13 @@ t3e: db "TUKARAM BROUGHT PEACE TO OUR LANDS, AND HIS LINEAGE WAS BLESSED AS SERV
 ; [2] опыт; [3] текущее оружие; [4] контрольная сумма (сумма [0..3]). Байты 0..3 хранятся XOR $55.
 ovl_pass:
 	call ovl_clr19
-	call ovl_opts_only	; вернуть пункты (фон восстановлен целиком)
 	ld hl,ovl_p_ask_en
 	ld a,(language)
 	or a
 	jp nz,ovl_p1
 	ld hl,p_ask_es
 ovl_p1:
-	ld b,2
+	ld b,7			; «ПАРОЛЬ:» + пробел + 10 знаков = 18 -> с колонки 7 (по центру)
 	ld c,23
 	call ovl_print
 	; буфер = 10 пробелов
@@ -473,7 +480,7 @@ ovl_p_loop:
 	ld (ovl_pn),a
 	; показать введённое
 	ld hl,ovl_pbuf
-	ld b,18
+	ld b,16			; поле ввода сразу за приглашением
 	ld c,23
 	call ovl_print10
 	jp ovl_p_loop
@@ -607,7 +614,8 @@ ovl_p_fail:
 	ld hl,p_bad_es
 ovl_p_badp:
 	call ovl_p_msg
-	call ovl_options	; вернуть пункты и кредиты
+	call ovl_options	; вернуть пункты
+	call ovl_credit		; и кредиты вместо сообщения
 	jp ovl_loop
 ; сообщение в строке 19 + ожидание огня
 ovl_p_msg:
@@ -647,17 +655,19 @@ ovl_hex1:
 	ret
 ; вернуть фон меню (строки 18..23) из копии в квазидиске
 ovl_clr19:
+	ld a,1
 	ld b,0
-	ld c,18
+	ld c,23
 	ld d,32
-	ld e,6
-	call MB_VREST
+	ld e,1
+	call MB_VREST		; фон нижней строки — под приглашение/сообщение пароля
 	ret
 ovl_pn:		db 0
 ovl_pch:	db 0
 ovl_pbuf:	ds 10
 ovl_pval:	ds 5
-ovl_p_ask_en:	db "ENTER PASSWORD:",0
+ovl_p_ask_en:	db "PASSWORD:",0
 ovl_p_ok_en:	db "PASSWORD OK",0
 ovl_p_bad_en:	db "INVALID PASSWORD",0
 	include "menu_ru.asm"
+	include "menu_stripes.asm"

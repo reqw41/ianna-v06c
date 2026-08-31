@@ -15,14 +15,18 @@ mb_song:	jp mb_song_w	; A = 0 меню / 1 интро / 2 вернуть уро�
 mb_savelvl:	jp mb_savelvl_w	; песню уровня из $C980 -> страница 2 $E000 (перед меню)
 mb_key:		jp mb_key_i	; A = ASCII нажатой клавиши ('0'-'9','A'-'F',13=ВК) или 0
 mb_chr:		jp mb_chr_w	; A = код, B = колонка, C = строка: ПРОЗРАЧНАЯ печать (фон просвечивает)
-mb_vsave:	jp mb_vsave_w	; B = колонка, C = строка, D = колонок, E = строк: VRAM -> квазидиск $E000 стр.3
+mb_vsave:	jp mb_vsave_w	; B = кол., C = стр., D = колонок, E = строк, A = слот (0/1): VRAM -> квазидиск
 mb_vrest:	jp mb_vrest_w	; те же параметры: квазидиск -> VRAM (вернуть фон)
 mb_mchr:	jp mb_mchr_w	; A = код, B = кол., C = строка, D = 1 -> двойная высота: шрифт МЕНЮ
 mb_wave:	jp mb_wave_w	; B = первая строка (px), C = сколько строк, A = фаза: волна на воде
+mb_stripes:	jp mb_stripes_w	; B = колонка, D = колонок, C = строка, E = строк, HL = таблица полос
 
 ; обёртки: после работы ВЕРНУТЬ окно оверлея (возврат идёт в код, живущий в окне!)
 mb_chr_w:
 	call mb_chr_i
+	jp mb_reopen
+mb_stripes_w:
+	call mb_stripes_i
 	jp mb_reopen
 mb_wave_w:
 	call mb_wave_i
@@ -603,15 +607,22 @@ mbc_pnext:
 MB_BGBASE	equ $B000	; копия фона в квазидиске стр.3 (окно $A000-$DFFF), 6144 Б
 KV_WIN_KV3	equ $23		; окно $A000-$DFFF -> страница 3
 mb_vsave_i:
+	ld (mb_slot),a
 	xor a
 	ld (mb_dir),a
 	jp mb_vcopy
 mb_vrest_i:
+	ld (mb_slot),a
 	ld a,1
 	ld (mb_dir),a
 mb_vcopy:
 	di
-	ld hl,MB_BGBASE
+	ld hl,MB_BGBASE		; слот 0 = валик с пунктами, слот 1 = нижняя строка
+	ld a,(mb_slot)
+	or a
+	jp z,mbv_base
+	ld hl,MB_BGBASE + $0800
+mbv_base:
 	ld (mb_bgp),hl
 	ld a,e
 	rlca
@@ -720,6 +731,7 @@ mb_l0:		db 0
 mb_nrow:	db 0
 mb_ncol:	db 0
 mb_dir:		db 0
+mb_slot:	db 0
 mb_mfont:	db 0
 mb_dblf:	db 0
 mb_dbl:		db 0
@@ -777,34 +789,38 @@ mbw_plane:
 	ld a,(mb_wph0)
 	ld d,a
 	ld a,(mb_wl)
-	ld e,a			; DE = адрес колонки 0
-	ld c,32
+	ld e,a
+	ld a,32
+	ld (mb_wcol),a
+	; идём справа налево: байт соседа уже в B, лишнее чтение не нужно
+	ld a,d
+	add a,31
+	ld d,a
+	ld b,0			; за правым краем — нули
 mbw_l1:
 	ld h,d
 	ld l,e
 	ld a,(hl)
-	add a,a			; сдвиг влево, старший бит -> CY
-	ld b,a
-	ld a,c
-	cp 1
-	jp z,mbw_l2		; последняя колонка — добивать нечем
-	ld a,d
-	add a,1
+	ld c,a			; сохранить исходный байт (он сосед для следующего слева)
+	add a,a
 	ld h,a
-	ld l,e
-	ld a,(hl)
-	rlca			; старший бит соседа
+	ld a,b
+	rlca			; старший бит правого соседа
 	and 1
-	or b
-	ld b,a
-mbw_l2:
+	or h
+	ld h,a
+	ld a,b
+	ld b,c			; сосед для следующей итерации
+	ld a,h
 	ld h,d
 	ld l,e
-	ld (hl),b
+	ld (hl),a
 	ld a,d
-	inc a
+	dec a
 	ld d,a
-	dec c
+	ld a,(mb_wcol)
+	dec a
+	ld (mb_wcol),a
 	jp nz,mbw_l1
 	jp mbw_pnext
 	; --- вправо: идём от колонки 31 к 0 ---
@@ -869,3 +885,93 @@ mb_wdelta:	db 0
 mb_wl:		db 0
 mb_wpl:		db 0
 mb_wph0:	db 0
+mb_wcol:	db 0
+
+; ================= заливка полосами (фон валика меню) =================
+; Валик — горизонтальные полосы: каждая строка одного цвета, поэтому фон под пунктами
+; восстанавливается записью констант. Ни чтения квазидиска, ни DI (порт не трогаем).
+; B = колонка, D = колонок, C = строка (символьная), E = строк (символьных), HL = таблица 4x32.
+mb_stripes_i:
+	; таблица лежит в оверлее (в окне) — скопировать в ОЗУ, пока окно ещё открыто
+	push bc
+	push de
+	ld de,mb_sbuf
+	ld b,128
+mbs_cp:
+	ld a,(hl)
+	ld (de),a
+	inc hl
+	inc de
+	dec b
+	jp nz,mbs_cp
+	pop de
+	pop bc
+	ld hl,mb_sbuf
+	ld (mb_stab),hl
+	di
+	xor a
+	out (KV_PORT),a		; окно закрыть — VRAM видна процессору
+	ld (vec_kv_shadow),a
+	ei			; дальше порт не трогаем: прерывания (плеер) не задерживаем
+	ld a,e
+	rlca
+	rlca
+	rlca
+	ld (mb_nrow),a		; строк в пикселях
+	ld a,d
+	ld (mb_ncol),a
+	ld a,c
+	rlca
+	rlca
+	rlca
+	ld c,a
+	ld a,MB_YTOP
+	sub c
+	ld (mb_l0),a		; L верхней строки
+	ld a,b
+	add a,$80
+	ld (mb_col0),a
+	ld a,4
+	ld (mb_pcnt),a
+mbs_plane:
+	ld a,(mb_ncol)
+	ld (mb_ccnt),a
+	ld a,(mb_col0)
+	ld (mb_ccur),a
+mbs_col:
+	ld hl,(mb_stab)		; таблица текущей плоскости
+	ld a,(mb_ccur)
+	ld d,a
+	ld a,(mb_l0)
+	ld e,a			; DE = адрес в VRAM (колонка, верхняя строка)
+	ld a,(mb_nrow)
+	ld c,a
+mbs_row:
+	ld a,(hl)
+	inc hl
+	ld (de),a		; строка одного цвета — просто константа
+	dec e
+	dec c
+	jp nz,mbs_row
+	ld a,(mb_ccur)
+	inc a
+	ld (mb_ccur),a
+	ld a,(mb_ccnt)
+	dec a
+	ld (mb_ccnt),a
+	jp nz,mbs_col
+	ld a,(mb_col0)
+	add a,$20
+	ld (mb_col0),a
+	ld hl,(mb_stab)
+	ld de,32
+	add hl,de
+	ld (mb_stab),hl		; следующая плоскость таблицы
+	ld a,(mb_pcnt)
+	dec a
+	ld (mb_pcnt),a
+	jp nz,mbs_plane
+	ret
+mb_stab:	dw 0
+mb_sbuf:	ds 128
+mb_sval:	db 0
