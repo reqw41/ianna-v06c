@@ -2,7 +2,7 @@
 # Ключ: (имя файла, номер строки оригинала). Значение: список строк i8080-кода.
 OVERRIDES = {
     # score_src.asm (препроцессированный score.asm): `score_gameover_string: db "   PULSA DISPARO",0` -> русский (language=0), кодировка шрифта
-    ('score_src.asm', 436): ['db 32,32,32,109,96,102,108,104,32,110,99,110,109,124,32,32,0'],
+    ('score_src.asm', 391): ['db 32,32,32,109,96,102,108,104,32,110,99,110,109,124,32,32,0'],
     # depack.asm: `rl c` / `jr nc,apget4bits` / `ld a,b` / `jr z,apwritebyte`
     # Z80: Z после rl c = (C==0). i8080 RAL не ставит Z -> считаем явно перед ld a,b.
     ('depack.asm', 20): ['ld (z_a),a', 'ld a,c', 'rla', 'ld c,a', 'ld a,(z_a)'],   # A = битовый буфер, беречь!
