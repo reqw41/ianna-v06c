@@ -298,6 +298,50 @@ vec_stk_leave:
 VEC_BUDGET_LIMIT equ 228	; кадр = 234 ед.; запас 6 на неучтённые накладные (стоимости откалиброваны стендом calib по реальным тактам)
 VEC_ISR_COST	equ 24		; ISR с музыкой: ур.2 медиана 20 / p90 24, ур.1 медиана 22 / макс 29 (calib)
 vec_budget:
+    if VI53
+	; фаза кадра — РЕАЛЬНАЯ, из счётчика 0 ВИ53 (перезаряжается в начале ISR): точность 2 ед.
+	; (читаем только старший байт: 255-H = фаза в ед. 512 тактов). Модель цен нужна только на сам блит.
+	push hl
+	ld l,a
+vbg_again:
+	xor a
+	out ($08),a		; латч счётчика 0
+	in a,($0B)		; младший байт — отбросить
+	in a,($0B)
+	cpl			; фаза в ед. 512 тактов
+	add a,a			; в ед. 256 тактов
+	jp c,vbg_wait
+	add a,l			; + цена блита
+	jp c,vbg_wait
+	cp VEC_BUDGET_LIMIT
+	jp c,vbg_ok
+vbg_wait:
+	push hl
+	ld hl,(vec_bud_halts)	; статистика: сколько раз ждали кадр
+	inc hl
+	ld (vec_bud_halts),hl
+	pop hl
+	halt			; следующий VBlank (вне блита, EI); счётчик перезарядится в ISR
+	jp vbg_again
+vbg_ok:
+	ld (vec_bud_used),a	; фаза+цена — для читателей фазы (сброс пула)
+	pop hl
+	ret
+
+; A = реальная фаза кадра (ед. 256 тактов), обновляет vec_bud_used. Портит флаги.
+vec_phase:
+	xor a
+	out ($08),a
+	in a,($0B)
+	in a,($0B)
+	cpl
+	add a,a
+	jp nc,vph_ok
+	ld a,255
+vph_ok:
+	ld (vec_bud_used),a
+	ret
+    else
 	push hl
 	ld l,a
 	ld a,(vec_bud_used)
@@ -318,6 +362,10 @@ vbg_ok:
 	ld (vec_bud_used),a
 	pop hl
 	ret
+vec_phase:			; программный вариант: фаза = накопленная модель
+	ld a,(vec_bud_used)
+	ret
+    endif
 ; Бюджет колонки спрайта ИЗНУТРИ стекового режима (SP подменён — call нельзя, вход jp, возврат
 ; jp (vec_blit_ret)). Выходим из стекового режима, проверяем бюджет с EI, входим обратно.
 ; Портит A, флаги и HL.
@@ -1866,7 +1914,7 @@ vec_pool_flush:
 	ld hl,0
 	add hl,sp
 	ld (vec_sp_save),hl	; настоящий SP
-	ld a,(vec_bud_used)	; у края кадра (> 205 ед.) — дождаться прерывания: переход режима не должен
+	call vec_phase		; у края кадра (> 205 ед.) — дождаться прерывания: переход режима не должен
 	cp 206			; совпасть с обратным ходом
 	jp c,vpf_go
 	halt
@@ -1942,6 +1990,7 @@ vpf_slot:
 	ld a,Y_TOP_L
 	sub b
 	ld e,a
+    if !VI53
 	ld hl,(vec_bud_used)	; фаза кадра: считать и сброс (ISR обнулит при прерывании)
 	ld a,l
 	add a,20 - C8*4		; слот сброса: 96 Б при C8
@@ -1949,6 +1998,7 @@ vpf_slot:
 	ld a,255
 vpf_bud_ok:
 	ld (vec_bud_used),a
+    endif			; ВИ53: фаза всегда реальная, самоучёт сброса не нужен
 	ld hl,vpf_x_next
 	ld (vec_blit_ret),hl
 	jp vec_blit128_vram
@@ -1972,7 +2022,7 @@ vpf_next:
 	jp nz,vpf_yloop
 	ld hl,(vec_sp_save)
 	ld sp,hl		; настоящий SP (порт ещё в стековом режиме — стек не трогаем до перехода)
-	ld a,(vec_bud_used)
+	call vec_phase
 	cp 206
 	jp c,vpf_done
 	halt			; halt в стековом режиме безопасен: ISR целиком работает в странице 3

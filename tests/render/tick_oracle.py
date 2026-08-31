@@ -45,7 +45,10 @@ badst=[i for i,(x,y) in enumerate(zip(a,b)) if x[3]!=y[3]]
 print(f'состояние (спрайты/сущности/грязные): различий {len(badst)}' + (f' — первый в тике {badst[0]}' if badst else ' — ИДЕНТИЧНО'))
 print(f'тиков {len(a)}/{len(b)}, различий {len(bad)}' + (f' — первый в тике {bad[0]}' if bad else ' — ВЫВОД ИДЕНТИЧЕН ПО ТИКАМ'))
 if bad:
-    i=bad[0]; rv.render(a[i][1],a[i][2],'build/tick_oracle_A.png'); rv.render(b[i][1],b[i][2],'build/tick_oracle_B.png')
+    i=bad[0]
+    va=bytearray(a[i][1]); vb=bytearray(b[i][1])
+    if PLANES3: va[0:0x2000]=bytes(0x2000); vb[0:0x2000]=bytes(0x2000)   # плоскость 0 вне сравнения (у c8 там таблицы)
+    rv.render(bytes(va),a[i][2],'build/tick_oracle_A.png'); rv.render(bytes(vb),b[i][2],'build/tick_oracle_B.png')
     from PIL import Image
     ia=Image.open('build/tick_oracle_A.png').convert('RGB'); ib=Image.open('build/tick_oracle_B.png').convert('RGB')
     pa=ia.load(); pb=ib.load(); xs=[];ys=[]
@@ -53,8 +56,8 @@ if bad:
         for x in range(ia.width):
             if pa[x,y]!=pb[x,y]: xs.append(x); ys.append(y)
     print(f'   тик {i}: отличающихся пикселей {len(xs)}' + (f', область x {min(xs)//2}..{max(xs)//2}, y {min(ys)//2}..{max(ys)//2} (в координатах экрана)' if xs else ' (цвета совпадают — различия в невидимых битах плоскостей)'))
-    va=a[i][1]; vb=b[i][1]; dif=[]
-    for pl,base in enumerate((0,0x2000,0x4000,0x6000)):
+    dif=[]
+    for pl,base in enumerate((0x2000,0x4000,0x6000) if PLANES3 else (0,0x2000,0x4000,0x6000)):
         for x in range(32):
             for L in range(64,224):
                 if va[base+x*256+L]!=vb[base+x*256+L]: dif.append((pl,x,223-L,va[base+x*256+L],vb[base+x*256+L]))
