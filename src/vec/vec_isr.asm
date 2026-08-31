@@ -171,7 +171,46 @@ gj_6:
 	ld a,c
 	ret
 
-; get_keyboard: HL = код клавиши MSX (KEY_H и т.п.) -> A=0 (не нажата). Пауза не поддержана.
+; get_keyboard: HL = код клавиши MSX -> A != 0, если клавиша нажата.
+; Поддержаны H (меню паузы оригинала) и J (джукбокс): ряд 5 матрицы Вектора = H I J K L M N O.
+KEY_H_CODE	equ $2003
+KEY_J_CODE	equ $0204
 get_keyboard:
+	ld a,h
+	cp KEY_H_CODE>>8
+	jp nz,gk_j
+	ld a,l
+	cp KEY_H_CODE&255
+	jp nz,gk_no
+	ld c,$01		; H = бит 0
+	jp gk_scan
+gk_j:
+	ld a,h
+	cp KEY_J_CODE>>8
+	jp nz,gk_no
+	ld a,l
+	cp KEY_J_CODE&255
+	jp nz,gk_no
+	ld c,$04		; J = бит 2
+gk_scan:
+	di
+	ld a,$82		; порт B ППИ -> вход
+	out ($00),a
+	ld a,$DF		; ряд 5
+	out ($03),a
+	in a,($02)
+	cpl
+	and c
+	ld c,a
+	ld a,$80		; вернуть режим и скролл (как в get_joystick)
+	out ($00),a
+	xor a
+	out ($02),a
+	ld a,$FF
+	out ($03),a
+	ei
+	ld a,c
+	ret
+gk_no:
 	xor a
 	ret

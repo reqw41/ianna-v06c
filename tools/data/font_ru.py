@@ -33,6 +33,7 @@ SHAPES = {
  'Я': ["..#####", ".#....#", ".#....#", "..#####", "...#..#", ".#....#"],
  '►': ["..#....", "..##...", "..###..", "..####.", "..###..", "..##..."],
  'Ё': ["#.#....", "..888..", ".88.8..", "..4....", "..444.4", "..4...4", ".666666"],   # особый: строка 0 = точки
+ 'Ём': ["#####..", "#......", "####...", "#......", "#......", "#####.."],                       # Е для шрифта меню (точки добавляются отдельно)
 }
 
 def latin_glyph(font, ch):
@@ -76,3 +77,42 @@ if __name__ == '__main__':
         for y in range(8):
             print('   '.join(''.join('.' if v == 1 else str(v) for v in gs[i][y]) for i in range(k, min(k + 11, len(gs)))))
         print()
+
+# ---------- шрифт МЕНЮ (menu_font.SR5): резной, обводка индексом 1, тело 5 (строки 1,2,6) и 6 (3,4,5) ----------
+MBAND = {1: 5, 2: 5, 3: 6, 4: 6, 5: 6, 6: 5}
+
+def menu_latin(rows, ch):
+    c = ord(ch) - 32; x0 = (c % 32) * 8; y0 = (c // 32) * 8
+    return [[rows[y0 + y][x0 + x] for x in range(8)] for y in range(8)]
+
+def menu_style(shape):
+    """1-битная форма (6 строк по 7 знаков) -> глиф в стиле шрифта меню: тело + обводка."""
+    g = [[0] * 8 for _ in range(8)]
+    body = set()
+    for r, line in enumerate(shape, start=1):
+        for x, ch in enumerate(line):
+            if ch == '#':
+                g[r][x] = MBAND[r]; body.add((r, x))
+    for r in range(8):
+        for x in range(8):
+            if (r, x) in body: continue
+            for dr in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if (r + dr, x + dx) in body:
+                        g[r][x] = 1; break
+                else: continue
+                break
+    return g
+
+def menu_glyphs(rows):
+    """128 карт 8x8: 0..63 = ASCII 32..95 из menu_font, 64..95 = А..Я, 96 = стрелка, 97 = Ё."""
+    out = [menu_latin(rows, chr(32 + i)) for i in range(64)]
+    for ch in CYR:
+        out.append(menu_latin(rows, COPY[ch]) if ch in COPY else menu_style(SHAPES[ch]))
+    out.append(menu_style(SHAPES['►']))
+    yo = menu_style(SHAPES['Ём'])
+    yo[0][2] = yo[0][5] = 5          # точки над Ё
+    out.append(yo)
+    while len(out) < 128: out.append([[0]*8 for _ in range(8)])
+    return out
+

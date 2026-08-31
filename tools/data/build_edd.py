@@ -254,6 +254,11 @@ def build_kvaz(level_no=1, start=None):
     from font_ru import extra_glyphs                     # позиции 64..95 А..Я, 96 стрелка (коды 96..128)
     for k, g in enumerate(extra_glyphs(font)):
         b = column_blob(g, 0, 1, 0, 8, pm_panel); pages[3][(64+k)*32:(64+k)*32+len(b)] = b
+    # шрифт МЕНЮ (резной, с обводкой) — 128 глифов по $E000 страницы 3, читается стековым режимом
+    from font_ru import menu_glyphs
+    mfont = sr5_rows(pletter_depack((SRC / 'menu_font.SR5.plet1').read_bytes()), 16)
+    for k, g in enumerate(menu_glyphs(mfont)):
+        b = column_blob(g, 0, 1, 0, 8, pm_panel); pages[3][0xE000 + k*32: 0xE000 + k*32 + len(b)] = b
     panel = sr5_rows(pletter_depack((SRC / 'marcador.SR5.plet1').read_bytes()), 32)
     b = column_blob(panel, 0, 32, 0, 32, pm_panel); pages[3][0x1000:0x1000+len(b)] = b
     armas = sr5_rows(pletter_depack((SRC / 'armas.SR5.plet1').read_bytes()), 24)

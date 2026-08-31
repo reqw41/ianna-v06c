@@ -17,10 +17,14 @@ mb_key:		jp mb_key_i	; A = ASCII нажатой клавиши ('0'-'9','A'-'F',
 mb_chr:		jp mb_chr_w	; A = код, B = колонка, C = строка: ПРОЗРАЧНАЯ печать (фон просвечивает)
 mb_vsave:	jp mb_vsave_w	; B = колонка, C = строка, D = колонок, E = строк: VRAM -> квазидиск $E000 стр.3
 mb_vrest:	jp mb_vrest_w	; те же параметры: квазидиск -> VRAM (вернуть фон)
+mb_mchr:	jp mb_mchr_w	; A = код, B = кол., C = строка, D = 1 -> двойная высота: шрифт МЕНЮ
 
 ; обёртки: после работы ВЕРНУТЬ окно оверлея (возврат идёт в код, живущий в окне!)
 mb_chr_w:
 	call mb_chr_i
+	jp mb_reopen
+mb_mchr_w:
+	call mb_mchr_i
 	jp mb_reopen
 mb_vsave_w:
 	call mb_vsave_i
@@ -393,7 +397,23 @@ mb_keytab:				; маска ряда, маска бит, код бита 0
 ; Глиф в квазидиске стр.3 по A*32: [плоскость][8 строк], плоскость 0 = старший бит цвета.
 ; Фон шрифта = индекс 1 (только младшая плоскость), поэтому маска тела = p0|p1|p2.
 MB_YTOP		equ 223
+mb_mchr_i:			; шрифт меню: база $E000, фон = 0 (маска по всем плоскостям), D = 1 -> двойная высота
+	ld (mb_dbl),a
+	ld a,d
+	ld (mb_dblf),a
+	ld a,1
+	ld (mb_mfont),a
+	ld a,(mb_dbl)
+	jp mb_chr_go
 mb_chr_i:
+	ld (mb_dbl),a		; сохранить код ДО того, как A будет затёрт
+	xor a
+	ld (mb_mfont),a
+	ld (mb_dblf),a
+	ld a,(mb_dbl)
+mb_chr_go:
+	ld (mb_dbl),a
+	ld a,(mb_dbl)
 	sub 32			; как drawChar: код -> позиция в шрифте (0..127)
 	and 127
 	push bc
@@ -412,6 +432,13 @@ mb_chr_i:
 	add hl,hl
 	add hl,hl
 	add hl,hl
+	ld a,(mb_mfont)
+	or a
+	jp z,mbc_addr
+	ld a,h
+	add a,$E0		; шрифт меню лежит по $E000 страницы 3
+	ld h,a
+mbc_addr:
 	; --- 32 байта глифа -> буфер (стековый режим страницы 3) ---
 	ld (mb_ctmp),hl
 	ld hl,0
@@ -461,6 +488,23 @@ mbc_msk:
 	ld h,a
 	ld a,(hl)		; p2
 	or c
+	ld c,a
+	push af
+	ld a,(mb_mfont)
+	or a
+	jp z,mbc_m3
+	ld a,l			; шрифт меню: фон = 0, значит в маску входит и младшая плоскость
+	add a,8
+	ld l,a
+	ld a,h
+	adc a,0
+	ld h,a
+	ld a,(hl)
+	or c
+	ld c,a
+mbc_m3:
+	pop af
+	ld a,c
 	ld (de),a
 	inc de
 	pop hl
@@ -518,6 +562,24 @@ mbc_row:
 	ld a,(mb_row)
 	dec a
 	ld (mb_row),a
+	ld a,(mb_dblf)		; двойная высота: та же строка ещё раз
+	or a
+	jp z,mbc_r1
+	ld a,(mb_rep)
+	or a
+	jp nz,mbc_r1
+	ld a,1
+	ld (mb_rep),a
+	ld hl,(mb_gp)		; вернуть указатели глифа и маски на строку назад
+	dec hl
+	ld (mb_gp),hl
+	ld hl,(mb_mp)
+	dec hl
+	ld (mb_mp),hl
+	jp mbc_row
+mbc_r1:
+	xor a
+	ld (mb_rep),a
 	ld a,(mb_rcnt)
 	dec a
 	ld (mb_rcnt),a
@@ -651,5 +713,9 @@ mb_l0:		db 0
 mb_nrow:	db 0
 mb_ncol:	db 0
 mb_dir:		db 0
+mb_mfont:	db 0
+mb_dblf:	db 0
+mb_dbl:		db 0
+mb_rep:		db 0
 mb_gbuf:	ds 32
 mb_mask:	ds 8

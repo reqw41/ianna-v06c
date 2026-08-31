@@ -11,6 +11,7 @@ MB_KEY		equ MB_ORG+15
 MB_CHR		equ MB_ORG+18
 MB_VSAVE	equ MB_ORG+21
 MB_VREST	equ MB_ORG+24
+MB_MCHR		equ MB_ORG+27
 	org $8440
 
 ovl_entry:
@@ -157,53 +158,60 @@ ovl_options:
 	ld c,14
 	ld d,32
 	ld e,6
-	call MB_VREST		; чистый фон: пункты печатаются прозрачно поверх валика
+	call MB_VREST		; чистый фон валика (печать поверх — прозрачная)
 	pop af
-	call ovl_credit		; и текущая строка кредитов
-	xor a
-	ld (ovl_row),a
-ovl_o1:
-	ld a,(ovl_row)
+	call ovl_credit
+ovl_opts_only:			; только пункты (для экрана пароля: строку 19 занимает приглашение)
+	; как в оригинале: предыдущий пункт сверху, текущий двойной высоты, следующий снизу
+	ld a,(ovl_opt)
+	add a,3
+	and 3
+	ld c,14
+	ld e,0
+	call ovl_opt_print
+	ld a,(ovl_opt)
+	ld c,15
+	ld e,1			; текущий — двойная высота (строки 15-16)
+	call ovl_opt_print
+	ld a,(ovl_opt)
+	inc a
+	and 3
+	ld c,17
+	ld e,0
+	call ovl_opt_print
+	ret
+
+; A = номер пункта, C = строка, E = 1 -> двойная высота
+ovl_opt_print:
+	push bc
+	push de
 	ld hl,ovl_opts_en
-	push af
+	ld d,a
 	ld a,(language)
 	or a
-	jp nz,ovl_o2
-	pop af
+	ld a,d
+	jp nz,ovl_op1
 	ld hl,ovl_opts_es
-	push af
-ovl_o2:
-	pop af
-	call ovl_tab3		; HL = строка A (таблица из 4)
-	ld a,(ovl_row)
-	add a,14
-	ld c,a
-	ld b,11		; плашка-свиток: x=88 (кол.11), y=144 (строки 14..17)
-	call ovl_print
-	; стрелки
-	ld a,(ovl_row)
-	ld d,a
-	ld a,(ovl_opt)
-	cp d
-	ld a,128		; курсор-стрелка (глиф 96)
-	jp z,ovl_o3
-	ld a,' '
-ovl_o3:
-	push af
-	ld a,(ovl_row)
-	add a,14
-	ld c,a
-	ld b,10		; курсор слева от плашки
-	pop af
-	push bc
-	call MB_CHR
+ovl_op1:
+	call ovl_tab3		; HL = строка пункта
+	pop de
 	pop bc
-	ld a,(ovl_row)
-	inc a
-	ld (ovl_row),a
-	cp 4
-	jp nz,ovl_o1
-	ret
+	ld b,11			; валик: x=88 (колонка 11)
+ovl_op2:
+	ld a,(hl)
+	or a
+	ret z
+	push hl
+	push bc
+	push de
+	ld d,e			; D = флаг двойной высоты для mb_mchr
+	call MB_MCHR
+	pop de
+	pop bc
+	pop hl
+	inc hl
+	inc b
+	jp ovl_op2
 
 ; --- помощники ---
 ovl_credit:			; текущая строка кредитов (строка 19)
@@ -334,6 +342,7 @@ t3e: db "TUKARAM BROUGHT PEACE TO OUR LANDS, AND HIS LINEAGE WAS BLESSED AS SERV
 ; [2] опыт; [3] текущее оружие; [4] контрольная сумма (сумма [0..3]). Байты 0..3 хранятся XOR $55.
 ovl_pass:
 	call ovl_clr19
+	call ovl_opts_only	; вернуть пункты (фон восстановлен целиком)
 	ld hl,ovl_p_ask_en
 	ld a,(language)
 	or a
