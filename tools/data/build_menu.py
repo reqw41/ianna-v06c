@@ -2,7 +2,7 @@
 """Ресурсы фазы меню: экран меню и слайды интро/концовки как дампы VRAM Вектора.
 Слайд оригинала = 128x128 из половинки файла intro0N/final0N, вставляется в рамку intro_marco по (64,0).
 Дамп VRAM: 32К в порядке [плоскость 0..3][колонка 0..31][L=255..0] — байт VRAM $8000+p*$2000+col*256+L,
-линейно по адресам, т.е. просто образ $8000-$FFFF; экранные строки y=0..191 -> L=255-y (как гоняет ЭЛТ).
+линейно по адресам, т.е. просто образ $8000-$FFFF; экранные строки картинки y=0..191 кладутся на строки экрана 32..223 (по центру), L=255-(y+32).
 Выход: build/menu_screen.vrm (32К), build/slide0..4.vrm (32К), превью build/menu_slides.png."""
 import sys, pathlib, zlib, struct
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -14,11 +14,14 @@ BUILD = ROOT / 'build'
 def img_of(name, lines):
     return sr5_rows(pletter_depack((SRC / f'{name}.SR5.plet1').read_bytes()), lines)
 
-def vram_dump(pix):
-    """pix: 192 строк x 256 пикселей (0..15) -> 32К образ $8000-$FFFF (незанятые строки = 0)."""
+VTOP = 32   # картинка 256x192 по центру экрана Вектора 256x256 (как игровое поле: строки 32..223)
+
+def vram_dump(pix, top=VTOP):
+    """pix: 192 строк x 256 пикселей (0..15) -> 32К образ $8000-$FFFF (незанятые строки = 0).
+    Картинка кладётся со строки `top`, поэтому символьная строка N совпадает с строкой N оригинала MSX."""
     out = bytearray(0x8000)
     for y, row in enumerate(pix):
-        L = 255 - y
+        L = 255 - (y + top)
         for col in range(32):
             for p in range(4):
                 b = 0

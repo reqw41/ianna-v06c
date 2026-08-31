@@ -38,7 +38,7 @@ ovl_cp:
 	call MB_SCREEN		; экран меню с дискеты
 	jp nz,ovl_start		; дисковода нет (стенд) — сразу в игру
 	ld b,0			; фон под пунктами и кредитами -> квазидиск (для перерисовки без мигания)
-	ld c,14
+	ld c,18
 	ld d,32
 	ld e,6
 	call MB_VSAVE
@@ -157,7 +157,7 @@ ovl_go:
 ovl_options:
 	push af
 	ld b,0
-	ld c,14
+	ld c,18
 	ld d,32
 	ld e,6
 	call MB_VREST		; чистый фон валика (печать поверх — прозрачная)
@@ -168,17 +168,17 @@ ovl_opts_only:			; только пункты (для экрана пароля: 
 	ld a,(ovl_opt)
 	add a,3
 	and 3
-	ld c,14
+	ld c,18
 	ld e,0
 	call ovl_opt_print
 	ld a,(ovl_opt)
-	ld c,15
+	ld c,19
 	ld e,1			; текущий — двойная высота (строки 15-16)
 	call ovl_opt_print
 	ld a,(ovl_opt)
 	inc a
 	and 3
-	ld c,17
+	ld c,21
 	ld e,0
 	call ovl_opt_print
 	ret
@@ -198,7 +198,7 @@ ovl_op1:
 	call ovl_tab3		; HL = строка пункта
 	pop de
 	pop bc
-	ld b,11			; валик: x=88 (колонка 11)
+	ld b,12			; валик 88..168: текст 8 знаков по центру -> колонка 12 (как в оригинале)
 ovl_op2:
 	ld a,(hl)
 	or a
@@ -224,9 +224,9 @@ ovl_wave:			; 8 строк отражения за кадр, полный про
 	call MB_WAVE
 	ld a,(ovl_wy)
 	add a,8
-	cp 80+40
+	cp 112+40
 	jp c,ovl_wv1
-	ld a,80			; полоса отражения: строки 80..119
+	ld a,112		; полоса отражения оригинала y=80..119 + сдвиг картинки 32
 	push af
 	ld a,(ovl_wph)
 	inc a
@@ -236,7 +236,7 @@ ovl_wave:			; 8 строк отражения за кадр, полный про
 ovl_wv1:
 	ld (ovl_wy),a
 	ret
-ovl_wy:		db 80
+ovl_wy:		db 112
 ovl_wph:	db 0
 
 ovl_credit:			; текущая строка кредитов (строка 19)
@@ -245,8 +245,8 @@ ovl_credit:			; текущая строка кредитов (строка 19)
 	ld hl,ovl_credtab
 	call ovl_tab3
 	ld b,8
-	ld c,19
-	call ovl_print
+	ld c,23
+	call ovl_print_c
 	pop af
 	ret
 ovl_tab3:			; HL = таблица dw, A = индекс -> HL = элемент
@@ -259,6 +259,25 @@ ovl_tab3:			; HL = таблица dw, A = индекс -> HL = элемент
 	ld h,(hl)
 	ld l,a
 	ret
+ovl_print_c:			; HL = ASCIIZ, C = строка: печать по центру экрана (32 колонки)
+	push hl
+	ld b,0
+ovl_pc1:
+	ld a,(hl)
+	or a
+	jp z,ovl_pc2
+	inc hl
+	inc b
+	jp ovl_pc1
+ovl_pc2:
+	ld a,32
+	sub b
+	rrca
+	and $7F			; (32 - длина) / 2
+	ld b,a
+	pop hl
+	jp ovl_print
+
 ovl_print:			; HL = ASCIIZ, B = x, C = y
 	ld a,(hl)
 	or a
@@ -375,7 +394,7 @@ ovl_pass:
 	ld hl,p_ask_es
 ovl_p1:
 	ld b,2
-	ld c,19
+	ld c,23
 	call ovl_print
 	; буфер = 10 пробелов
 	ld hl,ovl_pbuf
@@ -413,7 +432,7 @@ ovl_p_loop:
 	; показать введённое
 	ld hl,ovl_pbuf
 	ld b,18
-	ld c,19
+	ld c,23
 	call ovl_print10
 	jp ovl_p_loop
 ovl_p_wrel:
@@ -553,9 +572,8 @@ ovl_p_msg:
 	push hl
 	call ovl_clr19
 	pop hl
-	ld b,8
-	ld c,19
-	call ovl_print
+	ld c,23
+	call ovl_print_c
 	call ovl_wrel
 ovl_p_m1:
 	ei
@@ -585,10 +603,10 @@ ovl_hex1:
 	ret c
 	sub 7			; 'A'..'F' -> 10..15
 	ret
-; вернуть фон меню (строки 14..19) из копии в квазидиске
+; вернуть фон меню (строки 18..23) из копии в квазидиске
 ovl_clr19:
 	ld b,0
-	ld c,14
+	ld c,18
 	ld d,32
 	ld e,6
 	call MB_VREST
