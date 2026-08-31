@@ -12,6 +12,7 @@ MB_CHR		equ MB_ORG+18
 MB_VSAVE	equ MB_ORG+21
 MB_VREST	equ MB_ORG+24
 MB_MCHR		equ MB_ORG+27
+MB_WAVE		equ MB_ORG+30
 	org $8440
 
 ovl_entry:
@@ -50,6 +51,7 @@ ovl_cp:
 ovl_loop:
 	ei
 	halt
+	call ovl_wave		; волна на отражении (как waveeffect оригинала)
 	; кредиты: раз в ~128 кадров следующая строка
 	ld a,(ovl_ct)
 	inc a
@@ -214,6 +216,29 @@ ovl_op2:
 	jp ovl_op2
 
 ; --- помощники ---
+ovl_wave:			; 8 строк отражения за кадр, полный проход за 5 кадров
+	ld a,(ovl_wy)
+	ld b,a
+	ld c,8
+	ld a,(ovl_wph)
+	call MB_WAVE
+	ld a,(ovl_wy)
+	add a,8
+	cp 80+40
+	jp c,ovl_wv1
+	ld a,80			; полоса отражения: строки 80..119
+	push af
+	ld a,(ovl_wph)
+	inc a
+	and 15
+	ld (ovl_wph),a		; фаза бежит — волна движется
+	pop af
+ovl_wv1:
+	ld (ovl_wy),a
+	ret
+ovl_wy:		db 80
+ovl_wph:	db 0
+
 ovl_credit:			; текущая строка кредитов (строка 19)
 	push af
 	ld a,(ovl_cred)

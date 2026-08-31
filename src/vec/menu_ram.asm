@@ -18,10 +18,14 @@ mb_chr:		jp mb_chr_w	; A = код, B = колонка, C = строка: ПРО�
 mb_vsave:	jp mb_vsave_w	; B = колонка, C = строка, D = колонок, E = строк: VRAM -> квазидиск $E000 стр.3
 mb_vrest:	jp mb_vrest_w	; те же параметры: квазидиск -> VRAM (вернуть фон)
 mb_mchr:	jp mb_mchr_w	; A = код, B = кол., C = строка, D = 1 -> двойная высота: шрифт МЕНЮ
+mb_wave:	jp mb_wave_w	; B = первая строка (px), C = сколько строк, A = фаза: волна на воде
 
 ; обёртки: после работы ВЕРНУТЬ окно оверлея (возврат идёт в код, живущий в окне!)
 mb_chr_w:
 	call mb_chr_i
+	jp mb_reopen
+mb_wave_w:
+	call mb_wave_i
 	jp mb_reopen
 mb_mchr_w:
 	call mb_mchr_i
@@ -719,3 +723,146 @@ mb_dbl:		db 0
 mb_rep:		db 0
 mb_gbuf:	ds 32
 mb_mask:	ds 8
+
+; ================= волна на отражении (как waveeffect оригинала) =================
+; Строки VRAM сдвигаются на -1/0/+1 пикселя по бегущей фазе. Сумма таблицы = 0,
+; поэтому картинка не уползает и копия оригинала не нужна.
+; Вход: B = первая строка (в пикселях, 0..255), C = число строк, A = фаза (0..15).
+mb_wave_i:
+	di
+	push af
+	xor a
+	out (KV_PORT),a		; окно закрыть: VRAM видна процессору
+	ld (vec_kv_shadow),a
+	pop af
+	ld (mb_wph),a
+	ld a,c
+	ld (mb_wcnt),a
+	ld a,b
+	ld (mb_wy),a
+mbw_line:
+	; delta = mb_wavetab[(y + фаза) & 15]
+	ld a,(mb_wy)
+	ld hl,mb_wph
+	add a,(hl)
+	and 15
+	ld e,a
+	ld d,0
+	ld hl,mb_wavetab
+	add hl,de
+	ld a,(hl)
+	or a
+	jp z,mbw_next		; сдвига нет
+	ld (mb_wdelta),a
+	; адрес строки: L = 255 - y, старший байт = $80 + колонка (идём по колонкам 0..31)
+	ld a,(mb_wy)
+	cpl			; L = 255 - y
+	ld (mb_wl),a
+	ld a,4
+	ld (mb_wpl),a
+	ld a,$80
+	ld (mb_wph0),a
+mbw_plane:
+	; сдвиг 32 байт строки одной плоскости
+	ld a,(mb_wdelta)
+	rlca			; знак в CY? (проверяем бит 7 отдельно)
+	ld a,(mb_wdelta)
+	and $80
+	jp nz,mbw_right
+	; --- влево: byte[i] = byte[i]<<1 | byte[i+1]>>7, идём от колонки 0 к 31 ---
+	ld a,(mb_wph0)
+	ld d,a
+	ld a,(mb_wl)
+	ld e,a			; DE = адрес колонки 0
+	ld c,32
+mbw_l1:
+	ld h,d
+	ld l,e
+	ld a,(hl)
+	add a,a			; сдвиг влево, старший бит -> CY
+	ld b,a
+	ld a,c
+	cp 1
+	jp z,mbw_l2		; последняя колонка — добивать нечем
+	ld a,d
+	add a,1
+	ld h,a
+	ld l,e
+	ld a,(hl)
+	rlca			; старший бит соседа
+	and 1
+	or b
+	ld b,a
+mbw_l2:
+	ld h,d
+	ld l,e
+	ld (hl),b
+	ld a,d
+	inc a
+	ld d,a
+	dec c
+	jp nz,mbw_l1
+	jp mbw_pnext
+	; --- вправо: идём от колонки 31 к 0 ---
+mbw_right:
+	ld a,(mb_wph0)
+	add a,31
+	ld d,a
+	ld a,(mb_wl)
+	ld e,a
+	ld c,32
+mbw_r1:
+	ld h,d
+	ld l,e
+	ld a,(hl)
+	rrca
+	and $7F
+	ld b,a
+	ld a,c
+	cp 1
+	jp z,mbw_r2
+	ld a,d
+	sub 1
+	ld h,a
+	ld l,e
+	ld a,(hl)
+	rrca
+	and $80
+	or b
+	ld b,a
+mbw_r2:
+	ld h,d
+	ld l,e
+	ld (hl),b
+	ld a,d
+	dec a
+	ld d,a
+	dec c
+	jp nz,mbw_r1
+mbw_pnext:
+	ld a,(mb_wph0)
+	add a,$20
+	ld (mb_wph0),a
+	ld a,(mb_wpl)
+	dec a
+	ld (mb_wpl),a
+	jp nz,mbw_plane
+mbw_next:
+	ld a,(mb_wy)
+	inc a
+	ld (mb_wy),a
+	ld a,(mb_wcnt)
+	dec a
+	ld (mb_wcnt),a
+	jp nz,mbw_line
+	ei
+	ret
+
+mb_wavetab:	db 1,1,0,255,255,0,1,1,0,255,255,0,0,0,0,0	; 255 = -1; сумма = 0
+mb_wy:		db 0
+mb_wcnt:	db 0
+mb_wph:		db 0
+mb_wdelta:	db 0
+mb_wl:		db 0
+mb_wpl:		db 0
+mb_wph0:	db 0
