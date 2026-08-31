@@ -32,6 +32,7 @@ SHAPES = {
  'Ю': ["#..###.", "#.#...#", "#.#...#", "###...#", "#.#...#", "#..###."],
  'Я': ["..#####", ".#....#", ".#....#", "..#####", "...#..#", ".#....#"],
  '►': ["..#....", "..##...", "..###..", "..####.", "..###..", "..##..."],
+ 'Ё': ["#.#....", "..888..", ".88.8..", "..4....", "..444.4", "..4...4", ".666666"],   # особый: строка 0 = точки
 }
 
 def latin_glyph(font, ch):
@@ -50,6 +51,16 @@ def extra_glyphs(font):
     out = []
     for ch in CYR + '►':
         out.append(latin_glyph(font, COPY[ch]) if ch in COPY else shape_glyph(SHAPES[ch]))
+    out.append(yo_glyph(font))                     # позиция 97 (код 129): Ё = Е с точками
+    return out
+
+def yo_glyph(font):
+    g = latin_glyph(font, 'E')                     # тело буквы Е, сдвинутое на строку вниз
+    out = [[1]*8 for _ in range(8)]
+    for y in range(1, 7):
+        for x in range(8): out[y+1][x] = g[y][x] if y < 6 else out[y+1][x]
+    for x in range(8): out[7][x] = g[6][x]
+    out[0][2] = out[0][5] = 8                      # две точки над буквой
     return out
 
 if __name__ == '__main__':
@@ -59,7 +70,7 @@ if __name__ == '__main__':
     from pletter import depack as pd
     font = B.sr5_rows(pd((B.SRC / 'font.SR5.plet1').read_bytes()), 16)
     gs = extra_glyphs(font)
-    names = CYR + '►'
+    names = CYR + '►Ё'
     for k in range(0, len(gs), 11):
         print('   '.join(f'{names[i]:^8}' for i in range(k, min(k + 11, len(gs)))))
         for y in range(8):

@@ -53,6 +53,7 @@ vec_start:
 	call vec_menu_phase	; меню/интро (оверлей в окне квазидиска; без дисковода — сразу игра)
     endif
 	; ---- begin_level (ianna.asm), без интро/музыки ----
+vec_begin_level:
 	call InitVariables
 	call InitSprites
 	call InitEntities
@@ -64,10 +65,23 @@ vec_start:
 	ld (show_passwd),a
 	call SaveCheckpoint
 vec_internal_loop:
+	ld a,1
+	ld (vec_in_game),a
 	call game
+	xor a
+	ld (vec_in_game),a
+	ld a,(player_dead)
+	cp 2			; СТОП или attract -> главное меню (как game_loop оригинала)
+	jp z,vec_to_menu
 	xor a
 	ld (player_dead),a
 	jp vec_internal_loop
+vec_to_menu:
+	xor a
+	ld (player_dead),a
+	ld (current_level),a
+	call vec_menu_phase
+	jp vec_begin_level
 
 ; таблица разворота байта (для зеркальных спрайтов), выровнена на страницу
 vec_init_rev256:

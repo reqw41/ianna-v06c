@@ -7,13 +7,17 @@ MB_SCREEN	equ MB_ORG+3
 MB_SLIDE	equ MB_ORG+6
 MB_SONG		equ MB_ORG+9
 MB_SAVELVL	equ MB_ORG+12
+MB_KEY		equ MB_ORG+15
+MB_CHR		equ MB_ORG+18
+MB_VSAVE	equ MB_ORG+21
+MB_VREST	equ MB_ORG+24
 	org $8440
 
 ovl_entry:
-	; скопировать блоб порт-примитивов из окна ($9C00..$9FFF) в ОЗУ string_area
-	ld hl,$9C00
+	; скопировать блоб порт-примитивов из окна ($9800..$9FFF) в ОЗУ string_area
+	ld hl,$9800
 	ld de,MB_ORG
-	ld bc,$0400
+	ld bc,$0800
 ovl_cp:
 	ld a,(hl)
 	ld (de),a
@@ -31,6 +35,11 @@ ovl_cp:
 	call MB_CALL
 	call MB_SCREEN		; экран меню с дискеты
 	jp nz,ovl_start		; дисковода нет (стенд) — сразу в игру
+	ld b,0			; фон под пунктами и кредитами -> квазидиск (для перерисовки без мигания)
+	ld c,14
+	ld d,32
+	ld e,6
+	call MB_VSAVE
 	xor a
 	ld (ovl_opt),a
 	ld (ovl_cred),a
@@ -45,12 +54,7 @@ ovl_loop:
 	inc a
 	ld (ovl_ct),a
 	jp nz,ovl_input
-	ld a,(ovl_cred)
-	ld hl,ovl_credtab
-	call ovl_tab3
-	ld b,8
-	ld c,23
-	call ovl_print
+	call ovl_credit
 	ld a,(ovl_cred)
 	inc a
 	cp 3
@@ -93,7 +97,7 @@ ovl_fire:
 	jp z,ovl_lang		; LANGUAGE
 	cp 3
 	jp z,ovl_music		; MUSIC/FX
-	jp ovl_loop		; PASSWORD — в следующей итерации
+	jp ovl_pass		; PASSWORD
 ovl_lang:
 	ld a,(language)
 	xor 1
@@ -148,6 +152,14 @@ ovl_go:
 
 ; --- пункты меню: 4 строки на синей полосе (11..14), стрелка у выбранного ---
 ovl_options:
+	push af
+	ld b,0
+	ld c,14
+	ld d,32
+	ld e,6
+	call MB_VREST		; чистый фон: пункты печатаются прозрачно поверх валика
+	pop af
+	call ovl_credit		; и текущая строка кредитов
 	xor a
 	ld (ovl_row),a
 ovl_o1:
@@ -164,9 +176,9 @@ ovl_o2:
 	pop af
 	call ovl_tab3		; HL = строка A (таблица из 4)
 	ld a,(ovl_row)
-	add a,11
+	add a,14
 	ld c,a
-	ld b,11
+	ld b,11		; плашка-свиток: x=88 (кол.11), y=144 (строки 14..17)
 	call ovl_print
 	; стрелки
 	ld a,(ovl_row)
@@ -179,13 +191,12 @@ ovl_o2:
 ovl_o3:
 	push af
 	ld a,(ovl_row)
-	add a,11
+	add a,14
 	ld c,a
-	ld b,9
+	ld b,10		; курсор слева от плашки
 	pop af
 	push bc
-	ld hl,drawChar
-	call MB_CALL
+	call MB_CHR
 	pop bc
 	ld a,(ovl_row)
 	inc a
@@ -195,6 +206,16 @@ ovl_o3:
 	ret
 
 ; --- помощники ---
+ovl_credit:			; текущая строка кредитов (строка 19)
+	push af
+	ld a,(ovl_cred)
+	ld hl,ovl_credtab
+	call ovl_tab3
+	ld b,8
+	ld c,19
+	call ovl_print
+	pop af
+	ret
 ovl_tab3:			; HL = таблица dw, A = индекс -> HL = элемент
 	add a,a
 	ld e,a
@@ -211,8 +232,7 @@ ovl_print:			; HL = ASCIIZ, B = x, C = y
 	ret z
 	push hl
 	push bc
-	ld hl,drawChar
-	call MB_CALL
+	call MB_CHR
 	pop bc
 	pop hl
 	inc hl
@@ -254,8 +274,7 @@ ovl_w2:
 	ld a,(hl)		; символ (A затёрт проверкой переноса)
 	push hl
 	push bc
-	ld hl,drawChar
-	call MB_CALL
+	call MB_CHR
 	pop bc
 	pop hl
 	inc hl
@@ -309,4 +328,242 @@ ovl_txt_es:	dw t1s,t2s,t3s
 t1e: db "A LONG TIME AGO, THE WORLD WAS RULED BY THE NOCUOUS LORD OF CHAOS.",0
 t2e: db "THE GODDESS IANNA APPOINTED TUKARAM TO WIELD THE SACRED SWORD THAT COULD DEFEAT EVILNESS.",0
 t3e: db "TUKARAM BROUGHT PEACE TO OUR LANDS, AND HIS LINEAGE WAS BLESSED AS SERVANTS OF THE GODDESS.",0
+
+; ---- экран пароля: ввод 10 шестнадцатеричных знаков в строке 19, как в оригинале ----
+; формат (menu.asm): [0] младший ниббл = уровень, биты 7..4 = доступное оружие; [1] уровень героя;
+; [2] опыт; [3] текущее оружие; [4] контрольная сумма (сумма [0..3]). Байты 0..3 хранятся XOR $55.
+ovl_pass:
+	call ovl_clr19
+	ld hl,ovl_p_ask_en
+	ld a,(language)
+	or a
+	jp nz,ovl_p1
+	ld hl,p_ask_es
+ovl_p1:
+	ld b,2
+	ld c,19
+	call ovl_print
+	; буфер = 10 пробелов
+	ld hl,ovl_pbuf
+	ld b,10
+	ld a,' '
+ovl_p2:
+	ld (hl),a
+	inc hl
+	dec b
+	jp nz,ovl_p2
+	xor a
+	ld (ovl_pn),a
+ovl_p_loop:
+	ei
+	halt
+	call MB_KEY
+	or a
+	jp z,ovl_p_loop
+	cp 13
+	jp z,ovl_p_check
+	ld (ovl_pch),a		; mb_key портит C — хранить знак в памяти
+	call ovl_p_wrel		; дождаться отпускания (иначе символ повторится)
+	ld a,(ovl_pn)
+	cp 10
+	jp z,ovl_p_loop		; буфер полон — ждём ВК
+	ld e,a
+	ld d,0
+	ld hl,ovl_pbuf
+	add hl,de
+	ld a,(ovl_pch)
+	ld (hl),a
+	ld a,e
+	inc a
+	ld (ovl_pn),a
+	; показать введённое
+	ld hl,ovl_pbuf
+	ld b,18
+	ld c,19
+	call ovl_print10
+	jp ovl_p_loop
+ovl_p_wrel:
+	ei
+	halt
+	call MB_KEY
+	or a
+	jp nz,ovl_p_wrel
+	ret
+; печать ровно 10 знаков буфера
+ovl_print10:
+	ld d,10
+ovl_p10:
+	ld a,(hl)
+	push hl
+	push bc
+	push de
+	call MB_CHR
+	pop de
+	pop bc
+	pop hl
+	inc hl
+	inc b
+	dec d
+	jp nz,ovl_p10
+	ret
+; --- проверка ---
+ovl_p_check:
+	ld a,(ovl_pn)
+	cp 10
+	jp nz,ovl_p_fail	; введено меньше 10 знаков
+	ld hl,ovl_pbuf
+	ld de,ovl_pval
+	ld b,5
+ovl_p_conv:
+	push bc
+	call ovl_hex2		; A = байт из двух знаков (HL двигается)
+	pop bc
+	ld (de),a
+	inc de
+	dec b
+	jp nz,ovl_p_conv
+	; байты 0..3 расшифровать (XOR $55), сумму — нет
+	ld hl,ovl_pval
+	ld b,4
+	xor a
+	ld c,a			; C = контрольная сумма
+ovl_p_xor:
+	ld a,(hl)
+	xor $55
+	ld (hl),a
+	add a,c
+	ld c,a
+	inc hl
+	dec b
+	jp nz,ovl_p_xor
+	ld a,(ovl_pval+4)
+	cp c
+	jp nz,ovl_p_fail
+	; уровень < 8 и базовый меч на месте
+	ld a,(ovl_pval)
+	and $0F
+	cp 8
+	jp nc,ovl_p_fail
+	ld a,(ovl_pval)
+	and $80
+	jp z,ovl_p_fail
+	ld a,(ovl_pval+1)	; уровень героя < 8
+	cp 8
+	jp nc,ovl_p_fail
+	; опыт не больше максимума для уровня героя
+	ld a,(ovl_pval+1)
+	ld hl,get_player_max_exp
+	call MB_CALL
+	ld b,a
+	ld a,(ovl_pval+2)
+	cp b
+	jp z,ovl_p_ok
+	jp nc,ovl_p_fail
+ovl_p_ok:
+	; применить (DECODE оригинала)
+	ld a,(ovl_pval)
+	and $0F
+	ld (current_level),a
+	ld hl,player_available_weapons
+	xor a
+	ld (hl),a
+	inc hl
+	ld (hl),a
+	inc hl
+	ld (hl),a
+	inc hl
+	ld (hl),a
+	ld a,(ovl_pval)
+	ld c,a
+	ld hl,player_available_weapons
+	ld b,4
+	ld e,$80
+ovl_p_wp:
+	ld a,c
+	and e
+	jp z,ovl_p_wp1
+	ld (hl),1
+ovl_p_wp1:
+	inc hl
+	ld a,e
+	rrca
+	ld e,a
+	dec b
+	jp nz,ovl_p_wp
+	ld a,(ovl_pval+1)
+	ld (player_level),a
+	ld a,(ovl_pval+2)
+	ld (player_experience),a
+	ld a,(ovl_pval+3)
+	ld (player_current_weapon),a
+	ld hl,ovl_p_ok_en
+	ld a,(language)
+	or a
+	jp nz,ovl_p_okp
+	ld hl,p_ok_es
+ovl_p_okp:
+	call ovl_p_msg
+	jp ovl_start		; пароль принят — в игру
+ovl_p_fail:
+	ld hl,ovl_p_bad_en
+	ld a,(language)
+	or a
+	jp nz,ovl_p_badp
+	ld hl,p_bad_es
+ovl_p_badp:
+	call ovl_p_msg
+	call ovl_options	; вернуть пункты и кредиты
+	jp ovl_loop
+; сообщение в строке 19 + ожидание огня
+ovl_p_msg:
+	push hl
+	call ovl_clr19
+	pop hl
+	ld b,8
+	ld c,19
+	call ovl_print
+	call ovl_wrel
+ovl_p_m1:
+	ei
+	halt
+	ld a,(joystick_state)
+	and $10
+	jp z,ovl_p_m1
+	call ovl_wrel
+	call ovl_clr19
+	ret
+; два знака (HL) -> байт A
+ovl_hex2:
+	call ovl_hex1
+	rlca
+	rlca
+	rlca
+	rlca
+	ld c,a
+	call ovl_hex1
+	or c
+	ret
+ovl_hex1:
+	ld a,(hl)
+	inc hl
+	sub '0'
+	cp 10
+	ret c
+	sub 7			; 'A'..'F' -> 10..15
+	ret
+; вернуть фон меню (строки 14..19) из копии в квазидиске
+ovl_clr19:
+	ld b,0
+	ld c,14
+	ld d,32
+	ld e,6
+	call MB_VREST
+	ret
+ovl_pn:		db 0
+ovl_pch:	db 0
+ovl_pbuf:	ds 10
+ovl_pval:	ds 5
+ovl_p_ask_en:	db "ENTER PASSWORD:",0
+ovl_p_ok_en:	db " PASSWORD OK",0
+ovl_p_bad_en:	db "INVALID PASSWORD",0
 	include "menu_ru.asm"

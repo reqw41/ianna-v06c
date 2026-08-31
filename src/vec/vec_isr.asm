@@ -131,6 +131,18 @@ gj_3:
 	or 8			; right
 	ld c,a
 gj_4:
+	ld a,$FD		; ряд 1: СТОП (бит 2) — выход в меню
+	out ($03),a
+	in a,($02)
+	cpl
+	and $04
+	jp z,gj_r7
+	ld a,(vec_in_game)	; вне игры (меню/интро) клавишу игнорируем
+	or a
+	jp z,gj_r7
+	ld a,2
+	ld (player_dead),a	; движок сам выйдет из game; vec_main вернёт в меню
+gj_r7:
 	ld a,$7F		; ряд 7
 	out ($03),a
 	in a,($02)

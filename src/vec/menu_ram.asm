@@ -3,7 +3,8 @@
 ; кодом vec_menu_phase в ROM. Собирается отдельно с импортом символов игры (build/menu_syms.asm).
 	include "menu_syms.asm"
 KV_PORT		equ $10
-KV_WIN_OVL	equ $43		; окно b6 ($8000-$9FFF) -> страница 3: там оверлей меню
+KV_WIN_OVL	equ $43
+KV_STK_P3	equ $1C		; стековый режим, страница 3 (чтение шрифта из квазидиска)		; окно b6 ($8000-$9FFF) -> страница 3: там оверлей меню
 	org MB_ORG
 
 ; --- таблица входов (фиксированные адреса для оверлея) ---
@@ -12,8 +13,21 @@ mb_screen:	jp mb_screen_w	; экран меню с дискеты -> VRAM (24К,
 mb_slide:	jp mb_slide_w	; A = 0..4: слайд с дискеты -> VRAM; NZ = дисковода нет
 mb_song:	jp mb_song_w	; A = 0 меню / 1 интро / 2 вернуть уровень: песня -> $C980 (стр.3)
 mb_savelvl:	jp mb_savelvl_w	; песню уровня из $C980 -> страница 2 $E000 (перед меню)
+mb_key:		jp mb_key_i	; A = ASCII нажатой клавиши ('0'-'9','A'-'F',13=ВК) или 0
+mb_chr:		jp mb_chr_w	; A = код, B = колонка, C = строка: ПРОЗРАЧНАЯ печать (фон просвечивает)
+mb_vsave:	jp mb_vsave_w	; B = колонка, C = строка, D = колонок, E = строк: VRAM -> квазидиск $E000 стр.3
+mb_vrest:	jp mb_vrest_w	; те же параметры: квазидиск -> VRAM (вернуть фон)
 
 ; обёртки: после работы ВЕРНУТЬ окно оверлея (возврат идёт в код, живущий в окне!)
+mb_chr_w:
+	call mb_chr_i
+	jp mb_reopen
+mb_vsave_w:
+	call mb_vsave_i
+	jp mb_reopen
+mb_vrest_w:
+	call mb_vrest_i
+	jp mb_reopen
 mb_screen_w:
 	call mb_screen_i
 	jp mb_reopen
@@ -314,3 +328,328 @@ mb_spsave:	dw 0
 mb_track:	db 0
 mb_sec:		db 1
 mb_ctl:		db $34
+
+; --- клавиатура: матрица Вектора (порт $03 = ряд активным нулём, порт $02 = столбцы активным нулём) ---
+; ряд 2: цифры 0..7; ряд 3: 8,9 (биты 0,1); ряд 4: A..F (биты 1..6); ряд 0: ВК (бит 2)
+mb_key_i:
+	di
+	ld a,$82		; порт B ППИ -> вход (иначе in($02) отдаёт защёлку)
+	out ($00),a
+	ld hl,mb_keytab
+mbk_row:
+	ld a,(hl)		; маска ряда (0 = таблица кончилась)
+	or a
+	jp z,mbk_none
+	out ($03),a
+	inc hl
+	in a,($02)
+	cpl
+	ld e,a			; E = нажатые биты ряда
+	ld d,(hl)		; D = маска допустимых бит ряда
+	inc hl
+	ld c,(hl)		; C = код, соответствующий биту 0
+	inc hl
+	ld a,e
+	and d
+	jp z,mbk_row
+	ld e,a
+	ld b,0			; найти младший установленный бит
+mbk_bit:
+	ld a,e
+	rrca
+	jp c,mbk_found
+	ld e,a
+	inc b
+	jp mbk_bit
+mbk_found:
+	ld a,c
+	add a,b
+	ld c,a
+	call mb_kbd_restore
+	ld a,c
+	ret
+mbk_none:
+	call mb_kbd_restore
+	xor a
+	ret
+mb_kbd_restore:
+	ld a,$80		; порт B -> выход (как держит движок)
+	out ($00),a
+	xor a
+	out ($02),a		; режим 256 точек
+	ld a,$FF
+	out ($03),a		; вернуть вертикальный скролл!
+	ei
+	ret
+mb_keytab:				; маска ряда, маска бит, код бита 0
+	db $FB,$FF,'0'			; ряд 2: 0..7
+	db $F7,$03,'8'			; ряд 3: 8,9
+	db $EF,$7E,'A'-1		; ряд 4: биты 1..6 = A..F
+	db $FE,$04,13-2			; ряд 0: бит 2 = ВК
+	db 0
+
+; ================= прозрачная печать символа =================
+; A = код (0..127+), B = колонка (0..31), C = строка (0..23 при Y_TOP_L=223).
+; Глиф в квазидиске стр.3 по A*32: [плоскость][8 строк], плоскость 0 = старший бит цвета.
+; Фон шрифта = индекс 1 (только младшая плоскость), поэтому маска тела = p0|p1|p2.
+MB_YTOP		equ 223
+mb_chr_i:
+	sub 32			; как drawChar: код -> позиция в шрифте (0..127)
+	and 127
+	push bc
+	; --- окно закрыть: VRAM $8000-$FFFF должна быть видна как память ---
+	di
+	push af
+	xor a
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	pop af
+	; --- адрес глифа = A*32 ---
+	ld l,a
+	ld h,0
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	; --- 32 байта глифа -> буфер (стековый режим страницы 3) ---
+	ld (mb_ctmp),hl
+	ld hl,0
+	add hl,sp
+	ld (mb_spsave),hl
+	ld hl,(mb_ctmp)
+	ld sp,hl
+	ld a,KV_STK_P3
+	out (KV_PORT),a
+	ld hl,mb_gbuf
+	ld b,16
+mbc_rd:
+	pop de
+	ld (hl),e
+	inc hl
+	ld (hl),d
+	inc hl
+	dec b
+	jp nz,mbc_rd
+	xor a
+	out (KV_PORT),a
+	ld hl,(mb_spsave)
+	ld sp,hl
+	ei
+	; --- маска тела: p0|p1|p2 ---
+	ld hl,mb_gbuf
+	ld de,mb_mask
+	ld b,8
+mbc_msk:
+	ld a,(hl)		; p0
+	push hl
+	ld c,a
+	ld a,l
+	add a,8
+	ld l,a
+	ld a,h
+	adc a,0
+	ld h,a
+	ld a,(hl)		; p1
+	or c
+	ld c,a
+	ld a,l
+	add a,8
+	ld l,a
+	ld a,h
+	adc a,0
+	ld h,a
+	ld a,(hl)		; p2
+	or c
+	ld (de),a
+	inc de
+	pop hl
+	inc hl
+	dec b
+	jp nz,mbc_msk
+	; --- запись 4 плоскостей ---
+	pop bc			; B = колонка, C = строка
+	ld a,c
+	rlca
+	rlca
+	rlca
+	ld c,a			; C = строка*8
+	ld a,MB_YTOP
+	sub c
+	ld c,a			; C = L верхней строки символа
+	ld a,b
+	add a,$80
+	ld b,a			; B = старший байт адреса плоскости 0
+	ld hl,mb_gbuf
+	ld (mb_gp),hl
+	ld a,4
+	ld (mb_pcnt),a
+mbc_plane:
+	ld hl,mb_mask
+	ld (mb_mp),hl
+	ld a,c
+	ld (mb_row),a		; текущий L (строка VRAM)
+	ld a,8
+	ld (mb_rcnt),a
+mbc_row:
+	ld hl,(mb_gp)
+	ld a,(hl)
+	ld (mb_gval),a
+	inc hl
+	ld (mb_gp),hl
+	ld hl,(mb_mp)
+	ld a,(hl)
+	ld (mb_mval),a
+	inc hl
+	ld (mb_mp),hl
+	ld a,(mb_row)
+	ld l,a
+	ld h,b			; HL = адрес в VRAM (плоскость B, строка L)
+	ld a,(mb_mval)
+	cpl
+	and (hl)		; оставить фон вне тела символа
+	ld d,a
+	ld a,(mb_mval)
+	ld e,a
+	ld a,(mb_gval)
+	and e			; тело символа
+	or d
+	ld (hl),a
+	ld a,(mb_row)
+	dec a
+	ld (mb_row),a
+	ld a,(mb_rcnt)
+	dec a
+	ld (mb_rcnt),a
+	jp nz,mbc_row
+mbc_pnext:
+	ld a,b
+	add a,$20		; следующая плоскость
+	ld b,a
+	ld a,(mb_pcnt)
+	dec a
+	ld (mb_pcnt),a
+	jp nz,mbc_plane
+	ret
+
+; ================= полосы фона: VRAM <-> квазидиск стр.3 $E000 =================
+; B = колонка, C = строка (символьная), D = колонок, E = строк (символьных)
+MB_BGBASE	equ $B000	; копия фона в квазидиске стр.3 (окно $A000-$DFFF), 6144 Б
+KV_WIN_KV3	equ $23		; окно $A000-$DFFF -> страница 3
+mb_vsave_i:
+	xor a
+	ld (mb_dir),a
+	jp mb_vcopy
+mb_vrest_i:
+	ld a,1
+	ld (mb_dir),a
+mb_vcopy:
+	di
+	ld hl,MB_BGBASE
+	ld (mb_bgp),hl
+	ld a,e
+	rlca
+	rlca
+	rlca
+	ld (mb_nrow),a		; строк в пикселях
+	ld a,c
+	rlca
+	rlca
+	rlca
+	ld c,a
+	ld a,MB_YTOP
+	sub c
+	ld (mb_l0),a
+	ld a,b
+	add a,$80
+	ld (mb_col0),a
+	ld a,d
+	ld (mb_ncol),a
+	ld a,4
+	ld (mb_pcnt),a
+mbv_plane:
+	ld a,(mb_ncol)
+	ld (mb_ccnt),a
+	ld a,(mb_col0)
+	ld (mb_ccur),a
+mbv_col:
+	ld a,(mb_l0)
+	ld (mb_row),a
+	ld a,(mb_nrow)
+	ld (mb_rcnt),a
+mbv_row:
+	ld a,(mb_ccur)
+	ld h,a
+	ld a,(mb_row)
+	ld l,a			; HL = адрес в VRAM (окно закрыто)
+	ld a,(mb_dir)
+	or a
+	jp nz,mbv_rest
+	ld a,(hl)		; VRAM -> копия: открыть окно только на запись
+	ld hl,(mb_bgp)
+	ld c,a
+	ld a,KV_WIN_KV3
+	out (KV_PORT),a
+	ld (hl),c
+	xor a
+	out (KV_PORT),a
+	jp mbv_next
+mbv_rest:
+	ld c,l
+	ld b,h			; BC = адрес VRAM
+	ld hl,(mb_bgp)
+	ld a,KV_WIN_KV3
+	out (KV_PORT),a
+	ld a,(hl)		; копия -> VRAM
+	ld e,a
+	xor a
+	out (KV_PORT),a
+	ld h,b
+	ld l,c
+	ld (hl),e
+mbv_next:
+	ld hl,(mb_bgp)
+	inc hl
+	ld (mb_bgp),hl
+	ld a,(mb_row)
+	dec a
+	ld (mb_row),a
+	ld a,(mb_rcnt)
+	dec a
+	ld (mb_rcnt),a
+	jp nz,mbv_row
+	ld a,(mb_ccur)
+	inc a
+	ld (mb_ccur),a
+	ld a,(mb_ccnt)
+	dec a
+	ld (mb_ccnt),a
+	jp nz,mbv_col
+	ld a,(mb_col0)
+	add a,$20
+	ld (mb_col0),a
+	ld a,(mb_pcnt)
+	dec a
+	ld (mb_pcnt),a
+	jp nz,mbv_plane
+	ei
+	ret
+
+mb_ctmp:	dw 0
+mb_gp:		dw 0
+mb_mp:		dw 0
+mb_bgp:		dw 0
+mb_gval:	db 0
+mb_mval:	db 0
+mb_row:		db 0
+mb_rcnt:	db 0
+mb_pcnt:	db 0
+mb_ccnt:	db 0
+mb_ccur:	db 0
+mb_col0:	db 0
+mb_l0:		db 0
+mb_nrow:	db 0
+mb_ncol:	db 0
+mb_dir:		db 0
+mb_gbuf:	ds 32
+mb_mask:	ds 8

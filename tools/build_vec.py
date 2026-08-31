@@ -281,7 +281,9 @@ def main():
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
     need = ['drawChar', 'fillArea', 'MUSIC_Load', 'language', 'joystick_state', 'music_playing',
-            'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls']
+            'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
+            'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
+            'get_player_max_exp']
     syms = {}
     for line in lst.split('\n'):
         m = re.match(r'^([A-Za-z_][\w.]*)\s+=\s+\$([0-9A-F]{4})', line)
@@ -299,10 +301,11 @@ def build_menu_bins(lst):
     def db(label, text): return f"{label}:\tdb " + ','.join(str(b) for b in encode(text)) + ',0'
     ru = ['; сгенерировано build_vec из tools/data/texts_ru.py (кодировка шрифта: кириллица 96..127)',
           db('o_play_es', MENU['play']), db('o_pass_es', MENU['pass']), db('o_esp', MENU['lang']), db('o_mus_es', MENU['music']),
-          db('t1s', INTRO[0]), db('t2s', INTRO[1]), db('t3s', INTRO[2])]
+          db('t1s', INTRO[0]), db('t2s', INTRO[1]), db('t3s', INTRO[2]),
+          db('p_ask_es', MENU['pass_ask']), db('p_ok_es', MENU['pass_ok']), db('p_bad_es', MENU['pass_bad'])]
     (ROOT / 'build/menu_ru.asm').write_text('\n'.join(ru) + '\n')
-    for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x400),
-                                (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9C00 - 0x8440)):
+    for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x800),
+                                (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9800 - 0x8440)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())
         r = subprocess.run([str(ZASM), '--8080', '-uwy', work.name, f'{binout}.lst', binout],
