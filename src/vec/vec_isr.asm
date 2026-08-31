@@ -174,29 +174,49 @@ gj_6:
 ; get_keyboard: HL = код клавиши MSX -> A != 0, если клавиша нажата.
 ; Поддержаны H (меню паузы оригинала) и J (джукбокс): ряд 5 матрицы Вектора = H I J K L M N O.
 KEY_H_CODE	equ $2003
-KEY_J_CODE	equ $0204
+KEY_J_CODE	equ $8003
+KEY_X_CODE	equ $2005
 get_keyboard:
 	ld a,h
 	cp KEY_H_CODE>>8
 	jp nz,gk_j
 	ld a,l
 	cp KEY_H_CODE&255
-	jp nz,gk_no
+	jp nz,gk_j		; старший байт у KEY_H и KEY_X одинаков ($20) — перебор продолжаем
 	ld c,$01		; H = бит 0
 	jp gk_scan
 gk_j:
 	ld a,h
 	cp KEY_J_CODE>>8
-	jp nz,gk_no
+	jp nz,gk_x
 	ld a,l
 	cp KEY_J_CODE&255
-	jp nz,gk_no
+	jp nz,gk_x
 	ld c,$04		; J = бит 2
+	jp gk_scan
+gk_x:
+	ld a,h
+	cp KEY_X_CODE>>8
+	jp nz,gk_no
+	ld a,l
+	cp KEY_X_CODE&255
+	jp nz,gk_no
+	ld c,$81		; X: ряд 7 бит 0 (маркер старшего бита = другой ряд)
 gk_scan:
 	di
 	ld a,$82		; порт B ППИ -> вход
 	out ($00),a
-	ld a,$DF		; ряд 5
+	ld a,$DF		; ряд 5 (H I J K L M N O)
+	ld b,a
+	ld a,c
+	and $80
+	jp z,gk_row
+	ld b,$7F		; ряд 7 (X Y Z [ \\ ] ^ ПРОБЕЛ)
+	ld a,c
+	and $7F
+	ld c,a
+gk_row:
+	ld a,b
 	out ($03),a
 	in a,($02)
 	cpl

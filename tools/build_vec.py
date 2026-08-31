@@ -283,7 +283,12 @@ def build_menu_bins(lst):
     need = ['drawChar', 'fillArea', 'MUSIC_Load', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
-            'get_player_max_exp']
+            'get_player_max_exp',
+            # для оверлея паузы:
+            'vec_ovl_call', 'vec_ovl_tgt', 'get_keyboard', 'inventory', 'inv_current_object',
+            'force_inv_redraw', 'draw_weapon', 'RedrawScreen', 'InvalidateTiles', 'RedrawAllSprites',
+            'FX_Play', 'get_entity_max_energy', 'remove_object_from_inventory', 'player_dead',
+            'ENTITY_PLAYER_POINTER', 'z_iy', 'vec_palette']
     syms = {}
     for line in lst.split('\n'):
         m = re.match(r'^([A-Za-z_][\w.]*)\s+=\s+\$([0-9A-F]{4})', line)
@@ -304,8 +309,33 @@ def build_menu_bins(lst):
           db('t1s', INTRO[0]), db('t2s', INTRO[1]), db('t3s', INTRO[2]),
           db('p_ask_es', MENU['pass_ask']), db('p_ok_es', MENU['pass_ok']), db('p_bad_es', MENU['pass_bad'])]
     (ROOT / 'build/menu_ru.asm').write_text('\n'.join(ru) + '\n')
+    # строки меню паузы: рамочные коды как в оригинале (ianna.asm), текст EN/RU одной длины (17 знаков)
+    from texts_ru import encode as _enc
+    def pstr(pre, text, post):
+        b = list(pre) + list(_enc(text)) + list(post)
+        assert len(b) == 17, (text, len(b))
+        return ','.join(str(x) for x in b)
+    ps = ['; сгенерировано build_vec: строки меню паузы (рамка + подсказки)']
+    EN = [([42,43,43,43,43,43], 'PAUSE',        [40,40,40,40,40,41]),
+          ([60,91,92,32],       'INVENTORY',    [32,32,32,60]),
+          ([60,93,94,32],       'USE OBJECT',   [32,32,60]),
+          ([60,64,32,32],       'PICK WEAPON',  [32,60]),
+          ([61,72,32,32],       'BACK',         [32,32,88,32,81,85,73,84,61]),
+          ([42,43,43,43,43,43,43,43,32], '',    [40,40,40,40,40,40,40,41])]
+    RU = [([42,43,43,43,43,43], 'ПАУЗА',        [40,40,40,40,40,41]),
+          ([60,91,92,32],       'ПРЕДМЕТЫ',     [32,32,32,32,60]),
+          ([60,93,94,32],       'ПРИМЕНИТЬ',    [32,32,32,60]),
+          ([60,64,32,32],       'ОРУЖИЕ',       [32,32,32,32,32,32,60]),
+          ([61,72,32],          'НАЗАД',        [32,88,32] + list(_enc('ВЫХОД')) + [61]),
+          ([42,43,43,43,43,43,43,43,32], '',    [40,40,40,40,40,40,40,41])]
+    for i, (pre, t, post) in enumerate(EN): ps.append(f'pz_en{i}:\tdb ' + pstr(pre, t, post) + ',0')
+    for i, (pre, t, post) in enumerate(RU): ps.append(f'pz_ru{i}:\tdb ' + pstr(pre, t, post) + ',0')
+    ps.append('pz_strings_en:\tdw ' + ','.join(f'pz_en{i}' for i in range(6)))
+    ps.append('pz_strings_ru:\tdw ' + ','.join(f'pz_ru{i}' for i in range(6)))
+    (ROOT / 'build/pause_str.asm').write_text('\n'.join(ps) + '\n')
     for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x800),
-                                (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9800 - 0x8440)):
+                                (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9800 - 0x8440),
+                                (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x8B00)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())
         r = subprocess.run([str(ZASM), '--8080', '-uwy', work.name, f'{binout}.lst', binout],

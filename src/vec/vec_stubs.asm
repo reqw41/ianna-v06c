@@ -11,8 +11,11 @@ FX_Play:
     endif
 	ret
 	ret
-; menu / pause
+; menu / pause (pause_menu = оверлей квазидиска)
 pause_menu:
+    if !DEMO
+	jp vec_pause_phase
+    endif
 mainmenu:
 intro:
 ending:

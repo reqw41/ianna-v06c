@@ -35,7 +35,11 @@ ovl_cp:
 	ld a,13			; music_menu
 	ld hl,MUSIC_Load
 	call MB_CALL
+	call ovl_dark		; погасить: загрузка идёт прямо в VRAM
 	call MB_SCREEN		; экран меню с дискеты
+	push af
+	call ovl_light
+	pop af
 	jp nz,ovl_start		; дисковода нет (стенд) — сразу в игру
 	ld b,0			; фон под пунктами и кредитами -> квазидиск (для перерисовки без мигания)
 	ld c,18
@@ -124,7 +128,9 @@ ovl_start:
 	ld (ovl_slide),a
 ovl_sl:
 	ld a,(ovl_slide)
+	call ovl_dark
 	call MB_SLIDE
+	call ovl_light
 	jp nz,ovl_go		; дисковода нет — без слайдов
 	; текст слайда (по языку)
 	ld a,(ovl_slide)
@@ -238,6 +244,42 @@ ovl_wv1:
 	ret
 ovl_wy:		db 112
 ovl_wph:	db 0
+
+
+; --- гашение экрана на время загрузки с дискеты (иначе видно, как картинка рисуется) ---
+ovl_dark:
+	ld hl,vec_palette
+	ld de,ovl_palsave
+	ld b,16
+ovl_dk1:
+	ld a,(hl)
+	ld (de),a
+	xor a
+	ld (hl),a		; всё чёрное
+	inc hl
+	inc de
+	dec b
+	jp nz,ovl_dk1
+	jp ovl_palapply
+ovl_light:
+	ld hl,ovl_palsave
+	ld de,vec_palette
+	ld b,16
+ovl_lt1:
+	ld a,(hl)
+	ld (de),a
+	inc hl
+	inc de
+	dec b
+	jp nz,ovl_lt1
+ovl_palapply:
+	ld a,1
+	ld (vec_pal_dirty),a	; ISR перепишет палитру в ближайшем кадре
+	ei
+	halt
+	halt
+	ret
+ovl_palsave:	ds 16
 
 ovl_credit:			; текущая строка кредитов (строка 19)
 	push af
@@ -371,9 +413,9 @@ o_pass:		db "PASSWORD",0
 o_eng:		db "ENGLISH ",0
 o_mus:		db "MUSIC/FX",0
 ovl_credtab:	dw c_code,c_art,c_snd
-c_code:		db "  CODE: UTOPIAN ",0
+c_code:		db "CODE: UTOPIAN",0
 c_art:		db "ART: PAGANTIPACO",0
-c_snd:		db "  SOUND: MCALBY ",0
+c_snd:		db "SOUND: MCALBY",0
 
 ovl_txt_en:	dw t1e,t2e,t3e
 ovl_txt_es:	dw t1s,t2s,t3s
@@ -616,6 +658,6 @@ ovl_pch:	db 0
 ovl_pbuf:	ds 10
 ovl_pval:	ds 5
 ovl_p_ask_en:	db "ENTER PASSWORD:",0
-ovl_p_ok_en:	db " PASSWORD OK",0
+ovl_p_ok_en:	db "PASSWORD OK",0
 ovl_p_bad_en:	db "INVALID PASSWORD",0
 	include "menu_ru.asm"

@@ -305,6 +305,9 @@ def build_kvaz(level_no=1, start=None):
     if ovl.exists() and blob.exists() and not C8MODE:
         b = ovl.read_bytes(); pages[3][0x8440:0x8440+len(b)] = b
         b = blob.read_bytes(); pages[3][0x9800:0x9800+len(b)] = b
+        pz = BUILD / 'pause_ovl.bin'
+        if pz.exists():
+            b = pz.read_bytes(); pages[3][0x8B00:0x8B00+len(b)] = b
         for slot, mus in ((0xC000, 'music-menu.mus'), (0xD000, 'music-intro.mus')):
             mb = (SRC / mus).read_bytes(); assert len(mb) <= 0x1000
             pages[2][slot:slot+len(mb)] = mb

@@ -79,6 +79,7 @@ vec_spr_curport: db 0		; порт квазидиска текущего вари
 vec_pc_char:	ds 128		; символы, ряды 20..23 x 32 колонки (код 0..63)
 vec_pc_onoff:	ds 32		; drawScoreOnOff по колонке: 1 = выкл, 2 = вкл
 vec_pc_meter:	ds 64		; шкалы draw_meter по колонке: [0] Y цветной части, [1] высота пустой
+vec_ovl_tgt:	dw 0		; адрес функции движка для vec_ovl_call (оверлей паузы)
 vec_in_game:	db 0		; 1 = идёт game (ISR разрешает выход по СТОП)
 vec_pal_dirty:	db 1		; палитра: записать в ISR (старт / смена)
 vec_zsave:	ds 8		; z_ix..z_ret на время плеера в ISR		; сохранение z_ix..z_hl2 на время плеера в ISR

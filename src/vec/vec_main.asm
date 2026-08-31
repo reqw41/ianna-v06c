@@ -107,7 +107,48 @@ vir_b:
 	ret
 
     if !DEMO
-; Фаза меню: блоб порт-примитивов из стр.3 $9C00 -> string_area, оверлей $8440 в окне b6 (порт $43)
+; Фаза паузы (H в игре): оверлей $8B00 в окне квазидиска. Блоб в string_area недоступен —
+; там строки уровня, поэтому переходник к функциям движка живёт здесь, в ROM.
+vec_pause_phase:
+	di
+	ld a,$43
+	out ($10),a
+	ld (vec_kv_shadow),a
+	ei
+	call $8B00
+	di
+	xor a
+	out ($10),a
+	ld (vec_kv_shadow),a
+	ei
+	ret
+
+; vec_ovl_call: вызвать функцию движка (адрес в vec_ovl_tgt) при ЗАКРЫТОМ окне и вернуть окно оверлея.
+; A/BC/DE/HL проходят насквозь — это параметры вызываемой функции.
+vec_ovl_call:
+	push af
+	di
+	xor a
+	out ($10),a
+	ld (vec_kv_shadow),a
+	ei
+	pop af
+	call vec_ovl_go
+	push af
+	di
+	ld a,$43
+	out ($10),a
+	ld (vec_kv_shadow),a
+	ei
+	pop af
+	ret
+vec_ovl_go:
+	push hl
+	ld hl,(vec_ovl_tgt)
+	ex (sp),hl
+	ret
+
+; Фаза меню: блоб порт-примитивов из стр.3 $9800 -> string_area, оверлей $8440 в окне b6 (порт $43)
 vec_menu_phase:
 	di
 	ld a,$43
