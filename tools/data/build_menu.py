@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Ресурсы фазы меню: экран меню и слайды интро/концовки как дампы VRAM Вектора.
+Слайд оригинала = 128x128 из половинки файла intro0N/final0N, вставляется в рамку intro_marco по (64,0).
+Дамп VRAM: 32К в порядке [плоскость 0..3][колонка 0..31][L=255..0] — байт VRAM $8000+p*$2000+col*256+L,
+линейно по адресам, т.е. просто образ $8000-$FFFF; экранные строки y=0..191 -> L=255-y (как гоняет ЭЛТ).
+Выход: build/menu_screen.vrm (32К), build/slide0..4.vrm (32К), превью build/menu_slides.png."""
+import sys, pathlib, zlib, struct
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from build_edd import SRC, sr5_rows
+from pletter import depack as pletter_depack
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+BUILD = ROOT / 'build'
+
+def img_of(name, lines):
+    return sr5_rows(pletter_depack((SRC / f'{name}.SR5.plet1').read_bytes()), lines)
+
+def vram_dump(pix):
+    """pix: 192 строк x 256 пикселей (0..15) -> 32К образ $8000-$FFFF (незанятые строки = 0)."""
+    out = bytearray(0x8000)
+    for y, row in enumerate(pix):
+        L = 255 - y
+        for col in range(32):
+            for p in range(4):
+                b = 0
+                for k in range(8):
+                    if (row[col*8+k] >> (3-p)) & 1: b |= 0x80 >> k
+                out[p*0x2000 + col*256 + L] = b
+    return bytes(out)
+
+def compose_slide(slide):
+    marco = img_of('intro_marco', 192)
+    out = [r[:] for r in marco]
+    for y in range(128):
+        for x in range(128):
+            out[y][64+x] = slide[y][x]
+    return out
+
+def slides():
+    """интро 0..2, концовка 3..4 (нарезка: файл 256x128 = две половинки 128x128)."""
+    res = []
+    for name, half in (('intro01',0), ('intro01',1), ('intro02',0), ('final01',0), ('final01',1)):
+        im = img_of(name, 128)
+        res.append([[im[y][half*128+x] for x in range(128)] for y in range(128)])
+    return res
+
+def main():
+    menu = img_of('menu_screen', 192)
+    (BUILD / 'menu_screen.vrm').write_bytes(vram_dump(menu))
+    sl = slides()
+    sheets = [menu]
+    for i, s in enumerate(sl):
+        comp = compose_slide(s)
+        (BUILD / f'slide{i}.vrm').write_bytes(vram_dump(comp))
+        sheets.append(comp)
+    # превью-лист (по одному PNG в строке — надёжнее)
+    plt = (SRC / 'test.plt').read_bytes()
+    def to255(i):
+        b0, b1 = plt[2*i], plt[2*i+1]
+        return (((b0>>4)&7)*255//7, (b1&7)*255//7, (b0&7)*255//7)
+    W = 256*3; H = 192*2
+    grid = [[(0,0,0)]*W for _ in range(H)]
+    for idx, sh in enumerate(sheets):
+        gy, gx = divmod(idx, 3)
+        for y in range(192):
+            for x in range(256):
+                grid[gy*192+y][gx*256+x] = to255(sh[y][x])
+    raw = bytearray()
+    for row in grid:
+        raw.append(0)
+        for pxl in row: raw += bytes(pxl)
+    def chunk(t, d): return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t+d))
+    (BUILD / 'menu_slides.png').write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(bytes(raw), 6)) + chunk(b'IEND', b''))
+    print('menu_screen.vrm + slide0..4.vrm + menu_slides.png готовы')
+
+if __name__ == '__main__':
+    main()

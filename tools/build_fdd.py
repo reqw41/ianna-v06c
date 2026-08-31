@@ -18,6 +18,14 @@ desc[31] = s
 img[0:32] = desc
 img[0x80:0x80 + len(rom)] = rom
 img[4 * 10240:4 * 10240 + len(edd)] = edd     # дорожка 4+ — EDD, читает vec_fdd_load
+menu = ROOT / 'build/menu_screen.vrm'
+if menu.exists():
+    img[40*10240:40*10240+0x8000] = menu.read_bytes()
+    for i in range(5):
+        sl = (ROOT / f'build/slide{i}.vrm').read_bytes()
+        base = (44 + i*4) * 10240
+        img[base:base+len(sl)] = sl
+    print('меню: экран на дорожке 40, слайды на 44/48/52/56/60 (шаг 4 дорожки, 32К каждый)')
 out = ROOT / 'build/ianna.fdd'
 out.write_bytes(img)
 print(f'{out}: {len(img)} Б; ROM {len(rom)} Б, EDD с дорожки 4 (raw {4*10240})')

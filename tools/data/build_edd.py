@@ -290,6 +290,14 @@ def build_kvaz(level_no=1, start=None):
         for bank, page, base, limit in banks:
             assert page != 1 or base >= scrpal_addr + len(blob) or limit <= 0x8000, 'палитры легли на банк'
         pages[1][scrpal_addr:scrpal_addr+len(blob)] = blob
+    # фаза меню: оверлей + блоб (стр.3 $8440/$9C00), песни меню/интро (стр.2 $C000/$D000)
+    ovl = BUILD / 'menu_ovl.bin'; blob = BUILD / 'menu_ram.bin'
+    if ovl.exists() and blob.exists() and not C8MODE:
+        b = ovl.read_bytes(); pages[3][0x8440:0x8440+len(b)] = b
+        b = blob.read_bytes(); pages[3][0x9C00:0x9C00+len(b)] = b
+        for slot, mus in ((0xC000, 'music-menu.mus'), (0xD000, 'music-intro.mus')):
+            mb = (SRC / mus).read_bytes(); assert len(mb) <= 0x1000
+            pages[2][slot:slot+len(mb)] = mb
     assert all(len(p) == 65536 for p in pages), [len(p) for p in pages]
     edd = b''.join(bytes(p) for p in pages)
     (BUILD / 'ianna.edd').write_bytes(edd)

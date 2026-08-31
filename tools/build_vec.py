@@ -226,7 +226,7 @@ def main():
     order += [VEC / 'vec_main.asm', TR / 'ianna_main.asm', TR / 'tiles.asm', TR / 'drawsprite.asm',
               TR / 'entities.asm', TR / 'scripts.asm', TR / 'objects.asm', TR / 'depack.asm',
               TR / 'score.asm', TR / 'font.asm'] + ([TR / 'music.asm', TR / 'arkos.asm'] if not DEMO else []) + [
-              VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm', VEC / 'vec_fdd.asm', VEC / 'vec_stubs.asm']
+              VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm'] + ([VEC / 'vec_fdd.asm'] if C8 else []) + [VEC / 'vec_stubs.asm']
     if not DEMO:
         order.append(data)
     # z80rt: только используемые хелперы
@@ -273,8 +273,38 @@ def main():
         m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'
         print(f'OK: build/{name}.rom {size} Б, конец = ${0x100+size:04X} (граница VRAM $8000, свободно {0x8000-0x100-size} Б)')
+        if not DEMO:
+            build_menu_bins(lst)
         return 0
     return 1
+
+def build_menu_bins(lst):
+    """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
+    need = ['drawChar', 'fillArea', 'MUSIC_Load', 'language', 'joystick_state', 'music_playing',
+            'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls']
+    syms = {}
+    for line in lst.split('\n'):
+        m = re.match(r'^([A-Za-z_][\w.]*)\s+=\s+\$([0-9A-F]{4})', line)
+        if m and m.group(1) in need:
+            syms[m.group(1)] = int(m.group(2), 16)
+    missing = [n for n in need if n not in syms]
+    assert not missing, f'нет символов для меню: {missing}'
+    out = ['; сгенерировано build_vec (символы игры для оверлея меню)']
+    for n, v in syms.items():
+        out.append(f'{n}\tequ ${v:04X}')
+    out += [f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 40', 'MB_TRK_SLIDES\tequ 44']
+    (ROOT / 'build/menu_syms.asm').write_text('\n'.join(out) + '\n')
+    for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x400),
+                                (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9C00 - 0x8440)):
+        work = ROOT / f'build/{src.name}'
+        work.write_text(src.read_text())
+        r = subprocess.run([str(ZASM), '--8080', '-uwy', work.name, f'{binout}.lst', binout],
+                           capture_output=True, text=True, cwd=str(ROOT / 'build'))
+        if r.returncode != 0:
+            print(f'МЕНЮ: ошибка сборки {src.name}:'); print((r.stdout + r.stderr)[-1200:]); sys.exit(1)
+        blen = (ROOT / f'build/{binout}').stat().st_size
+        assert blen <= maxlen, f'{binout}: {blen} > {maxlen}'
+        print(f'меню: {binout} {blen} Б (лимит {maxlen})')
 
 if __name__ == '__main__':
     sys.exit(main())

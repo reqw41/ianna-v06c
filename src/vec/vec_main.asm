@@ -49,6 +49,9 @@ vec_start:
 	ld (current_level),a		; уровень 1
 	ld (player_dead),a
 	ei
+    if !DEMO
+	call vec_menu_phase	; меню/интро (оверлей в окне квазидиска; без дисковода — сразу игра)
+    endif
 	; ---- begin_level (ianna.asm), без интро/музыки ----
 	call InitVariables
 	call InitSprites
@@ -88,3 +91,20 @@ vir_b:
 	inc c
 	jp nz,vir_l
 	ret
+
+    if !DEMO
+; Фаза меню: блоб порт-примитивов из стр.3 $9C00 -> string_area, оверлей $8440 в окне b6 (порт $43)
+vec_menu_phase:
+	di
+	ld a,$43
+	out ($10),a
+	ld (vec_kv_shadow),a
+	ei
+	call $8440		; оверлей меню (сам копирует блоб из окна в string_area)
+	di
+	xor a
+	out ($10),a
+	ld (vec_kv_shadow),a
+	ei
+	ret
+    endif
