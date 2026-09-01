@@ -53,9 +53,11 @@ vfl_tb:
 	inc hl
 	dec b
 	jp nz,vfl_tb
+	call vfl_bar_init	; полоса прогресса: шрифта при первой загрузке ещё нет, поэтому просто полоса
 	xor a
 	ld (vfl_blk),a
 vfl_block:
+	call vfl_bar		; закрасить колонку, соответствующую номеру блока
 	ld a,(vfl_blk)
 	add a,a
 	ld e,a
@@ -98,6 +100,60 @@ vfl_next:
 vfl_done:
 	xor a
 	out (KV_PORT),a
+	ret
+
+
+; --- полоса прогресса загрузки ---
+; VRAM на время загрузки — буфер (сжатый блок в $8000, распаковка в $C000), поэтому экран гасим
+; палитрой (всё чёрное, кроме цвета 1), а полосу рисуем в плоскости младшего бита ($E000-$FFFF):
+; её загрузка не трогает, значит видна только полоса.
+VFL_BAR_L	equ 130
+vfl_bar_init:
+	call vfl_pal		; палитра защёлкивается только в кадровом гасящем, поэтому пишем
+	ld hl,$E000		; её ещё и на каждом блоке (см. vfl_bar) — какая-то запись попадёт
+	ld b,0
+	ld c,32
+vfb_clr0:
+	ld (hl),0
+	inc hl
+	dec b
+	jp nz,vfb_clr0
+	dec c
+	jp nz,vfb_clr0
+	ret
+
+vfl_pal:
+	ld c,0
+vfb_pal:
+	ld a,c
+	out ($02),a
+	ld a,c
+	dec a
+	ld a,0
+	jp nz,vfb_p2
+	ld a,$FF		; цвет 1 — белый
+vfb_p2:
+	out ($0C),a
+	out ($0C),a
+	out ($0C),a
+	inc c
+	ld a,c
+	cp 16
+	jp nz,vfb_pal
+	ret
+
+vfl_bar:
+	call vfl_pal		; повторяем установку палитры: одна из записей попадёт в гасящий
+	ld a,(vfl_blk)
+	add a,$E0
+	ld h,a
+	ld l,VFL_BAR_L
+	ld c,8
+vfb_fill:
+	ld (hl),$FF
+	dec l
+	dec c
+	jp nz,vfb_fill
 	ret
 
 ; --- блок 8К из VRAM $C000 в квазидиск: страница blk/8, смещение (blk%8)*8192 ---
