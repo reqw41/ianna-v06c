@@ -219,6 +219,20 @@ def main():
     assert t.count(old) == 1
     (TR / 'tiles.asm').write_text(t.replace(old, 'DrawFGTile:\n\tpush af\t; ВЕКТОР: накладные обхода — в бюджет DI\n\tld a,3-C8\t; обход FG: 16ц медиана 2.1/p90 2.6; c8 2.1 -> 2\n\tcall vec_budget\n\tpop af\n'))
     translate(TR / 'ianna_main_src.asm', TR / 'ianna_main.asm')
+    # ВЕКТОР: темп анимации воды и огня по нагрузке экрана. Патчим УЖЕ транслированный файл:
+    # если вставлять в _src, транслятор считает соседний код нуждающимся в сохранении флагов
+    # и тянет лишние хелперы z_*. Тело — в vec_anim.asm (хвост образа), здесь только вызов:
+    # перед fg_tile_lut стоит выравнивание на страницу, и запаса выше него всего 34 байта.
+    _f = TR / 'ianna_main.asm'
+    _t = _f.read_text()
+    _old = '\tld a, (animate_tile)\n\tinc a\n\tld (animate_tile), a\n\tand 1\n'
+    assert _old in _t, 'animate_tile в транслированном mainloop'
+    import os as _os
+    _skip = _os.environ.get('IANNA_NOANIM') == '1'   # A/B-замер темпа анимации
+    _t = _t if _skip else _t.replace(_old,
+        '\tcall vec_anim_calc\t; ВЕКТОР: C = маска темпа (тяжёлый экран -> вчетверо реже)\n'
+        '\tld a, (animate_tile)\n\tinc a\n\tld (animate_tile), a\n\tand c\n')
+    _f.write_text(_t)
     translate(TR / 'score_src.asm', TR / 'score.asm')
     translate(TR / 'font_src.asm', TR / 'font.asm')
     if not DEMO:
@@ -259,6 +273,7 @@ def main():
             keep.append(b); kept.add(name)
     (TR / 'z80rt_used.asm').write_text(''.join(keep))
     order.append(TR / 'z80rt_used.asm')
+    order.append(VEC / 'vec_anim.asm')   # хвост: выше выравнивания fg_tile_lut места нет
     order += [TR / 'vars.asm', VEC / 'vec_vars.asm']   # org VARS_ADDR
     parts = [f'DEMO\tequ {1 if DEMO else 0}\n']
     for f in order:
