@@ -47,6 +47,7 @@ ovl_cp:
 	ld (ovl_cred),a
 	ld (ovl_ct),a
 	call ovl_options
+	call ovl_credit		; первый титр — сразу, не через 256 кадров
 	call ovl_wrel		; дренаж: после автозагрузки скан может отдать фантомные нажатия
 ovl_loop:
 	ei
@@ -277,15 +278,16 @@ ovl_palapply:
 	ret
 ovl_palsave:	ds 16
 
-ovl_credit:			; текущая строка титров (строка 23)
-	push af
-	call ovl_clr19		; затереть прошлую строку, как в оригинале
+ovl_credit:			; строка титров (23): три записи по 16 знаков с колонки 8 — как в оригинале,
+	push af			; они одинаковой длины и затирают друг друга сами, очистка не нужна
+	ld hl,vec_pc_reset	; строки 20..23 — область панели: у drawChar там кэш «по изменению»
+	call MB_CALL
 	ld a,(ovl_cred)
 	ld hl,ovl_credtab
 	call ovl_tab3
 	ld b,8
 	ld c,23
-	call ovl_print_c
+	call ovl_printf
 	pop af
 	ret
 ovl_tab3:			; HL = таблица dw, A = индекс -> HL = элемент
@@ -298,28 +300,8 @@ ovl_tab3:			; HL = таблица dw, A = индекс -> HL = элемент
 	ld h,(hl)
 	ld l,a
 	ret
-ovl_printf:			; HL = ASCIIZ, B = x, C = y — НЕПРОЗРАЧНО (drawChar движка, фон шрифта чёрный):
-	ld a,c			; так печатает нижнюю строку оригинал (print_string3 -> drawCharFront)
-	cp 23
-	jp nz,ovl_pf_loop
-	ld a,b
-	ld (ovl_last_x),a	; запомнить область (только на входе, не на каждом символе!)
-	push hl
-	push bc
-	ld c,0
-ovl_pf0:
-	ld a,(hl)
-	or a
-	jp z,ovl_pf0e
-	inc hl
-	inc c
-	jp ovl_pf0
-ovl_pf0e:
-	ld a,c
-	ld (ovl_last_len),a
-	pop bc
-	pop hl
-ovl_pf_loop:
+ovl_printf:			; HL = ASCIIZ, B = x, C = y — НЕПРОЗРАЧНО (drawChar движка, фон шрифта чёрный),
+ovl_pf_loop:			; как print_string3 -> drawCharFront оригинала
 	ld a,(hl)
 	or a
 	ret z
@@ -445,9 +427,9 @@ o_pass:		db "PASSWORD",0
 o_eng:		db "ENGLISH ",0
 o_mus:		db "MUSIC/FX",0
 ovl_credtab:	dw c_code,c_art,c_snd
-c_code:		db "CODE: UTOPIAN",0
+c_code:		db "  CODE: UTOPIAN ",0
 c_art:		db "ART: PAGANTIPACO",0
-c_snd:		db "SOUND: MCALBY",0
+c_snd:		db "  SOUND: MCALBY ",0
 
 ovl_txt_en:	dw t1e,t2e,t3e
 ovl_txt_es:	dw t1s,t2s,t3s
@@ -688,15 +670,10 @@ ovl_hex1:
 	sub 7			; 'A'..'F' -> 10..15
 	ret
 ; вернуть фон меню (строки 18..23) из копии в квазидиске
-ovl_clr19:			; затереть ТОЛЬКО прошлую надпись (её x и длину помним), а не всю строку
-	ld hl,vec_pc_reset	; строки 20..23 — область панели: у drawChar там кэш «по изменению»
+ovl_clr19:			; menu_cleancreditsattr оригинала: строка 23 забивается пробелами
+	ld hl,vec_pc_reset
 	call MB_CALL
-	ld a,(ovl_last_len)
-	or a
-	ret z
-	ld c,a
-	ld a,(ovl_last_x)
-	ld b,a
+	ld b,0
 ovl_c19:
 	push bc
 	ld a,' '
@@ -705,19 +682,16 @@ ovl_c19:
 	call MB_CALL
 	pop bc
 	inc b
-	dec c
+	ld a,b
+	cp 32
 	jp nz,ovl_c19
-	xor a
-	ld (ovl_last_len),a
 	ret
-ovl_last_x:	db 0
-ovl_last_len:	db 0
 ovl_pn:		db 0
 ovl_pch:	db 0
 ovl_pbuf:	ds 10
 ovl_pval:	ds 5
 ovl_p_ask_en:	db "PASSWORD:",0
-ovl_p_ok_en:	db "PASSWORD OK",0
+ovl_p_ok_en:	db "  PASSWORD OK  ",0
 ovl_p_bad_en:	db "INVALID PASSWORD",0
 	include "menu_ru.asm"
 	include "menu_stripes.asm"

@@ -775,42 +775,40 @@ mbw_line:
 	ld a,$80
 	ld (mb_wph0),a
 mbw_plane:
-	; сдвиг 32 байт строки одной плоскости
-	ld a,(mb_wdelta)
-	rlca			; знак в CY? (проверяем бит 7 отдельно)
+	; сдвиг строки на 1 пиксель. Крайний байт со стороны, откуда «приходит» пиксель, НЕ пишем —
+	; тогда край остаётся плоским (в оригинале VDP-копия его тоже не затирает).
 	ld a,(mb_wdelta)
 	and $80
 	jp nz,mbw_right
-	; --- влево: byte[i] = byte[i]<<1 | byte[i+1]>>7, идём от колонки 0 к 31 ---
+	; --- влево: идём справа налево, исходный правый сосед держим в B ---
 	ld a,(mb_wph0)
+	add a,31
 	ld d,a
 	ld a,(mb_wl)
 	ld e,a
-	ld a,32
-	ld (mb_wcol),a
-	; идём справа налево: байт соседа уже в B, лишнее чтение не нужно
+	ld h,d
+	ld l,e
+	ld b,(hl)		; крайний правый байт: только читаем
 	ld a,d
-	add a,31
+	dec a
 	ld d,a
-	ld b,0			; за правым краем — нули
+	ld a,31
+	ld (mb_wcol),a
 mbw_l1:
 	ld h,d
 	ld l,e
 	ld a,(hl)
-	ld c,a			; сохранить исходный байт (он сосед для следующего слева)
-	add a,a
+	ld c,a			; исходный байт — сосед для следующего слева
+	add a,a			; сдвиг влево
 	ld h,a
 	ld a,b
-	rlca			; старший бит правого соседа
+	rlca			; старший бит правого соседа -> младший
 	and 1
 	or h
-	ld h,a
-	ld a,b
-	ld b,c			; сосед для следующей итерации
-	ld a,h
 	ld h,d
 	ld l,e
 	ld (hl),a
+	ld b,c
 	ld a,d
 	dec a
 	ld d,a
@@ -819,41 +817,42 @@ mbw_l1:
 	ld (mb_wcol),a
 	jp nz,mbw_l1
 	jp mbw_pnext
-	; --- вправо: идём от колонки 31 к 0 ---
+	; --- вправо: идём слева направо, исходный левый сосед держим в B ---
 mbw_right:
 	ld a,(mb_wph0)
-	add a,31
 	ld d,a
 	ld a,(mb_wl)
 	ld e,a
-	ld c,32
+	ld h,d
+	ld l,e
+	ld b,(hl)		; крайний левый байт: только читаем
+	ld a,d
+	inc a
+	ld d,a
+	ld a,31
+	ld (mb_wcol),a
 mbw_r1:
 	ld h,d
 	ld l,e
 	ld a,(hl)
+	ld c,a
 	rrca
-	and $7F
-	ld b,a
-	ld a,c
-	cp 1
-	jp z,mbw_r2
-	ld a,d
-	sub 1
+	and $7F			; сдвиг вправо
 	ld h,a
-	ld l,e
-	ld a,(hl)
+	ld a,b
 	rrca
-	and $80
-	or b
-	ld b,a
-mbw_r2:
+	and $80			; младший бит левого соседа -> старший
+	or h
 	ld h,d
 	ld l,e
-	ld (hl),b
+	ld (hl),a
+	ld b,c
 	ld a,d
-	dec a
+	inc a
 	ld d,a
-	dec c
+	ld a,(mb_wcol)
+	dec a
+	ld (mb_wcol),a
 	jp nz,mbw_r1
 mbw_pnext:
 	ld a,(mb_wph0)
