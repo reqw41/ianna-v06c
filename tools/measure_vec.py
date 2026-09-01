@@ -65,7 +65,7 @@ def run(nframes):
                 cpu.ie=False; cpu.halted=False; cpu.push(cpu.pc); cpu.pc=0x38; delivered+=1
             else:
                 lost+=1; lost_at[fn(cpu.pc)]+=1
-HOLD=sym.get('vec_anim_debt')   # адаптивный темп анимации (может отсутствовать в старой сборке)
+HOLD=None
 def rd(a): return mem[a]
 ntick=[0]
 w=rv.Warmup(sym,keys); patched=False; started=False   # прогрев общий с run_vec (сообщение уровня снимается автоматически)

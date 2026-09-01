@@ -82,8 +82,6 @@ vec_pc_meter:	ds 64		; шкалы draw_meter по колонке: [0] Y цвет
 vec_key_hook:	dw 0		; экран пароля: ISR зовёт этот сканер (0 = не звать)
 vec_key:	db 0		; ASCII нажатой клавиши (0 = ничего)
 vec_ovl_tgt:	dw 0		; адрес функции движка для vec_ovl_call (оверлей паузы)
-vec_tick_fc:	db 0		; FrameCounter на начало прошлого тика (темп анимации, vec_anim.asm)
-vec_anim_debt:	db 0		; накопленный долг по кадрам: >= VEC_DEBT_ON — анимируем вчетверо реже
 vec_in_game:	db 0		; 1 = идёт game (ISR разрешает выход по СТОП)
 vec_pal_dirty:	db 1		; палитра: записать в ISR (старт / смена)
 vec_zsave:	ds 8		; z_ix..z_ret на время плеера в ISR		; сохранение z_ix..z_hl2 на время плеера в ISR
