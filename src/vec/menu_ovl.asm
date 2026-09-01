@@ -299,7 +299,28 @@ ovl_tab3:			; HL = таблица dw, A = индекс -> HL = элемент
 	ld l,a
 	ret
 ovl_printf:			; HL = ASCIIZ, B = x, C = y — НЕПРОЗРАЧНО (drawChar движка, фон шрифта чёрный):
-	ld a,(hl)		; так печатает нижнюю строку оригинал (print_string3 -> drawCharFront)
+	ld a,c			; так печатает нижнюю строку оригинал (print_string3 -> drawCharFront)
+	cp 23
+	jp nz,ovl_pf_loop
+	ld a,b
+	ld (ovl_last_x),a	; запомнить область (только на входе, не на каждом символе!)
+	push hl
+	push bc
+	ld c,0
+ovl_pf0:
+	ld a,(hl)
+	or a
+	jp z,ovl_pf0e
+	inc hl
+	inc c
+	jp ovl_pf0
+ovl_pf0e:
+	ld a,c
+	ld (ovl_last_len),a
+	pop bc
+	pop hl
+ovl_pf_loop:
+	ld a,(hl)
 	or a
 	ret z
 	push hl
@@ -310,7 +331,7 @@ ovl_printf:			; HL = ASCIIZ, B = x, C = y — НЕПРОЗРАЧНО (drawChar �
 	pop hl
 	inc hl
 	inc b
-	jp ovl_printf
+	jp ovl_pf_loop
 
 ovl_print_c:			; HL = ASCIIZ, C = строка: печать по центру экрана (32 колонки)
 	push hl
@@ -438,6 +459,8 @@ t3e: db "TUKARAM BROUGHT PEACE TO OUR LANDS, AND HIS LINEAGE WAS BLESSED AS SERV
 ; формат (menu.asm): [0] младший ниббл = уровень, биты 7..4 = доступное оружие; [1] уровень героя;
 ; [2] опыт; [3] текущее оружие; [4] контрольная сумма (сумма [0..3]). Байты 0..3 хранятся XOR $55.
 ovl_pass:
+	ld hl,MB_KEY		; включить сканер клавиатуры в ISR (VBlank)
+	ld (vec_key_hook),hl
 	call ovl_clr19
 	ld hl,ovl_p_ask_en
 	ld a,(language)
@@ -462,7 +485,7 @@ ovl_p2:
 ovl_p_loop:
 	ei
 	halt
-	call MB_KEY
+	ld a,(vec_key)		; клавишу читает ISR (хук) — сканировать посреди кадра нельзя: дёргается скролл
 	or a
 	jp z,ovl_p_loop
 	cp 13
@@ -490,7 +513,7 @@ ovl_p_loop:
 ovl_p_wrel:
 	ei
 	halt
-	call MB_KEY
+	ld a,(vec_key)
 	or a
 	jp nz,ovl_p_wrel
 	ret
@@ -607,6 +630,10 @@ ovl_p_wp1:
 	jp nz,ovl_p_okp
 	ld hl,p_ok_es
 ovl_p_okp:
+	push hl
+	ld hl,0
+	ld (vec_key_hook),hl	; сканер больше не нужен
+	pop hl
 	call ovl_p_msg
 	jp ovl_start		; пароль принят — в игру
 ovl_p_fail:
@@ -616,6 +643,10 @@ ovl_p_fail:
 	jp nz,ovl_p_badp
 	ld hl,p_bad_es
 ovl_p_badp:
+	push hl
+	ld hl,0
+	ld (vec_key_hook),hl	; сканер больше не нужен
+	pop hl
 	call ovl_p_msg
 	call ovl_options	; вернуть пункты
 	call ovl_credit		; и кредиты вместо сообщения
@@ -657,10 +688,15 @@ ovl_hex1:
 	sub 7			; 'A'..'F' -> 10..15
 	ret
 ; вернуть фон меню (строки 18..23) из копии в квазидиске
-ovl_clr19:			; как menu_cleancreditsattr: строка 23 забивается пробелами (чёрным)
-	ld hl,vec_pc_reset	; строки 20..23 — область панели: у drawChar там кэш «по изменению»,
-	call MB_CALL		; из-за него повторная печать пропускалась бы
-	ld b,0
+ovl_clr19:			; затереть ТОЛЬКО прошлую надпись (её x и длину помним), а не всю строку
+	ld hl,vec_pc_reset	; строки 20..23 — область панели: у drawChar там кэш «по изменению»
+	call MB_CALL
+	ld a,(ovl_last_len)
+	or a
+	ret z
+	ld c,a
+	ld a,(ovl_last_x)
+	ld b,a
 ovl_c19:
 	push bc
 	ld a,' '
@@ -669,10 +705,13 @@ ovl_c19:
 	call MB_CALL
 	pop bc
 	inc b
-	ld a,b
-	cp 32
+	dec c
 	jp nz,ovl_c19
+	xor a
+	ld (ovl_last_len),a
 	ret
+ovl_last_x:	db 0
+ovl_last_len:	db 0
 ovl_pn:		db 0
 ovl_pch:	db 0
 ovl_pbuf:	ds 10

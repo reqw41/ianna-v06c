@@ -43,6 +43,14 @@ isr_nopal:
 	; --- клавиатура -> joystick_state (биты: 0 up,1 down,2 left,3 right,4 fire,5 fire2) ---
 	call get_joystick
 	ld (joystick_state),a
+	; хук клавиатуры (экран пароля): сканирование только здесь, в VBlank — порт $03 это ещё и
+	; вертикальный скролл, дёргать его посреди кадра нельзя (картинка подпрыгивает)
+	ld hl,(vec_key_hook)
+	ld a,h
+	or l
+	jp z,isr_nokey
+	call isr_hook_call
+isr_nokey:
 	; --- счётчик кадров без перерисовки ---
 	ld a,(frames_noredraw)
 	inc a
@@ -170,6 +178,9 @@ gj_5:
 gj_6:
 	ld a,c
 	ret
+
+isr_hook_call:
+	jp (hl)
 
 ; get_keyboard: HL = код клавиши MSX -> A != 0, если клавиша нажата.
 ; Поддержаны H (меню паузы оригинала) и J (джукбокс): ряд 5 матрицы Вектора = H I J K L M N O.

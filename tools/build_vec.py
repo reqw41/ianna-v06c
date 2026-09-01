@@ -288,7 +288,7 @@ def build_menu_bins(lst):
             'vec_ovl_call', 'vec_ovl_tgt', 'get_keyboard', 'inventory', 'inv_current_object',
             'force_inv_redraw', 'draw_weapon', 'RedrawScreen', 'InvalidateTiles', 'RedrawAllSprites',
             'FX_Play', 'get_entity_max_energy', 'remove_object_from_inventory', 'player_dead',
-            'ENTITY_PLAYER_POINTER', 'z_iy', 'vec_palette', 'vec_pc_reset']
+            'ENTITY_PLAYER_POINTER', 'z_iy', 'vec_palette', 'vec_pc_reset', 'vec_key', 'vec_key_hook']
     syms = {}
     for line in lst.split('\n'):
         m = re.match(r'^([A-Za-z_][\w.]*)\s+=\s+\$([0-9A-F]{4})', line)

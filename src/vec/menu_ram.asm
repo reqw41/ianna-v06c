@@ -13,7 +13,7 @@ mb_screen:	jp mb_screen_w	; экран меню с дискеты -> VRAM (24К,
 mb_slide:	jp mb_slide_w	; A = 0..4: слайд с дискеты -> VRAM; NZ = дисковода нет
 mb_song:	jp mb_song_w	; A = 0 меню / 1 интро / 2 вернуть уровень: песня -> $C980 (стр.3)
 mb_savelvl:	jp mb_savelvl_w	; песню уровня из $C980 -> страница 2 $E000 (перед меню)
-mb_key:		jp mb_key_i	; A = ASCII нажатой клавиши ('0'-'9','A'-'F',13=ВК) или 0
+mb_key:		jp mb_key_i	; ISR-хук: ASCII нажатой клавиши -> vec_key (0 = ничего)
 mb_chr:		jp mb_chr_w	; A = код, B = колонка, C = строка: ПРОЗРАЧНАЯ печать (фон просвечивает)
 mb_vsave:	jp mb_vsave_w	; B = кол., C = стр., D = колонок, E = строк, A = слот (0/1): VRAM -> квазидиск
 mb_vrest:	jp mb_vrest_w	; те же параметры: квазидиск -> VRAM (вернуть фон)
@@ -344,7 +344,6 @@ mb_ctl:		db $34
 ; --- клавиатура: матрица Вектора (порт $03 = ряд активным нулём, порт $02 = столбцы активным нулём) ---
 ; ряд 2: цифры 0..7; ряд 3: 8,9 (биты 0,1); ряд 4: A..F (биты 1..6); ряд 0: ВК (бит 2)
 mb_key_i:
-	di
 	ld a,$82		; порт B ППИ -> вход (иначе in($02) отдаёт защёлку)
 	out ($00),a
 	ld hl,mb_keytab
@@ -376,22 +375,19 @@ mbk_bit:
 mbk_found:
 	ld a,c
 	add a,b
-	ld c,a
-	call mb_kbd_restore
-	ld a,c
-	ret
+	ld (vec_key),a
+	jp mb_kbd_restore
 mbk_none:
-	call mb_kbd_restore
 	xor a
-	ret
-mb_kbd_restore:
+	ld (vec_key),a
+	jp mb_kbd_restore
+mb_kbd_restore:			; вызывается из ISR — прерывания трогать нельзя
 	ld a,$80		; порт B -> выход (как держит движок)
 	out ($00),a
 	xor a
 	out ($02),a		; режим 256 точек
 	ld a,$FF
 	out ($03),a		; вернуть вертикальный скролл!
-	ei
 	ret
 mb_keytab:				; маска ряда, маска бит, код бита 0
 	db $FB,$FF,'0'			; ряд 2: 0..7
