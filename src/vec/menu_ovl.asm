@@ -42,12 +42,6 @@ ovl_cp:
 	call ovl_light
 	pop af
 	jp nz,ovl_start		; дисковода нет (стенд) — сразу в игру
-	ld a,1			; слот 1: фон нижней строки (кредиты / пароль)
-	ld b,0
-	ld c,23
-	ld d,32
-	ld e,1
-	call MB_VSAVE
 	xor a
 	ld (ovl_opt),a
 	ld (ovl_cred),a
@@ -283,14 +277,9 @@ ovl_palapply:
 	ret
 ovl_palsave:	ds 16
 
-ovl_credit:			; текущая строка кредитов (строка 23)
+ovl_credit:			; текущая строка титров (строка 23)
 	push af
-	ld a,1
-	ld b,0
-	ld c,23
-	ld d,32
-	ld e,1
-	call MB_VREST		; вернуть фон нижней строки
+	call ovl_clr19		; затереть прошлую строку, как в оригинале
 	ld a,(ovl_cred)
 	ld hl,ovl_credtab
 	call ovl_tab3
@@ -309,6 +298,20 @@ ovl_tab3:			; HL = таблица dw, A = индекс -> HL = элемент
 	ld h,(hl)
 	ld l,a
 	ret
+ovl_printf:			; HL = ASCIIZ, B = x, C = y — НЕПРОЗРАЧНО (drawChar движка, фон шрифта чёрный):
+	ld a,(hl)		; так печатает нижнюю строку оригинал (print_string3 -> drawCharFront)
+	or a
+	ret z
+	push hl
+	push bc
+	ld hl,drawChar
+	call MB_CALL
+	pop bc
+	pop hl
+	inc hl
+	inc b
+	jp ovl_printf
+
 ovl_print_c:			; HL = ASCIIZ, C = строка: печать по центру экрана (32 колонки)
 	push hl
 	ld b,0
@@ -326,7 +329,7 @@ ovl_pc2:
 	and $7F			; (32 - длина) / 2
 	ld b,a
 	pop hl
-	jp ovl_print
+	jp ovl_printf		; нижняя строка — непрозрачно, как в оригинале
 
 ovl_print:			; HL = ASCIIZ, B = x, C = y
 	ld a,(hl)
@@ -444,7 +447,7 @@ ovl_pass:
 ovl_p1:
 	ld b,7			; «ПАРОЛЬ:» + пробел + 10 знаков = 18 -> с колонки 7 (по центру)
 	ld c,23
-	call ovl_print
+	call ovl_printf
 	; буфер = 10 пробелов
 	ld hl,ovl_pbuf
 	ld b,10
@@ -654,13 +657,21 @@ ovl_hex1:
 	sub 7			; 'A'..'F' -> 10..15
 	ret
 ; вернуть фон меню (строки 18..23) из копии в квазидиске
-ovl_clr19:
-	ld a,1
+ovl_clr19:			; как menu_cleancreditsattr: строка 23 забивается пробелами (чёрным)
+	ld hl,vec_pc_reset	; строки 20..23 — область панели: у drawChar там кэш «по изменению»,
+	call MB_CALL		; из-за него повторная печать пропускалась бы
 	ld b,0
+ovl_c19:
+	push bc
+	ld a,' '
 	ld c,23
-	ld d,32
-	ld e,1
-	call MB_VREST		; фон нижней строки — под приглашение/сообщение пароля
+	ld hl,drawChar
+	call MB_CALL
+	pop bc
+	inc b
+	ld a,b
+	cp 32
+	jp nz,ovl_c19
 	ret
 ovl_pn:		db 0
 ovl_pch:	db 0
