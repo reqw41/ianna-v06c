@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Профиль headless-прогона: инструкции по функциям (метки из build/ianna_vec.lst).
-python3 tools/profile_vec.py [frames_run=300]  — ждём сообщение, Z, бег вправо."""
+"""Профиль headless-прогона: такты по функциям (метки из build/ianna_vec.lst).
+python3 tools/profile_vec.py [frames_run=300] [--start=X,Y] [--still]  — ждём сообщение, Z, бег вправо.
+--start выбирает экран уровня (как в measure_vec), --still — без бега (стоим на месте)."""
 import os, sys, re, bisect, collections, pathlib
+OPTS=[a for a in sys.argv[1:] if a.startswith('--')]
+START=next((tuple(int(v) for v in o[8:].split(',')) for o in OPTS if o.startswith('--start=')),None)
+STILL='--still' in OPTS
 sys.argv = [sys.argv[0]]  # run_vec разбирает argv
 sys.path.insert(0, 'tools')
 import run_vec as rv
@@ -47,8 +51,9 @@ CYC[0x76]=_vec_cycles(7,0)
 keys = []
 cpu = rv.make_cpu(keys)
 sym = rv.load_syms(pathlib.Path('build/ianna_vec.lst'))
+if START: rv.START = START
 rv.start_game(cpu, keys, sym)
-keys.append('right')
+if not STILL: keys.append('right')
 cnt = collections.Counter(); total = 0; per_frame = []
 WATCH = ['RedrawScreen','drawTile','drawFGTile','drawSprite','drawChar','fillArea','draw_barbarian_state','draw_enemy_state','draw_score_status','z_exx','Div16_8','vec_pool_flush','LoadScreen','InvalidateSTiles','AnimateSTiles','RunScripts','CheckSprOverlap']
 ent = {}

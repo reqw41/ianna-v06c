@@ -986,7 +986,7 @@ ds_row:
 	ld a,h
 	add a,$20
 	ld h,a
-    if C8
+    if C8+SPR3
 	pop de			; E = 0, D = пропуск (пустых строк выше)
 	ld a,h
 	sub $60			; указатель уже шагнул за 3-ю плоскость (+$60)
@@ -1094,7 +1094,7 @@ dsm_row:
 	ld e,(hl)
 	ld l,d
 	ld d,(hl)
-    if C8
+    if C8+SPR3
 	pop bc			; C = 0, B = пропуск
 	ld hl,(vec_spr_dst)
 	ld a,h
@@ -1358,7 +1358,7 @@ dsp_row:
 	ld a,l
 	add a,32
 	ld l,a
-    if C8
+    if C8+SPR3
 	pop de			; E = 0 (заполнитель), D = пропуск
 	ld a,l
 	sub 96+1		; указатель уже шагнул за 3-ю плоскость (+96) — назад на плоскость 0 и строкой выше
@@ -1501,7 +1501,7 @@ dspm_n_ok:
 	ex de,hl
 	ld (vec_spr_dst),hl
 	ld a,b
-    if C8
+    if C8+SPR3
 	add a,b
 	add a,2
     else
@@ -1534,7 +1534,7 @@ dspm_row:
 	ld e,(hl)
 	ld l,d
 	ld d,(hl)
-    if C8
+    if C8+SPR3
 	pop bc			; C = 0, B = пропуск
 	ld hl,(vec_spr_dst)
 	ld a,l
