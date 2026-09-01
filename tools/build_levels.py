@@ -57,3 +57,9 @@ if __name__ == '__main__':
         total += size
         print(f'уровень {n}: {path.name} {size:6d} Б ({size/1024:5.1f} КБ, {(size+10239)//10240} дорожек)')
     print(f'итого {total/1024:.1f} КБ на {len(levels)} уровней; дискета 800 КБ')
+    # ВАЖНО: build_edd уровнезависим — он же генерирует gen_data.asm (палитра, таблица банков, LUT
+    # передних тайлов), которую вкомпилировали в ROM. После цикла по уровням gen_data остаётся от
+    # ПОСЛЕДНЕГО уровня, и ROM, собранный после этого, будет ссылаться на чужие адреса банков
+    # (герой в прыжке рисовался скелетом). Восстанавливаем состояние для уровня 1.
+    subprocess.run([sys.executable, str(ROOT / 'tools/data/build_edd.py')], capture_output=True, cwd=str(ROOT))
+    print('gen_data.asm и build/ianna.edd восстановлены для уровня 1')

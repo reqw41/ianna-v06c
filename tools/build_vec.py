@@ -226,6 +226,15 @@ def main():
         translate(TR / 'arkos_src.asm', TR / 'arkos.asm')
     translate(TR / 'vars_src.asm', TR / 'vars.asm')
     data = ROOT / ('build/demo_data.asm' if DEMO else 'build/gen_data.asm')
+    if not DEMO and data.exists():
+        # сторож рассинхрона: gen_data.asm (таблица банков) обязан соответствовать build/ianna.edd,
+        # иначе движок читает спрайты по чужим адресам — ловилось как «герой в прыжке стал скелетом»
+        import re as _re
+        m = _re.search(r'^; сгенерировано build_edd\.py.*$', data.read_text(), _re.M)
+        edd = ROOT / 'build/ianna.edd'
+        if edd.exists() and edd.stat().st_mtime > data.stat().st_mtime + 1:
+            print('ВНИМАНИЕ: build/ianna.edd новее gen_data.asm — соберите их одной командой '
+                  '(python3 tools/data/build_edd.py), иначе таблица банков не совпадёт с набором')
     order = [VEC / 'vec_boot.asm', TR / 'vdp_consts.asm']
     if DEMO:
         order.append(data)              # org $0200
