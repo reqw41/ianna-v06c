@@ -86,6 +86,12 @@ def slice_ianna():
         old = 'LEVEL_OFFSET: dw $8000, $8000'
         assert old in text
         text = text.replace(old, 'LEVEL_OFFSET: dw DEMO_LEVEL_ADDR, $8000')
+    # ВЕКТОР: плеер выводит все 14 регистров AY из теневых ячеек, а песня уровня шум и огибающую
+    # не задаёт — после меню/интро их значения тянулись бы в игру (шипение). Гасим сразу после MUSIC_Load.
+    old = '\tld a, (current_level)\n\tcall MUSIC_Load\n'
+    assert old in text, 'MUSIC_Load в game'
+    text = text.replace(old, old + '\txor a\t; ВЕКТОР: сбросить шум и огибающую от песни меню/интро\n'
+                                   '\tld (_atVAR_Reg6), a\n\tld (_atVAR_Reg11), a\n\tld (_atVAR_Reg12), a\n')
     (TR / 'ianna_main_src.asm').write_text(text)
 
 def make_score_font():
@@ -286,7 +292,7 @@ def main():
 
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
-    need = ['drawChar', 'fillArea', 'MUSIC_Load', 'language', 'joystick_state', 'music_playing',
+    need = ['drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', '_atVAR_Reg6', '_atVAR_Reg11', '_atVAR_Reg12', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
             'get_player_max_exp',

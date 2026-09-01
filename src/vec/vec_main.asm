@@ -51,7 +51,7 @@ vec_start:
 	ld (player_dead),a
 	ei
     if !DEMO
-	call vec_menu_phase	; меню/интро (оверлей в окне квазидиска; без дисковода — сразу игра)
+	call vec_menu_phase	; меню/интро (оверлей в окне квазидиска; без дисковода — сразу игра) (оверлей в окне квазидиска; без дисковода — сразу игра)
     endif
 	; ---- begin_level (ianna.asm), без интро/музыки ----
 vec_begin_level:

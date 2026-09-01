@@ -127,7 +127,9 @@ ovl_sl:
 	ld a,(ovl_slide)
 	call ovl_dark
 	call MB_SLIDE
+	push af			; ovl_light портит флаги — результат загрузки сохраняем
 	call ovl_light
+	pop af
 	jp nz,ovl_go		; дисковода нет — без слайдов
 	; текст слайда (по языку)
 	ld a,(ovl_slide)
@@ -150,6 +152,10 @@ ovl_sl1:
 	cp 3
 	jp nz,ovl_sl
 ovl_go:
+	ld hl,MUSIC_Stop	; заглушить AY
+	call MB_CALL
+	ld hl,MUSIC_Init
+	call MB_CALL
 	ld a,2
 	call MB_SONG		; вернуть песню уровня
 	ld hl,cls
