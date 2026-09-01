@@ -248,7 +248,13 @@ def main():
     parts = [f'DEMO\tequ {1 if DEMO else 0}\n']
     for f in order:
         parts.append(f'\n; ======== {f.name} ========\n')
-        parts.append(f.read_text(encoding='utf-8', errors='replace'))
+        body = f.read_text(encoding='utf-8', errors='replace')
+        # vec_vars держит место под загрузчик уровня (поверх rev256/slot_tab) — тело подставляем здесь,
+        # чтобы правки в vec_fdd.asm не пропадали (раньше там лежала копия и молча устаревала)
+        if '; @@INCLUDE vec_fdd.asm' in body:
+            inc = (VEC / 'vec_fdd.asm').read_text(encoding='utf-8', errors='replace')
+            body = body.replace('; @@INCLUDE vec_fdd.asm', inc)
+        parts.append(body)
     name = 'ianna_demo' if DEMO else 'ianna'
     (ROOT / f'build/{name}_vec.asm').write_text(''.join(parts))
     r = run([str(ZASM), '--8080', '-uwy', f'{name}_vec.asm', f'{name}_vec.lst', f'{name}.rom'], cwd=ROOT / 'build')
