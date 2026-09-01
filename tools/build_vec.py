@@ -19,7 +19,8 @@ TRANS = ROOT / 'tools/z80to8080.py'
 OVR = ROOT / 'tools/overrides.py'
 DEMO = '--demo' in sys.argv
 C8 = '--colors8' in sys.argv        # 8 цветов: 3 плоскости; данные готовит build_edd --colors8
-SPR3 = os.environ.get('IANNA_SPR3') == '1'   # верхняя оценка выигрыша от отказа от 4-й плоскости у спрайтов
+SPR3 = os.environ.get('IANNA_SPR3') == '1'
+SPR3CLR = os.environ.get('IANNA_SPR3CLR') == '1'  # плоскость 3 у спрайтов только чистится (законный вариант для 3-плоскостного спрайта)   # верхняя оценка выигрыша от отказа от 4-й плоскости у спрайтов
 VI53 = '--softbudget' not in sys.argv  # бюджет по счётчику 0 ВИ53 (каналы 1-2 свободны под музыку); --softbudget = старый программный
 sys.path.insert(0, str(ROOT / 'tools/data'))
 from build_edd import STRING_AREA_KVAZ, STRING_AREA_DEMO, STRING_AREA_C8
@@ -187,6 +188,7 @@ def main():
     TR.mkdir(parents=True, exist_ok=True)
     slice_ianna(); make_vars(); make_score_font(); make_music()
     (TR / 'vdp_consts.asm').write_text('; константы из vdp.asm/sprites.asm/music.asm/input.asm\n' + f'C8\tequ {1 if C8 else 0}\t; 8 цветов (3 плоскости)\n'
+                                     f'SPR3CLR\tequ {1 if SPR3CLR else 0}\t; спрайт трёхплоскостной: плоскость 3 чистим маской, данных нет\n'
                                      f'SPR3\tequ {1 if SPR3 else 0}\t; ЗАМЕРНЫЙ режим: спрайты не пишут плоскость 3 (картинка неверна — под спрайтом остаются старшие биты фона)\n'
                                      f'VI53\tequ {1 if VI53 else 0}\t; бюджет по счётчику 0 ВИ53\n' + consts_from('vdp.asm') + consts_from('sprites.asm') + consts_from('music.asm') + consts_from('input.asm'))
     # ВЕКТОР: цепочка пересечений спрайтов — нативно (src/vec/overlap_hot.asm) вместо перевода

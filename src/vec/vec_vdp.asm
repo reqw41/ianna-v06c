@@ -995,7 +995,9 @@ ds_row:
 	pop de			; E = p3, D = пропуск (пустых строк выше)
 	ld a,b
 	and (hl)
-	or e
+      if !SPR3CLR
+	or e			; SPR3CLR: спрайт трёхплоскостной — плоскость 3 только чистим по маске
+      endif
 	ld (hl),a
 	ld a,h
 	sub $60
@@ -1366,7 +1368,9 @@ dsp_row:
 	pop de			; E = p3, D = пропуск
 	ld a,b
 	and (hl)
-	or e
+      if !SPR3CLR
+	or e			; SPR3CLR: плоскость 3 только чистим
+      endif
 	ld (hl),a
 	ld a,l
 	sub 96+1		; назад на плоскость 0 и строкой выше
@@ -1554,7 +1558,9 @@ dspm_row:
 	ld l,a			; плоскость 3
 	ld a,(vec_spr_mask)
 	and (hl)
-	or c
+      if !SPR3CLR
+	or c			; SPR3CLR: плоскость 3 только чистим
+      endif
 	ld (hl),a
 	ld a,l
 	sub 32

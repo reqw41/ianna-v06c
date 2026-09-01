@@ -19,6 +19,7 @@ build_edd.py — данные для Ianna/Вектор.
       маска считается на лету = ~(p0|p1|p2|p3). Адрес кадра MSX ($8000+n*384) -> база + n*384.
   Плоскость p несёт бит (3-p) цвета: индекс палитры Вектора == цвет MSX.
 """
+import os
 import sys, re, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 # Режим цвета: None = 16 цветов (4 плоскости); 'c8' = 8 цветов, 3 плоскости (VRAM $A000/$C000/$E000,
@@ -211,9 +212,31 @@ def bank_tab_lines(banks):
 
 def palette_lines():
     pal = msx_palette((SRC / 'test.plt').read_bytes())
+    if not C8MODE:
+        out = list(pal)                      # регистры едут вместе с номерами: цвет остаётся прежним
+        for c in range(16):
+            out[PERM[c]] = pal[c]
+        pal = out
     return ['vec_palette:', '\tdb ' + ', '.join(f'${c:02X}' for c in pal)]
 
 BANK_ENEMY = {7:20, 8:21, 9:22, 10:23, 11:26, 12:24, 13:25, 14:27, 15:27, 16:28, 17:28, 18:29, 19:29, 20:30, 21:30}
+
+# Перестановка номеров цветов (индекс -> индекс). Цвета НЕ меняются: одновременно переставляются
+# регистры палитры, поэтому картинка не меняется ни на точку. Смысл — загнать все цвета выбранного
+# врага в младшие восемь номеров, чтобы его спрайт не занимал четвёртую плоскость Вектора.
+# Мумия (банк 9) красится в 1,3,6,7,11,13 — переносим 11 и 13 вниз, меняя местами с 5 и 2.
+# Ограничение: одновременно уложить можно только тех врагов, чьи цвета в сумме дают <= 7 ненулевых
+# (мумия и камень порознь укладываются, вместе — восемь цветов, уже нет).
+COLOR_SWAPS = [] if os.environ.get('IANNA_NOPERM') == '1' else [(11, 5), (13, 2)]
+
+def color_perm():
+    p = list(range(16))
+    for a, b in COLOR_SWAPS:
+        p[a], p[b] = p[b], p[a]
+    return p
+
+PERM = color_perm()
+
 def build_kvaz(level_no=1, start=None):
     pages = [bytearray(65536) for _ in range(4)]
     banks = LEVEL_BANKS[level_no]
@@ -227,8 +250,8 @@ def build_kvaz(level_no=1, start=None):
             pal7 = c8x.SLOT_RGB + [ident]          # слоты 0..6; слот 7 врагу не даём (меняется по экранам)
             return [0] + [c8x.nearest(msx16[c], pal7) for c in range(1, 16)]
     else:
-        pm_tiles = pm_panel = None; scrpals = None
-        def bank_pmap(bank): return None
+        pm_tiles = pm_panel = PERM; scrpals = None
+        def bank_pmap(bank): return PERM
     sr5 = pletter_depack((SRC / f'tiles_nivel{level_no:02d}.SR5.plet1').read_bytes())
     assert len(sr5) == 32768
     # Раскладка (кадры спрайтов по 576 Б, банки по 41 кадру = 23616 Б; см. vec_bank_tab в vec_vdp.asm):
