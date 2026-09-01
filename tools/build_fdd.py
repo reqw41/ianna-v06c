@@ -14,7 +14,7 @@
 (aPLib, блоками по 8 КБ). Дорожку начала каждого набора прошиваем прямо в ROM (таблица vfl_dirtab
 из vec_fdd.asm) — тогда загрузчику не нужно отдельное чтение каталога.
 """
-import pathlib, re, sys
+import pathlib, re, sys, json, hashlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SEC = 1024
 TRACK = 10 * SEC
@@ -22,6 +22,28 @@ LEVEL_TRACKS = list(range(4, 40)) + list(range(64, 80))
 
 rom = bytearray((ROOT / 'build/ianna.rom').read_bytes())
 assert len(rom) <= 32 * 1024 - 0x80
+
+def check_overlays(n, pak):
+    """Оверлеи меню и паузы лежат В КВАЗИДИСКЕ, то есть внутри набора уровня, и вызывают функции
+    движка по адресам той сборки ROM, при которой собраны. Пересобрал ROM, не пересобрав наборы —
+    оверлей уходит по чужим адресам, игра срывается сразу после загрузки, экран остаётся чёрным
+    (ловилось вживую: меню не появлялось, FrameCounter замирал, PC гулял по случайным адресам).
+    Отпечаток пишет build_levels.py рядом с набором."""
+    meta = pak.with_suffix('.ovl')
+    now = {}
+    for name in ('menu_ovl.bin', 'pause_ovl.bin', 'menu_ram.bin'):
+        f = ROOT / 'build' / name
+        if f.exists():
+            now[name] = hashlib.md5(f.read_bytes()).hexdigest()
+    if not meta.exists():
+        sys.exit(f'!! у набора уровня {n} нет отпечатка оверлеев — пересоберите: python3 tools/build_levels.py')
+    was = json.loads(meta.read_text())
+    if was != now:
+        bad = [k for k in now if was.get(k) != now[k]]
+        sys.exit(f'!! набор уровня {n} собран с другими оверлеями ({", ".join(bad)}): в квазидиске окажется '
+                 f'меню от прежней сборки ROM и игра сорвётся после загрузки.\n'
+                 f'   Порядок: python3 tools/build_vec.py && python3 tools/build_levels.py && '
+                 f'python3 tools/build_vec.py && python3 tools/build_fdd.py')
 
 # --- разложить наборы уровней и собрать таблицу дорожек ---
 dirtab = bytearray(16)
@@ -32,6 +54,7 @@ for n in range(1, 17):
     pak = ROOT / f'build/levels/level{n}.pak'
     if not pak.exists(): continue
     data = pak.read_bytes()
+    check_overlays(n, pak)
     ntr = (len(data) + TRACK - 1) // TRACK
     start = None
     for i in range(len(free) - ntr + 1):

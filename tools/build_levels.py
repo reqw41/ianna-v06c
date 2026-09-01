@@ -11,7 +11,7 @@
 
 Использование: build_levels.py [номера уровней]   (по умолчанию — все, для которых есть LEVEL_BANKS)
 """
-import pathlib, subprocess, sys
+import pathlib, subprocess, sys, hashlib, json
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools/data'))
@@ -46,7 +46,19 @@ def build_level(n):
         body += blob
     out = OUT / f'level{n}.pak'
     out.write_bytes(bytes(table) + bytes(body))
+    # Отпечаток оверлеев, попавших в набор. Оверлеи меню и паузы живут В КВАЗИДИСКЕ и зовут функции
+    # движка по адресам ТОЙ сборки ROM, при которой собраны. Пересобрал ROM, не пересобрав наборы —
+    # оверлей уходит по чужим адресам, и игра срывается сразу после загрузки (экран чёрный).
+    out.with_suffix('.ovl').write_text(json.dumps(overlay_digest(), indent=1))
     return out, len(table) + len(body)
+
+def overlay_digest():
+    d = {}
+    for name in ('menu_ovl.bin', 'pause_ovl.bin', 'menu_ram.bin'):
+        f = ROOT / 'build' / name
+        if f.exists():
+            d[name] = hashlib.md5(f.read_bytes()).hexdigest()
+    return d
 
 if __name__ == '__main__':
     from build_edd import LEVEL_BANKS
