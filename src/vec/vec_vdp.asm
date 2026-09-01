@@ -902,6 +902,7 @@ drawSprite:
 	ld (vec_spr_hcol),a
 	pop af
 	ld (vec_spr_dir),a
+	call vec_mirror_src	; ВЕКТОР: готовая зеркальная копия кадра вместо разворота на лету
 	; бюджет по колонкам, калибровка по стенду (calib: реальные такты между вызовами бюджета, сцена с големом):
 	; прямой через пул медиана 1.35 ед./строку (p90 1.7) -> NY + NY/2 + 5; зеркальный 2.25 (p90 2.4) -> 2*NY + NY/4 + 5
 	push de
@@ -936,6 +937,9 @@ ds_cost:
     endif
 ds_direct:
 	ld a,(vec_spr_dir)
+    if NOMIRROR
+	xor a			; ЗАМЕР: см. выше
+    endif
 	or a
 	jp nz,drawSprite_mirror
 	ld a,3
@@ -1252,6 +1256,9 @@ vss_no:
 ; адрес = $A000 + slot*128 + (cx&1)*16 + (row&15); плоскости +32 (в пределах страницы).
 drawSprite_pool:
 	ld a,(vec_spr_dir)
+    if NOMIRROR
+	xor a			; ЗАМЕР: зеркало отключено — оценка потолка для кеша развёрнутых кадров
+    endif
 	or a
 	jp nz,dsp_mirror
 	ld a,3
