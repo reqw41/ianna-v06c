@@ -593,12 +593,18 @@ drawFGTile:
 	ld a,31 - C8*6		; FG: 16ц медиана 29-30 / c8 24.4 (calib)
 	call vec_budget
 	pop af
-	ld l,a
-	ld h,fg_tile_lut/256
+	ld hl,fg_tile_pairs	; передних тайлов дюжина — ищем перебором пар, таблица на 256 Б не окупалась
+	ld b,FG_LUT_N
+dft_find:
+	cp (hl)
+	inc hl
+	jp z,dft_found
+	inc hl
+	dec b
+	jp nz,dft_find
+	jp dft_exit
+dft_found:
 	ld a,(hl)
-	or a
-	jp z,dft_exit
-	dec a
 	add a,FG_TILES_BASE/256
 	ld h,a
 	ld l,0
