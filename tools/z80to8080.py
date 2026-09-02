@@ -234,6 +234,29 @@ def flags_dead_after(lines,i):
         if writes_flags(L.op,L.args): return True
     return False
 
+# ------------------------------------------------- инлайн адреса (ix+d)/(iy+d)
+# Хелперы z_ix_* стоят дорого: сам call (24 такта) плюс у «db d»-хелперов ещё
+# ~100 тактов возни с адресом возврата (ex (sp),hl / z_ret / ex (sp),hl).
+# Если d — константа, адрес считается на месте: ld hl,(z_ix) + inc hl * d.
+# Такая последовательность НЕ трогает ни A, ни флаги — точная замена хелперу.
+# Цена в байтах: 3 + |d| вместо «call+db» (4 Б) или «ld a,d + call» (5 Б),
+# поэтому инлайним только малые d (политика IDX_INLINE, потолок по классам).
+IDX_INLINE = {'rda':-1, 'rd_r':-1, 'rd_hl':-1, 'sta':-1, 'st_r':-1, 'st_hl':-1,
+              'stn':-1, 'addr':1}
+
+def const_d(d):
+    """смещение (ix+d) как число, если это константа; иначе None"""
+    s=d.strip(); neg=False
+    if s.startswith('-(') and s.endswith(')'): neg=True; s=s[2:-1].strip()
+    if re.fullmatch(r'\$[0-9A-Fa-f]+',s): v=int(s[1:],16)
+    elif re.fullmatch(r'[0-9]+',s): v=int(s)
+    else: return None
+    return -v if neg else v
+
+def idx_prep(reg,dv):
+    """HL := reg+dv; A и флаги целы"""
+    return [f"ld hl,(z_{reg})"]+(["inc hl"]*dv if dv>=0 else ["dec hl"]*(-dv))
+
 # ------------------------------------------------------------------ трансляция
 class Translator:
     def __init__(self, fname, overrides=None):
@@ -244,6 +267,16 @@ class Translator:
 
     def tr(self, lines):
         out=[]
+        # 'jr cc,$+n' переводится в 'jp cc,$+1+n' — цель верна, только пока
+        # пропускаемые инструкции той же длины, что на Z80. Инлайн длину меняет,
+        # поэтому рядом с такими переходами он запрещён.
+        self.noinl=set()
+        for k,L in enumerate(lines):
+            if L.op in ('jr','djnz') and L.args and '$' in L.args[-1]:
+                n=0; j=k+1
+                while j<len(lines) and n<8:
+                    if lines[j].op is not None: self.noinl.add(j); n+=1
+                    j+=1
         for i,L in enumerate(lines):
             key=(os.path.basename(self.fname), L.no)
             if key in self.overrides:
@@ -287,6 +320,19 @@ class Translator:
 
         # --- индексные регистры ---
         idx=[parse_idx(x) for x in args]
+        def inl(kind,d):
+            """инлайнить (ix+d)? -> смещение-число или None"""
+            if i in getattr(self,'noinl',()): return None
+            dv=const_d(d)
+            if dv is None: return None
+            lim=IDX_INLINE.get(kind,-1)
+            return dv if lim>=0 and abs(dv)<=lim else None
+        def addr(reg,d):
+            """HL := ix+d (вызывающий уже сохранил HL): инлайн или хелпер"""
+            dv=inl('addr',d)
+            if dv is not None:
+                self.stat('ix_addr_inl'); return idx_prep(reg,dv)
+            return [f"call z_{reg}_hl", f"db {d}"]
         if op=='ld' and len(args)==2:
             dst,src=args
             di,si=idx
@@ -294,24 +340,51 @@ class Translator:
             if si:
                 reg,d=si; rz='z_'+reg
                 if a[0]=='a':
+                    dv=inl('rda',d)
+                    if dv is not None:
+                        return seq(["push hl"]+idx_prep(reg,dv)+["ld a,(hl)","pop hl"],'ix_rd_a_inl')
                     h = f"{rz}_rda" if not fdead else f"{rz}_rda_nf"
                     return seq([f"ld a,{d}", f"call {h}"], 'ix_rd_a')
-                if a[0] in REG8:
+                if a[0] in ('b','c','d','e'):
+                    dv=inl('rd_r',d)
+                    if dv is not None:
+                        return seq(["push hl"]+idx_prep(reg,dv)+[f"ld {a[0]},(hl)","pop hl"],'ix_rd_r_inl')
+                    return seq([f"call {rz}_rd_{a[0]}", f"db {d}"], 'ix_rd_r')
+                if a[0] in ('h','l'):
+                    # результат кладём в старый HL: через A (значит, A должен быть мёртв)
+                    dv=inl('rd_hl',d) if adead else None
+                    if dv is not None:
+                        return seq(["push hl"]+idx_prep(reg,dv)+["ld a,(hl)","pop hl",f"ld {a[0]},a"],'ix_rd_hl_inl')
                     return seq([f"call {rz}_rd_{a[0]}", f"db {d}"], 'ix_rd_r')
                 raise ValueError(f"{L.no}: {L.raw}")
             # ld (ix+d),x
             if di:
                 reg,d=di; rz='z_'+reg
                 if a[1]=='a':
+                    dv=inl('sta',d)
+                    if dv is not None:
+                        return seq(["push hl"]+idx_prep(reg,dv)+["ld (hl),a","pop hl"],'ix_st_a_inl')
                     return seq([f"call {rz}_sta", f"db {d}"], 'ix_st_a')
                 if a[1] in ('b','c','d','e'):
+                    dv=inl('st_r',d)
+                    if dv is not None:
+                        return seq(["push hl"]+idx_prep(reg,dv)+[f"ld (hl),{a[1]}","pop hl"],'ix_st_r_inl')
                     return seq([f"call {rz}_st_{a[1]}", f"db {d}"], 'ix_st_r')
                 if a[1] in ('h','l'):
+                    dv=inl('st_hl',d)
+                    if dv is not None:
+                        body=[] if adead else ["ld (z_a),a"]
+                        body+=[f"ld a,{a[1]}","push hl"]+idx_prep(reg,dv)+["ld (hl),a","pop hl"]
+                        if not adead: body+=["ld a,(z_a)"]
+                        return seq(body,'ix_st_hl_inl')
                     body=[] if adead else ["ld (z_a),a"]
                     body+=[f"ld a,{a[1]}", f"call {rz}_sta", f"db {d}"]
                     if not adead: body+=["ld a,(z_a)"]
                     return seq(body,'ix_st_hl')
                 # immediate
+                dv=inl('stn',d)
+                if dv is not None:
+                    return seq(["push hl"]+idx_prep(reg,dv)+[f"ld (hl),{norm_expr(src)}","pop hl"],'ix_st_n_inl')
                 return seq([f"call {rz}_stn", f"db {d}", f"db {norm_expr(src)}"], 'ix_st_n')
             # ld ix,nn / ld ix,(nn) / ld (nn),ix
             if a[0] in IDX:
@@ -369,13 +442,13 @@ class Translator:
             ii=parse_idx(args[-1])
             if ii:
                 reg,d=ii
-                body=["push hl", f"call z_{reg}_hl", f"db {d}", f"{op} {'a,' if op in ('add','adc','sbc') else ''}(hl)", "pop hl"]
+                body=["push hl"]+addr(reg,d)+[f"{op} {'a,' if op in ('add','adc','sbc') else ''}(hl)", "pop hl"]
                 return seq(body,'alu_idx')
         if op in ('inc','dec') and len(a)==1:
             ii=parse_idx(args[0])
             if ii:
                 reg,d=ii
-                return seq(["push hl", f"call z_{reg}_hl", f"db {d}", f"{op} (hl)", "pop hl"],'incdec_idx')
+                return seq(["push hl"]+addr(reg,d)+[f"{op} (hl)", "pop hl"],'incdec_idx')
             if a[0] in IDXH:
                 cell='z_'+IDXH[a[0]]+('+1' if a[0].endswith('h') else '')
                 return seq(["push hl", f"ld hl,{cell}", f"{op} (hl)", "pop hl"],'incdec_ixh')
@@ -398,7 +471,7 @@ class Translator:
                     body=([] if adead else ["ld (z_a),a"])+["ld a,(hl)", f"and {mask}"]+([] if adead else ["ld a,(z_a)"])
                 elif ii:
                     reg,d=ii
-                    body=["push hl", f"call z_{reg}_hl", f"db {d}"]+([] if adead else ["ld (z_a),a"])+["ld a,(hl)", f"and {mask}"]+([] if adead else ["ld a,(z_a)"])+["pop hl"]
+                    body=["push hl"]+addr(reg,d)+([] if adead else ["ld (z_a),a"])+["ld a,(hl)", f"and {mask}"]+([] if adead else ["ld a,(z_a)"])+["pop hl"]
                 else: raise ValueError(L.raw)
                 return seq(body,'bit')+w
             else:
@@ -412,7 +485,7 @@ class Translator:
                     body=([] if adead else ["ld (z_a),a"])+["ld a,(hl)", alu, "ld (hl),a"]+([] if adead else ["ld a,(z_a)"])
                 elif ii:
                     reg,d=ii
-                    body=["push hl", f"call z_{reg}_hl", f"db {d}"]+([] if adead else ["ld (z_a),a"])+["ld a,(hl)", alu, "ld (hl),a"]+([] if adead else ["ld a,(z_a)"])+["pop hl"]
+                    body=["push hl"]+addr(reg,d)+([] if adead else ["ld (z_a),a"])+["ld a,(hl)", alu, "ld (hl),a"]+([] if adead else ["ld a,(z_a)"])+["pop hl"]
                 else: raise ValueError(L.raw)
                 return seq(body,op)+w
         # --- переходы ---
@@ -456,7 +529,7 @@ class Translator:
                 return seq(body,op)+fw
             if ii:
                 reg,d=ii
-                body=["push hl", f"call z_{reg}_hl", f"db {d}"]+([] if adead else ["ld (z_a),a"])+["ld a,(hl)"]+core+["ld (hl),a"]+([] if adead else ["ld a,(z_a)"])+["pop hl"]
+                body=["push hl"]+addr(reg,d)+([] if adead else ["ld (z_a),a"])+["ld a,(hl)"]+core+["ld (hl),a"]+([] if adead else ["ld a,(z_a)"])+["pop hl"]
                 return seq(body,op)+fw
             raise ValueError(L.raw)
         # --- нормализация 'sub a,x' / 'and a,x' ---
