@@ -36,8 +36,12 @@ SRC = ROOT / 'ref/msx2/src'
 BUILD = ROOT / 'build'
 STRING_AREA_KVAZ = 0x6B00   # vars наверху ОЗУ (см. build_vec.py); хвост таблиц упирается ровно в $8000 (драйвер НГМД занял +256 кода)
 STRING_AREA_C8 = 0x6C00     # c8: rev256/slot_tab в свободной плоскости 0 ($8000) — vars выше, коду +512 Б
-BG_TILES_BASE = 0x8000      # страница 0: 256 тайлов x 128 = 32К
-FG_TILES_BASE = 0x5D00      # страница 0 (до 35 FG-тайлов x 256)
+# Тайлы лежат в НАЧАЛЕ страницы 0, передние сразу за ними. Раньше тайлы стояли на $8000, а передние
+# на $5D00, и свободное место в странице распадалось на два огрызка (23.25 КБ и 8 КБ) — во второй
+# банк спрайтов уже не входил. Одним куском в хвосте помещается на банк больше, и это чистая
+# перестановка констант: адреса тайлов движок берёт отсюда (gen_data.asm), номера тайлов не меняются.
+BG_TILES_BASE = 0x0000      # страница 0: 256 тайлов x 128 = 32К
+FG_TILES_BASE = 0x8000      # страница 0, сразу за тайлами (до 35 FG-тайлов x 256)
 BANK_FILE = {2: 'sprite_barbaro_1', 3: 'sprite_barbaro_2', 7: 'sprite_esqueleto', 8: 'sprite_orc', 9: 'sprite_mummy',
              10: 'sprite_troll', 11: 'sprite_dalgurak', 12: 'sprite_rollingstone', 13: 'sprite_caballerorenegado',
              14: 'sprite_golem_inf', 15: 'sprite_golem_sup', 16: 'sprite_ogro_inf', 17: 'sprite_ogro_sup',
@@ -45,8 +49,10 @@ BANK_FILE = {2: 'sprite_barbaro_1', 3: 'sprite_barbaro_2', 7: 'sprite_esqueleto'
 # Раскладка банков спрайтов (страница ROM MSX -> страница квазидиска, база, предел) по уровням; база кратна 256.
 # Таблица vec_bank_tab генерируется в gen_data.asm. Банк = 41 кадр x 576 = 23616 Б ($5C40).
 LEVEL_BANKS = {
-    1: [(2, 0, 0x0000, 0x5D00), (3, 1, 0xA300, 0x10000), (7, 1, 0x0000, 0x8000), (8, 2, 0x0000, 0x6000),
-        (9, 2, 0x6000, 0x10000), (12, 3, 0x2800, 0xA000)],
+    # Уровень 1: все шесть банков в шестнадцати цветах. Раскладка пересобрана под тайлы в начале
+    # страницы 0 и вынесенный из наборов 2+ оверлей меню (см. build_kvaz).
+    1: [(2, 0, 0x8C00, 0xE840), (7, 1, 0x0000, 0x5C40), (8, 1, 0xA200, 0xFE40),
+        (9, 2, 0x0000, 0x5C40), (12, 2, 0x5D00, 0xB940), (3, 3, 0x2800, 0x6940)],
     # уровень 2, оценка сцены с големом (экран 4,6): в 256К не помещаются скелет/орк/тролль/камень — на их
     # экранах будут кадры варвара (см. ANALYSIS.md, «великаны»)
     # Уровень 2: семь банков — варвар (2 и 3), скелет, орк, тролль и голем (14/15, по две плоскости).
@@ -56,17 +62,17 @@ LEVEL_BANKS = {
     # Уровень 2: все восемь банков. Скелет, валун и обе половины голема — по четыре цвета
     # (288 Б на кадр), варвар, орк и тролль — как есть. Тайлы и передние тайлы обязаны лежать
     # по общим для всех уровней адресам (они зашиты в ROM), карта — в стр.1 $8000.
-    2: [(2, 0, 0x0000, 0x5D00), (7, 1, 0x0000, 0x2F00), (3, 1, 0x2F00, 0x8000),
-        (15, 1, 0xA600, 0x10000), (8, 2, 0x0000, 0x5C40), (12, 2, 0x5D00, 0x8C00),
-        (14, 2, 0x8C00, 0xBB00), (10, 3, 0x2800, 0x8440)],
+    2: [(2, 0, 0x8E00, 0xEA40), (8, 1, 0x0000, 0x5C40), (3, 1, 0xA600, 0xE740),
+        (10, 2, 0x0000, 0x5C40), (7, 2, 0x5D00, 0x8B20), (12, 2, 0x8C00, 0xBA20),
+        (14, 3, 0x2800, 0x5620), (15, 3, 0x5700, 0x8520)],
     # Уровень 3: восемь банков. Карта длиннее всех (10.2 КБ) и передних тайлов 30 против 14,
     # поэтому четыре банка обязаны лежать в двух плоскостях — валун (готовая карта), обе половины
     # огра и тролль. Рыцарь и орк остаются шестнадцатицветными. Раскладка получена перебором
     # (tools/kvaz_pack.py) при закреплённых тайлах ($8000 стр.0), передних тайлах ($5D00 стр.0)
     # и карте (стр.1 $8000): без сжатия дефицит 23 КБ, три сжатых банка его не закрывают.
-    3: [(2, 0, 0x0000, 0x5C40), (3, 1, 0x0000, 0x4140), (10, 1, 0x4200, 0x7020),
-        (12, 1, 0xA800, 0xD620), (8, 2, 0x0000, 0x5C40), (16, 2, 0x5D00, 0x8B20),
-        (17, 2, 0x8C00, 0xBA20), (13, 3, 0x2800, 0x8440)],
+    3: [(2, 0, 0x9E00, 0xFA40), (8, 1, 0x0000, 0x5C40), (3, 1, 0xA800, 0xE940),
+        (13, 2, 0x0000, 0x5C40), (10, 2, 0x5D00, 0x8B20), (12, 2, 0x8C00, 0xBA20),
+        (16, 3, 0x2800, 0x5620), (17, 3, 0x5700, 0x8520)],
 }
 LEVEL_MUSIC = [1, 5, 3, 4, 5, 6, 7, 8]   # music_levels (music.asm): уровень N -> music-level{M}.mus
 STRING_AREA_DEMO = 0x7400   # демо: string_area 512 Б, vars короче (до $8000 ровно)
@@ -391,10 +397,10 @@ PERM = color_perm(1)
 # Готовые зеркальные копии задаются ПО УРОВНЯМ: на уровне 2 места под них нет (там семь банков),
 # да и голем зеркалится своим блитом, а не копиями.
 MIRRORS_BY_LEVEL = {
-    1: {9: (0xF000, 14, 7),        # мумия (стр.2 $6000): ходьба влево — кадры 14..17
-        8: (0xF000, 2, 7, 3),      # орк (стр.2 $0000): ходьба влево — кадры 2..7; в стр.2 места нет
-        2: (0x6900, 0, 10),        # варвар, банк 1 (стр.0 $0000)
-        3: (0x5D00, 0, 15)},       # варвар, банк 2 (стр.1 $A300)
+    1: {9: (0xF000, 14, 7),        # мумия (стр.2 $0000): ходьба влево — кадры 14..17, копии в хвосте
+        8: (0xF000, 2, 7, 3),      # орк (стр.1 $A200): ходьба влево — кадры 2..7; копии в стр.3
+        2: (0xE900, 0, 10),        # варвар, банк 1 (стр.0 $8C00), копии за ним до конца страницы
+        3: (0x5D00, 0, 15, 1)},    # варвар, банк 2 (стр.3 $2800), копии в стр.1 перед картой
     2: {},
     3: {},
 }
@@ -569,11 +575,14 @@ def build_kvaz(level_no=1, start=None):
     from font_ru import extra_glyphs                     # позиции 64..95 А..Я, 96 стрелка (коды 96..128)
     for k, g in enumerate(extra_glyphs(font)):
         b = column_blob(g, 0, 1, 0, 8, pm_panel); pages[3][(64+k)*32:(64+k)*32+len(b)] = b
-    # шрифт МЕНЮ (резной, с обводкой) — 128 глифов по $E000 страницы 3, читается стековым режимом
-    from font_ru import menu_glyphs
-    mfont = sr5_rows(pletter_depack((SRC / 'menu_font.SR5.plet1').read_bytes()), 16)
-    for k, g in enumerate(menu_glyphs(mfont)):
-        b = column_blob(g, 0, 1, 0, 8, pm_panel); pages[3][0xE000 + k*32: 0xE000 + k*32 + len(b)] = b
+    # Шрифт МЕНЮ (резной, с обводкой) — 128 глифов по $E000 страницы 3, читается стековым режимом.
+    # Только в наборе уровня 1: в игре печатает обычный шрифт (пауза зовёт drawChar), а меню
+    # доступно лишь после перезагрузки набора уровня 1.
+    if level_no == 1:
+        from font_ru import menu_glyphs
+        mfont = sr5_rows(pletter_depack((SRC / 'menu_font.SR5.plet1').read_bytes()), 16)
+        for k, g in enumerate(menu_glyphs(mfont)):
+            b = column_blob(g, 0, 1, 0, 8, pm_panel); pages[3][0xE000 + k*32: 0xE000 + k*32 + len(b)] = b
     panel = sr5_rows(pletter_depack((SRC / 'marcador.SR5.plet1').read_bytes()), 32)
     b = column_blob(panel, 0, 32, 0, 32, pm_panel); pages[3][0x1000:0x1000+len(b)] = b
     armas = sr5_rows(pletter_depack((SRC / 'armas.SR5.plet1').read_bytes()), 24)
@@ -594,7 +603,7 @@ def build_kvaz(level_no=1, start=None):
         addr = FG_TILES_BASE + i*256
         b = fg_tile_bytes(tile_pixels(sr5, t), pm_tiles)   # c8: 192 Б, шаг 256
         pages[0][addr:addr+len(b)] = b
-    assert FG_TILES_BASE + len(fg)*256 <= BG_TILES_BASE
+    assert BG_TILES_BASE + 256*128 <= FG_TILES_BASE and FG_TILES_BASE + len(fg)*256 <= 0x10000
     info = parse_level(level)
     from texts_ru import LEVEL_TEXTS, build_block        # русский блок строк на месте испанского (language=0)
     info['strings']['es'] = build_block(info['strings']['en'], info['nstrings'], info['nscripts'], LEVEL_TEXTS[level_no])
@@ -615,14 +624,19 @@ def build_kvaz(level_no=1, start=None):
         for bank, page, base, limit in banks:
             assert page != 1 or base >= scrpal_addr + len(blob) or limit <= 0x8000, 'палитры легли на банк'
         pages[1][scrpal_addr:scrpal_addr+len(blob)] = blob
-    # фаза меню: оверлей + блоб (стр.3 $8440/$9800), песни меню/интро (стр.2 $C000/$D000)
+    # Фаза меню: оверлей + блоб (стр.3 $8440/$9800), песни меню/интро (стр.2 $C000/$D000).
+    # Всё это лежит ТОЛЬКО в наборе уровня 1: меню показывается при старте, а возврат в него после
+    # игры (vec_to_menu) сперва перечитывает набор уровня 1 с дискеты. На уровнях 2+ освобождается
+    # 22 КБ — без них наборы уровней 4, 6 и 8 в квазидиск не помещались вовсе.
+    # Оверлей паузы нужен на каждом уровне: его зовут прямо из игры по адресу $9000 (vec_pause_phase).
     ovl = BUILD / 'menu_ovl.bin'; blob = BUILD / 'menu_ram.bin'
-    if ovl.exists() and blob.exists() and not C8MODE:
-        b = ovl.read_bytes(); pages[3][0x8440:0x8440+len(b)] = b
-        b = blob.read_bytes(); pages[3][0x9800:0x9800+len(b)] = b
+    if not C8MODE:
         pz = BUILD / 'pause_ovl.bin'
         if pz.exists():
             b = pz.read_bytes(); pages[3][0x9000:0x9000+len(b)] = b
+    if ovl.exists() and blob.exists() and not C8MODE and level_no == 1:
+        b = ovl.read_bytes(); pages[3][0x8440:0x8440+len(b)] = b
+        b = blob.read_bytes(); pages[3][0x9800:0x9800+len(b)] = b
         for slot, mus in ((0xC000, 'music-menu.mus'), (0xD000, 'music-intro.mus')):
             mb = (SRC / mus).read_bytes(); assert len(mb) <= 0x1000
             pages[2][slot:slot+len(mb)] = mb

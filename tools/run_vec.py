@@ -78,6 +78,18 @@ def make_cpu(keys):
     rom = fdd[0x80:0x80+32512] if fdd else (ROOT / f'build/{ROM_NAME}.rom').read_bytes()  # в образе ROM лежит за дескриптором ($80)
     cpu.mem[0x100:0x100+len(rom)] = rom
     cpu.pc = 0x100
+    # Оверлей меню лежит только в наборе уровня 1 (на уровнях 2+ его место отдано банкам спрайтов).
+    # Стенды запускают набор любого уровня напрямую, поэтому, если меню в наборе нет, вызов фазы
+    # меню из ROM заменяем пустышкой — иначе игра уходит по $8440 в мусор и не стартует.
+    _mo = ROOT / 'build/menu_ovl.bin'
+    _head = _mo.read_bytes()[:16] if _mo.exists() else b''
+    if not DEMO and _head and bytes(cpu.kvaz[3*65536 + 0x8440: 3*65536 + 0x8450]) != _head:
+        syms = load_syms(ROOT / ('build/ianna_demo.lst' if DEMO else 'build/ianna_vec.lst'))
+        mp = syms.get('vec_menu_phase')
+        if mp:
+            call = bytes((0xCD, mp & 0xFF, mp >> 8))
+            for a in range(0x100, 0x8000 - 3):
+                if bytes(cpu.mem[a:a+3]) == call: cpu.mem[a:a+3] = b'\x00\x00\x00'
     def fdd_seek_read():
         off = ((st['trk'] * 2 + st['side']) * 5 + (st['sec'] - 1)) * 1024
         st['buf'] = fdd[off:off + 1024] if fdd and off + 1024 <= len(fdd) else b'\x00' * 1024

@@ -97,6 +97,12 @@ vec_internal_loop:
 vec_next_level:
 	xor a
 	ld (player_dead),a
+	call vec_reload_set
+	jp vec_begin_level
+
+; Перечитать набор уровня (номер в current_level) с дискеты: вернуть загрузчик на своё место
+; поверх таблиц, отдать ему таблицу дорожек и заново построить всё, что затирается загрузкой.
+vec_reload_set:
 	di
 	ld a,LEVELTAB_PORT
 	out (KV_PORT),a
@@ -116,12 +122,14 @@ vec_next_level:
 	call vec_init_rev256
 	call vec_slot_init
 	call vec_load_leveltab
-	call cls		; VRAM была буфером загрузки — иначе по краям поля остаётся мусор
-	jp vec_begin_level
+	jp cls			; VRAM была буфером загрузки — иначе по краям поля остаётся мусор
+; Возврат в меню: набор уровня 1 читается заново, потому что оверлей меню, его песни и резной
+; шрифт лежат ТОЛЬКО в нём — на уровнях 2+ это место отдано банкам спрайтов.
 vec_to_menu:
 	xor a
 	ld (player_dead),a
 	ld (current_level),a
+	call vec_reload_set
 	call vec_menu_phase
 	jp vec_begin_level
 

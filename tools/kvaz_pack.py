@@ -15,6 +15,10 @@ DROP = {int(x) for x in OPT.get('--drop', '').split(',') if x}
 NTILES = int(OPT.get('--tiles', 256))
 SONGS_OUT = '--songs-out' in OPT
 MFONT_OUT = '--mfont-out' in OPT
+MENU_OUT = '--menu-out' in OPT
+TILES_END = '--tiles-end' in OPT  # база тайлов не $8000, а вплотную к концу страницы 0
+TILES_LOW = '--tiles-low' in OPT  # тайлы в НАЧАЛО страницы 0, передние сразу за ними: свободный
+                                  # хвост становится одним куском вместо двух огрызков   # оверлей меню и его песни — только в наборе уровня 1
 
 def nf(b):
     return len(B.parse_sprite_asm(str(pathlib.Path('build/msx2') / f'{B.BANK_FILE[b]}.asm')))
@@ -40,14 +44,17 @@ def map_len():
 
 def fixed_blocks():
     f = [(1, 0x8000, (map_len() + 255) & ~255, 'карта'),
-         (0, B.BG_TILES_BASE, NTILES * 128, 'тайлы'), (0, B.FG_TILES_BASE, NFG * 256, 'передние тайлы'), (2, 0xE000, 0x1000, 'песня уровня'),
-         (3, 0x0000, 0x2800, 'шрифт/панель/оружие'), (3, 0x8440, 0x1BC0, 'оверлеи'),
+         (0, 0 if TILES_LOW else ((0x10000 - NTILES*128) & ~0xFF if TILES_END else B.BG_TILES_BASE),
+          NTILES * 128, 'тайлы'),
+         (0, NTILES*128 if TILES_LOW else B.FG_TILES_BASE, NFG * 256, 'передние тайлы'), (2, 0xE000, 0x1000, 'песня уровня'),
+         (3, 0x0000, 0x2800, 'шрифт/панель/оружие'),
+         (3, 0x9000, 0x0200, 'оверлей паузы') if MENU_OUT else (3, 0x8440, 0x1BC0, 'оверлеи'),
          (3, 0xA000, 0x2800, 'пул'), (3, 0xC980, 0x1000, 'музыка'), (3, 0xD980, 0x1000, 'эффекты'),
          (2, 0xBB00, 0x140, 'палитры экранов'),   # обязаны лежать в стр.2, в окне $A000-$DFFF
          (2, 0xBC40, 0x300, 'таблицы уровня и копия загрузчика'),
          (2, 0xBF00, 0x100, 'вынесенный блит')]
-    if not SONGS_OUT: f.append((2, 0xC000, 0x2000, 'песни меню и интро'))
-    if not MFONT_OUT: f.append((3, 0xE000, 0x1000, 'шрифт меню'))
+    if not (SONGS_OUT or MENU_OUT): f.append((2, 0xC000, 0x2000, 'песни меню и интро'))
+    if not (MFONT_OUT or MENU_OUT): f.append((3, 0xE000, 0x1000, 'шрифт меню'))
     return f
 
 def solve(items, free):
@@ -59,8 +66,11 @@ def solve(items, free):
     for pg in pages:
         for i, (s0, e) in enumerate(free[pg]):
             s = (s0 + 255) & ~255           # база банка обязана быть кратна 256 (put_bank)
-            if e - s < sz or (pg, e - s) in seen: continue
-            seen.add((pg, e - s))
+            # Дедупликация — по РАЗМЕРУ И НАЧАЛУ куска: одинаковые по длине куски с разным
+            # выравниванием вмещают разное число банков (граница страницы и кратность 256),
+            # и отсев только по длине терял верные раскладки (уровень 6 «не влезал»).
+            if e - s < sz or (pg, s, e) in seen: continue
+            seen.add((pg, s, e))
             nf2 = [list(map(list, x)) for x in free]
             nf2[pg][i] = [s + sz, e]
             if s > s0: nf2[pg].insert(i, [s0, s])
