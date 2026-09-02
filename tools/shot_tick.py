@@ -13,7 +13,7 @@ sym=rv.load_syms(pathlib.Path('build/ianna_vec.lst'))
 keys=[]; cpu=rv.make_cpu(keys)
 rv.START=START
 rv.start_game(cpu,keys,sym)
-if KEY: keys.add(KEY)
+if KEY: keys.append(KEY)
 RS=sym['RunScripts']; ticks=0
 FIX='--fixrand' in sys.argv or '--fixrand' in ARGS
 FC=sym['FrameCounter']
