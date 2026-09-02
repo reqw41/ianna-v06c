@@ -208,6 +208,20 @@ def check_overlays_in_edd():
         print(f'ВНИМАНИЕ: в build/ianna.edd оверлеи от прежней сборки ({", ".join(stale)}) — '
               f'пересоберите: python3 tools/data/build_edd.py && python3 tools/build_vec.py')
 
+def strip_dead(path, names):
+    """Вырезать блок (метка + тело до следующей метки). НЕ ИСПОЛЬЗУЕТСЯ: проверка показала, что
+    мёртвого кода в образе фактически нет — см. ANALYSIS.md, «резерв мёртвого кода оказался мифом».
+    Оставлено как инструмент: если когда-нибудь появится честный кандидат, резать им, обязательно
+    сверяя кадр с эталоном (tools/shot_tick.py --fixrand) — косвенная адресация ловится только так."""
+    t = path.read_text()
+    for n in names:
+        m = re.search(r'(?m)^' + re.escape(n) + r':.*?(?=^[A-Za-z_][\w.]*:)', t, re.S)
+        if not m:
+            print(f'ВНИМАНИЕ: мёртвый блок {n} не найден — пропускаю'); continue
+        assert len(re.findall(r'\b' + re.escape(n) + r'\b', t)) == 1, f'{n}: на блок есть ссылки'
+        t = t[:m.start()] + t[m.end():]
+    path.write_text(t)
+
 def main():
     TR.mkdir(parents=True, exist_ok=True)
     slice_ianna(); make_vars(); make_score_font(); make_music()

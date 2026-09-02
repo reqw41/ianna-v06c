@@ -970,7 +970,7 @@ ds_cost:
 ds_direct:
 	ld a,(vec_spr_port)	; банк в двух плоскостях — свой блит (кадр 288 Б, строка 3 байта)
 	rrca
-	jp c,vec_blit2
+	jp c,vec_blit2		; зеркальный путь для этого формата ещё не влез в ROM (см. ANALYSIS.md)
 	ld a,(vec_spr_dir)
     if NOMIRROR
 	xor a			; ЗАМЕР: см. выше
