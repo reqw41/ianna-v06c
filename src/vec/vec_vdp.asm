@@ -315,12 +315,7 @@ vbg_again:
 	jp c,vbg_wait
 	cp VEC_BUDGET_LIMIT
 	jp c,vbg_ok
-vbg_wait:
-	push hl
-	ld hl,(vec_bud_halts)	; статистика: сколько раз ждали кадр
-	inc hl
-	ld (vec_bud_halts),hl
-	pop hl
+vbg_wait:			; статистику ожиданий стенд снимает по этому адресу (measure_vec), в ROM её нет
 	halt			; следующий VBlank (вне блита, EI); счётчик перезарядится в ISR
 	jp vbg_again
 vbg_ok:
@@ -969,11 +964,16 @@ ds_cost:
     endif
 ds_direct:
 	ld a,(vec_spr_port)	; банк в двух плоскостях — свой блит (кадр 288 Б, строка 3 байта)
+	ld (vec_spr_curport),a	; порт для возврата в стековый режим после бюджета (оба пути)
 	rrca
+	ld a,3
+	ld (vec_col_cnt),a	; три колонки — общее для всех путей ниже
 	jp nc,ds_dir4
 	ld a,(vec_spr_dir)	; зеркальный блит лежит поверх таблицы слотов ($7F00), прямой — в ROM
 	or a
 	jp z,vec_blit2
+	ld a,150		; зеркальный: 146 ед. на 32 строки (blitcost), одной проверкой — в оверлее места нет
+	call vec_budget
 	jp vec_slot_tab
 ds_dir4:
 	ld a,(vec_spr_dir)
@@ -982,8 +982,6 @@ ds_dir4:
     endif
 	or a
 	jp nz,drawSprite_mirror
-	ld a,3
-	ld (vec_col_cnt),a
 	di
 	ld hl,0
 	add hl,sp
@@ -992,7 +990,6 @@ ds_dir4:
 	ld sp,hl
     if !DEMO
 	ld a,(vec_spr_port)
-	ld (vec_spr_curport),a
 	out (KV_PORT),a
     endif
 ds_col:

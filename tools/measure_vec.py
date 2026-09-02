@@ -12,7 +12,8 @@ ROM=ARGS[0] if ARGS else 'build/ianna.rom'; LST=ARGS[1] if len(ARGS)>1 else 'bui
 FRAMES=int(next((o[9:] for o in OPTS if o.startswith('--frames=')),'600'))
 ROUTE=next((o[8:] for o in OPTS if o.startswith('--route=')),'none:300,right:300')
 START=next((tuple(int(v) for v in o[8:].split(',')) for o in OPTS if o.startswith('--start=')),None)
-FIXRAND='--fixrand' in OPTS   # FrameCounter := номер тика перед RunScripts — логика не зависит от скорости сборки (сравнение A/B на сценах с врагами)
+FIXRAND='--fixrand' in OPTS
+BHIST='--budget-hist' in OPTS   # гистограмма отказов бюджета: фаза кадра и цена запроса   # FrameCounter := номер тика перед RunScripts — логика не зависит от скорости сборки (сравнение A/B на сценах с врагами)
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 src=open('tools/profile_vec.py').read(); i=src.index('# Такты ВЕКТОРА'); j=src.index('keys = []'); exec(src[i:j])
 FRAME=59904
@@ -55,6 +56,7 @@ def fn(pc):
 sym=rv.load_syms(pathlib.Path(LST))
 keys=[]; cpu=rv.make_cpu(keys)
 rom=open(ROM,'rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom; cpu.pc=0x100
+rv.patch_menu(cpu)          # набор без оверлея меню (уровни 2+): фазу меню глушим
 mem=cpu.mem
 # --- ВИ53 счётчик 0 ---
 pit={'reload_cyc':0,'latched':None,'wr':0,'rd':0,'lo':0}
@@ -77,6 +79,8 @@ def in_h(p):
     return base_in(p)
 cpu.out_handler=out_h; cpu.in_handler=in_h
 FC=sym['FrameCounter']; AT=sym['animate_tile']; SC=sym['SaveCheckpoint']
+bh_n=[0]
+VBW=sym.get('vbg_wait',-1); bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
 delivered=0; lost=0; lost_at=collections.Counter(); next_irq=FRAME; started=False
 def run(nframes):
     global delivered,lost,next_irq,started
@@ -87,7 +91,10 @@ def run(nframes):
         else:
             if START and not started and cpu.pc==SC:
                 mem[sym['current_levelx']]=START[0]; mem[sym['current_levely']]=START[1]; started=True
-            cyc[0]+=CYC[mem[cpu.pc]]; cpu.step()
+            cyc[0]+=CYC[mem[cpu.pc]]
+            try: cpu.step()
+            except RuntimeError:
+                print('  КРАХ; последние PC:', ' '.join(f'{x:04X}' for x in pc_ring[-24:])); raise
         if cyc[0]>=next_irq:
             next_irq+=FRAME
             if cpu.ie:
@@ -132,7 +139,16 @@ for seg in ROUTE.split(','):
             if HOLD: hold_ticks[0]+=1; hold_slow[0]+=1 if mem[HOLD]>=8 else 0   # темп анимации: сколько тиков в замедленном режиме
             if FIXRAND: ntick[0]+=1; mem[sym['FrameCounter']]=ntick[0]&0xFF; mem[sym['FrameCounter']+1]=0
         if cpu.halted: idle+=next_irq-cyc[0]; cyc[0]=next_irq
-        else: cyc[0]+=CYC[mem[cpu.pc]]; cpu.step()
+        else:
+            if cpu.pc==VBW:
+                bh_n[0]+=1
+                if BHIST:
+                    cost=cpu.l; phase=(cpu.a-cost)&0xFF
+                    bh_cost[cost]+=1; bh_phase[phase//16*16]+=1; bh_lost[0]+=max(0,234-phase)
+            cyc[0]+=CYC[mem[cpu.pc]]
+            try: cpu.step()
+            except RuntimeError:
+                print('  КРАХ; последние PC:', ' '.join(f'{x:04X}' for x in pc_ring[-24:])); raise
         if cyc[0]>=next_irq:
             next_irq+=FRAME
             if cpu.ie: cpu.ie=False; cpu.halted=False; cpu.push(cpu.pc); cpu.pc=0x38; delivered+=1
@@ -146,4 +162,10 @@ for seg in ROUTE.split(','):
         import collections as _c
         h=_c.Counter(min(int(f+0.5),12) for f in norm)
         print('    длительность тиков (кадров: сколько): ' + ' '.join(f'{k}:{h[k]}' for k in sorted(h)))
+if BHIST and sum(bh_cost.values()):
+    n=sum(bh_cost.values())
+    print(f'  отказы бюджета: {n}; цена запроса (ед. 256 тактов): {sorted(bh_cost.items())}')
+    print(f'  фаза кадра при отказе (ед.): {sorted(bh_phase.items())}')
+    print(f'  потеряно хвостов: {bh_lost[0]} ед. = {bh_lost[0]/234:.1f} кадра, в среднем {bh_lost[0]/n:.0f} ед. на отказ')
+print(f'  ожиданий кадра бюджетом (vbg_wait) за прогон: {bh_n[0]}')
 if lost: print('  потери по функциям:', dict(lost_at.most_common(8)))

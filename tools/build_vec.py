@@ -352,13 +352,16 @@ def main():
         m = re.search(r'^string_area\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) == VARS_ADDR, 'string_area не по VARS_ADDR!'
         # конец кода: максимальный адрес байтовой строки ДО org vars (наезд на vars sjasm молчит!)
+        # Конец кода — конец ПОСЛЕДНЕЙ инструкции, а не её адрес: трёхбайтовый jp на $6AFE считался
+        # «до $6AFE, зазор 1», а его третий байт лежал на $6B00 и затирался строками уровня
+        # (сцены с четырёхцветным спрайтом падали в данные — блит уходил по jp в мусор).
         code_end = 0
         for line in lst.split('\n'):
             if 'vars наверху ОЗУ' in line: break
-            mm = re.match(r'^([0-9A-F]{4}): [0-9A-F]{2}', line)
-            if mm: code_end = max(code_end, int(mm.group(1), 16))
-        assert code_end < VARS_ADDR, f'код до ${code_end:04X} НАЕХАЛ на переменные ${VARS_ADDR:04X}'
-        print(f'код до ${code_end:04X}, переменные с ${VARS_ADDR:04X} (зазор {VARS_ADDR-code_end-1} Б)')
+            mm = re.match(r'^([0-9A-F]{4}): ([0-9A-F]+)\s', line)     # байты в листинге без пробелов
+            if mm: code_end = max(code_end, int(mm.group(1), 16) + len(mm.group(2)) // 2)
+        assert code_end <= VARS_ADDR, f'код до ${code_end:04X} НАЕХАЛ на переменные ${VARS_ADDR:04X}'
+        print(f'код до ${code_end-1:04X} включительно, переменные с ${VARS_ADDR:04X} (зазор {VARS_ADDR-code_end} Б)')
         m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'
         print(f'OK: build/{name}.rom {size} Б, конец = ${0x100+size:04X} (граница VRAM $8000, свободно {0x8000-0x100-size} Б)')

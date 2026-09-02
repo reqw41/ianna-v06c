@@ -444,7 +444,18 @@ MIRRORS_BY_LEVEL = {
         8: (0xF000, 2, 7, 3),      # орк (стр.1 $A200): ходьба влево — кадры 2..7; копии в стр.3
         2: (0xE900, 0, 10),        # варвар, банк 1 (стр.0 $8C00), копии за ним до конца страницы
         3: (0x5D00, 0, 15, 1)},    # варвар, банк 2 (стр.3 $2800), копии в стр.1 перед картой
-    2: {}, 3: {}, 4: {}, 5: {}, 6: {}, 7: {}, 8: {}, 9: {},
+    # Великаны: зеркальный двухплоскостной блит стоит 146 ед. кадра против 107 прямого (замер
+    # blitcost 2026-09-02) — разворот четырёх байт на строку через rev256. Ходовые кадры (у голема
+    # и минотавра 14..17, у огра 14..21, у демона 0..17) держим готовыми копиями в свободных
+    # хвостах страниц; движок тогда идёт прямым путём. Записей в vm_tab четыре — ровно два великана.
+    2: {14: (0x5D00, 14, 4, 1), 15: (0x6200, 14, 4, 1)},
+    3: {16: (0x5D00, 14, 8, 1), 17: (0x6700, 14, 8, 1)},
+    4: {18: (0xD700, 14, 4, 1), 19: (0xDC00, 14, 4, 1), 20: (0xE100, 0, 18, 1), 21: (0xE900, 0, 18, 0)},
+    5: {14: (0x5D00, 14, 4, 1), 15: (0x6200, 14, 4, 1)},
+    6: {18: (0xDC00, 14, 4, 1), 19: (0xE100, 14, 4, 1), 16: (0xE600, 14, 8, 1), 17: (0xEF00, 14, 8, 1)},
+    7: {},
+    8: {14: (0xD600, 14, 4, 1), 15: (0xDB00, 14, 4, 1), 20: (0xE000, 0, 18, 1), 21: (0xE200, 0, 18, 0)},
+    9: {16: (0x2800, 14, 8, 3), 17: (0x3A00, 14, 8, 3)},   # на уровне 9 огр в 16 цветах: кадр 576 Б
 }
 MIRRORS = MIRRORS_BY_LEVEL[1]
 LEVEL_NOW = 1
@@ -536,10 +547,12 @@ def mirror_table(banks):
         addr, first, nfr = spec[0], spec[1], spec[2]
         cpage = spec[3] if len(spec) > 3 else pg
         frames = parse_sprite_asm(SRC / f'{BANK_FILE[bank]}.asm')[first:first+nfr]
-        lo = base + first*FRAME_BYTES
-        hi = lo + len(frames)*FRAME_BYTES
-        rows.append(bytes([0x10 | (pg << 2), lo >> 8, hi >> 8,
-                           (addr - lo) & 0xFF, ((addr - lo) >> 8) & 0xFF, 0x10 | (cpage << 2)]))
+        two = 1 if bank in BANK_2PLANE else 0        # бит 0 порта = две плоскости, у копий тот же формат
+        fb = FRAME_BYTES_2P if two else FRAME_BYTES
+        lo = base + first*fb
+        hi = lo + len(frames)*fb
+        rows.append(bytes([0x10 | (pg << 2) | two, lo >> 8, hi >> 8,
+                           (addr - lo) & 0xFF, ((addr - lo) >> 8) & 0xFF, 0x10 | (cpage << 2) | two]))
     while len(rows) < 4:
         rows.append(bytes([0, 0xFF, 0, 0, 0, 0]))   # пустая запись: LO выше любого адреса
     return b''.join(rows[:4])
@@ -618,16 +631,18 @@ def build_kvaz(level_no=1, start=None):
             addr, first, nfr = spec[0], spec[1], spec[2]
             cpage = spec[3] if len(spec) > 3 else page
             frames = parse_sprite_asm(SRC / f'{BANK_FILE[bank]}.asm')[first:first+nfr]
-            end = addr + len(frames)*FRAME_BYTES
+            two = BANK_2PLANE.get(bank)                 # великаны лежат в двух плоскостях: кадр 288 Б
+            fb = FRAME_BYTES_2P if two else FRAME_BYTES
+            end = addr + len(frames)*fb
             assert end <= 65536, (BANK_FILE[bank], hex(end))
             assert all(v == 0 for v in pages[cpage][addr:end]), f'область зеркал банка {bank} занята'
             for k, fr in enumerate(frames):
                 flip = [row[::-1] for row in fr]
-                pages[cpage][addr + k*FRAME_BYTES: addr + (k+1)*FRAME_BYTES] = \
-                    sprite_frame_bytes(flip, bank_pmap(bank))
+                pages[cpage][addr + k*fb: addr + (k+1)*fb] = \
+                    sprite_frame_bytes_2p(flip, two) if two else sprite_frame_bytes(flip, bank_pmap(bank))
             # для движка: страница, границы адреса кадра по старшему байту и смещение до копии
-            lo = base + first*FRAME_BYTES
-            hi = lo + len(frames)*FRAME_BYTES
+            lo = base + first*fb
+            hi = lo + len(frames)*fb
             mirr.append((page, lo >> 8, hi >> 8, (addr - lo) & 0xFFFF, bank, cpage))
     while len(mirr) < MIRROR_SLOTS:
         mirr.append((0, 0xFF, 0, 0, 0, 0))       # пустая запись: LO выше любого адреса

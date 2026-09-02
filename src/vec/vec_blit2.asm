@@ -6,16 +6,23 @@
 ; Пропуска пустых строк (skip) в этом формате нет — у крупного спрайта он почти не срабатывал.
 
 vec_blit2:			; вход как у ds_direct: vec_spr_src, vec_spr_hcol, vec_spr_lbot, vec_spr_ny
-	ld a,3
-	ld (vec_col_cnt),a
+	ld a,38			; цена колонки: 107 ед. на три колонки по 32 строки (blitcost) + запас
+	ld (vec_spr_colcost),a
 	di
 	ld hl,0
 	add hl,sp
 	ld (vec_sp_save),hl
 	ld hl,(vec_spr_src)
 	ld sp,hl
-	ld a,(vec_spr_port)
+	ld a,(vec_spr_port)	; vec_spr_curport уже записан в ds_direct
 	out (KV_PORT),a
+	; Бюджет ПО КОЛОНКАМ, как у шестнадцатицветного пути. Раньше этот блит шёл без бюджета вовсе:
+	; 107 ед. кадра (замер blitcost) вслепую — перекрывал VBlank, терял прерывание, и бюджет ждал
+	; следующий кадр. Цена колонки — vec_spr_colcost из ds_cost (с запасом).
+b2_budget:
+	ld hl,b2_col
+	ld (vec_blit_ret),hl
+	jp vec_spr_colbud
 b2_col:
 	ld a,(vec_spr_hcol)
 	ld h,a
@@ -99,5 +106,5 @@ b2_col_end:
 	inc (hl)
 	ld hl,vec_col_cnt
 	dec (hl)
-	jp nz,b2_col
+	jp nz,b2_budget
 	jp vec_stk_leave
