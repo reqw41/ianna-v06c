@@ -21,6 +21,7 @@ vec_start:
 	out (KV_PORT),a		; квазидиск выкл
 	ld (current_level),a	; уровень 1: загрузчик читает эту ячейку (инициализация ниже — уже поздно)
 	call vec_fdd_load	; загрузка с дискеты, если квазидиск пуст (маркер 'IA' в стр.3 $C800)
+	call vec_load_leveltab	; палитра, банки спрайтов и передние тайлы — из набора уровня
     endif
 	call cls
 	call vec_init_rev256
@@ -85,6 +86,24 @@ vec_to_menu:
 	jp vec_begin_level
 
 ; таблица разворота байта (для зеркальных спрайтов), выровнена на страницу
+; Таблицы уровня из квазидиска в ОЗУ. Раньше они были константами в ROM, и после смены набора
+; движок читал спрайты по адресам ТОГО уровня, при котором собирали образ.
+vec_load_leveltab:
+	di			; прерывание играет музыку из своего окна и сбило бы наше
+	ld a,LEVELTAB_PORT
+	out (KV_PORT),a
+	ld hl,LEVELTAB
+	ld de,vec_palette
+	ld bc,LEVELTAB_LEN
+	call z_ldir
+	xor a
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	ld a,1
+	ld (vec_pal_dirty),a
+	ei
+	ret
+
 vec_init_rev256:
 	ld hl,rev256
 	ld c,0

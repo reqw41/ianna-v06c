@@ -213,14 +213,19 @@ def bank_tab_lines(banks):
         lines.append(f'\tdb KV_STK_P{pg},${base >> 8:02X}\t; {b} {BANK_FILE.get(b, "-")}{"" if b in by else " (нет)"}')
     return lines
 
-def palette_lines():
+def level_palette():
+    """Палитра уровня с учётом перестановки номеров цветов (COLOR_SWAPS): регистры едут вместе с
+    номерами, поэтому цвет на экране остаётся прежним."""
     pal = msx_palette((SRC / 'test.plt').read_bytes())
-    if not C8MODE:
-        out = list(pal)                      # регистры едут вместе с номерами: цвет остаётся прежним
-        for c in range(16):
-            out[PERM[c]] = pal[c]
-        pal = out
-    return ['vec_palette:', '\tdb ' + ', '.join(f'${c:02X}' for c in pal)]
+    if C8MODE:
+        return pal
+    out = list(pal)
+    for c in range(16):
+        out[PERM[c]] = pal[c]
+    return out
+
+def palette_lines():
+    return ['vec_palette:', '\tdb ' + ', '.join(f'${c:02X}' for c in level_palette())]
 
 BANK_ENEMY = {7:20, 8:21, 9:22, 10:23, 11:26, 12:24, 13:25, 14:27, 15:27, 16:28, 17:28, 18:29, 19:29, 20:30, 21:30}
 
@@ -261,6 +266,25 @@ MIRRORS = {
 MIRROR_SLOTS = 4        # столько записей в таблице движка (vec_mirr.asm)
 if os.environ.get('IANNA_NOMIRRDATA') == '1':
     MIRRORS = {}        # сборка без готовых зеркал — для сверки картинки
+
+# Таблицы, зависящие от уровня: палитра, банки спрайтов, передние тайлы. Раньше они были константами
+# в ROM, из-за чего в игре можно было жить только на одном уровне — набор менялся, а таблицы оставались
+# от того уровня, при котором собирали (ловилось как «герой в прыжке стал скелетом»). Теперь блок лежит
+# в самом наборе и читается в ОЗУ при старте уровня. Место — стр.2 $BC40 (хвост банка мумии), оно
+# попадает в окно $A000-$DFFF, так что читается обычным ldir без стековых плясок.
+LEVELTAB_ADDR = 0xBC40
+LEVELTAB_PAGE = 2
+
+def level_table_blob(pal, banks, fg):
+    by = {b: (pg, base) for b, pg, base, _ in banks}
+    out = bytearray(pal)                       # 16 Б палитры
+    for b in range(2, 22):                     # 40 Б: порт стека страницы + старший байт базы банка
+        pg, base = by.get(b, (0, 0))
+        out += bytes([0x10 | (pg << 2), base >> 8])
+    out.append(len(fg))                        # передних тайлов
+    for i, t in enumerate(fg):
+        out += bytes([t, i])                   # пары (номер тайла, индекс)
+    return bytes(out)
 
 def build_kvaz(level_no=1, start=None):
     pages = [bytearray(65536) for _ in range(4)]
@@ -381,6 +405,11 @@ def build_kvaz(level_no=1, start=None):
         for slot, mus in ((0xC000, 'music-menu.mus'), (0xD000, 'music-intro.mus')):
             mb = (SRC / mus).read_bytes(); assert len(mb) <= 0x1000
             pages[2][slot:slot+len(mb)] = mb
+    if not C8MODE:
+        blob = level_table_blob(level_palette(), banks, fg)
+        end = LEVELTAB_ADDR + len(blob)
+        assert all(v == 0 for v in pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end]), 'область таблиц уровня занята'
+        pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end] = blob
     assert all(len(p) == 65536 for p in pages), [len(p) for p in pages]
     edd = b''.join(bytes(p) for p in pages)
     (BUILD / 'ianna.edd').write_bytes(edd)
@@ -401,9 +430,14 @@ def build_kvaz(level_no=1, start=None):
         st = info['header'][18] * info['w'] + info['header'][17]
         pal0 = [(((c[2] >> 1) << 6) | (c[1] << 3) | c[0]) for c in scrpals[st]]
         lines += ['vec_palette:', '\tdb ' + ', '.join(f'${c:02X}' for c in pal0 + pal0) + '\t; стартовый экран, зеркалом (бит 3 = 0)']
+    # в 16-цветном режиме палитра уехала в блок таблиц уровня (level_table_blob)
+    if C8MODE:
+        lines += [''] + bank_tab_lines(banks) + [''] + fg_lut_lines(fg)
     else:
-        lines += palette_lines()
-    lines += [''] + bank_tab_lines(banks) + [''] + fg_lut_lines(fg)
+        lines += ['', '; таблицы уровня лежат в самом наборе (см. level_table_blob) и читаются в ОЗУ при старте',
+                  f'LEVELTAB\tequ ${LEVELTAB_ADDR:04X}',
+                  f'LEVELTAB_PORT\tequ ${0x20 | LEVELTAB_PAGE:02X}\t; окно $A000-$DFFF -> страница {LEVELTAB_PAGE}',
+                  f'LEVELTAB_LEN\tequ {len(level_table_blob(level_palette(), banks, fg))}']
     if C8MODE == 'c8':
         lines += ['; карта «цвет кода 0..15 -> слот» для fillArea (шкалы панели); лежит сразу за fg_tile_lut (страница)',
                   'vec_color_map:', '\tdb ' + ', '.join(str(v) for v in pm_panel)]

@@ -594,7 +594,13 @@ drawFGTile:
 	call vec_budget
 	pop af
 	ld hl,fg_tile_pairs	; передних тайлов дюжина — ищем перебором пар, таблица на 256 Б не окупалась
-	ld b,FG_LUT_N
+	ld b,a
+	ld a,(fg_lut_n)		; число пар приходит из набора уровня
+	or a
+	jp z,dft_exit_b
+	ld c,a
+	ld a,b
+	ld b,c
 dft_find:
 	cp (hl)
 	inc hl
@@ -602,6 +608,8 @@ dft_find:
 	inc hl
 	dec b
 	jp nz,dft_find
+	jp dft_exit
+dft_exit_b:
 	jp dft_exit
 dft_found:
 	ld a,(hl)

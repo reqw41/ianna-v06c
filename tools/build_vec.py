@@ -185,6 +185,29 @@ def consts_from(path):
             out.append(l)
     return '\n'.join(out) + '\n'
 
+def check_overlays_in_edd():
+    """Оверлеи меню и паузы живут в квазидиске и зовут функции движка по адресам ТОЙ сборки ROM, при
+    которой собраны. Порядок сборки замкнут в кольцо: build_edd кладёт в образ .bin от предыдущего
+    build_vec, а build_vec берёт из образа адреса. Если не сделать второй проход, в образе останется
+    старый оверлей: он пишет по чужим адресам, и это ловится не сразу (у нас — одним испорченным
+    байтом палитры, экран позеленел только после того, как в этот слот переехал заметный цвет)."""
+    edd = ROOT / 'build/ianna.edd'
+    if not edd.exists():
+        return
+    data = edd.read_bytes()
+    stale = []
+    for name, addr in (('menu_ovl.bin', 0x8440), ('pause_ovl.bin', 0x9000), ('menu_ram.bin', 0x9800)):
+        f = ROOT / 'build' / name
+        if not f.exists():
+            continue
+        b = f.read_bytes()
+        off = 3 * 65536 + addr
+        if data[off:off + len(b)] != b:
+            stale.append(name)
+    if stale:
+        print(f'ВНИМАНИЕ: в build/ianna.edd оверлеи от прежней сборки ({", ".join(stale)}) — '
+              f'пересоберите: python3 tools/data/build_edd.py && python3 tools/build_vec.py')
+
 def main():
     TR.mkdir(parents=True, exist_ok=True)
     slice_ianna(); make_vars(); make_score_font(); make_music()
@@ -319,6 +342,7 @@ def main():
         print(f'OK: build/{name}.rom {size} Б, конец = ${0x100+size:04X} (граница VRAM $8000, свободно {0x8000-0x100-size} Б)')
         if not DEMO:
             build_menu_bins(lst)
+            check_overlays_in_edd()
         return 0
     return 1
 
