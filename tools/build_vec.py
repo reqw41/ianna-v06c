@@ -370,7 +370,8 @@ def main():
 
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
-    need = ['depack', 'z_ldir', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', '_atVAR_Reg6', '_atVAR_Reg11', '_atVAR_Reg12', 'language', 'joystick_state', 'music_playing',
+    need = ['depack', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream',
+            'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', '_atVAR_Reg6', '_atVAR_Reg11', '_atVAR_Reg12', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
             'get_player_max_exp',
@@ -393,11 +394,13 @@ def build_menu_bins(lst):
     assert not missing, f'нет символов для меню: {missing}'
     out = ['; сгенерировано build_vec (символы игры для оверлея меню)']
     for line in lst.split('\n'):                      # константы набора уровня (SCRPAL, LEVELTAB_PORT...)
-        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|BLIT2SRC)\s+=\s+\$([0-9A-F]{2,4})', line)
+        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|BLIT2SRC|FDD_TAB)\s+=\s+\$([0-9A-F]{2,4})', line)
         if m: out.append(f'{m.group(1)}\tequ ${m.group(2)}')
     for n, v in syms.items():
         out.append(f'{n}\tequ ${v:04X}')
-    out += [f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 3', 'MB_SEC_MENU\tequ 3', 'MB_TRK_SLIDES\tequ 75']
+    out += [f'FB_ORG\tequ ${syms["string_area"] + 1216:04X}'   # загрузчик банков: за буфером сектора,
+            ,                                                   # таблицей длин и рецептом
+            f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 3', 'MB_SEC_MENU\tequ 3', 'MB_TRK_SLIDES\tequ 75']
     (ROOT / 'build/menu_syms.asm').write_text('\n'.join(out) + '\n')
     sys.path.insert(0, str(ROOT / 'tools/data'))
     from texts_ru import encode, MENU, INTRO
@@ -447,7 +450,8 @@ def build_menu_bins(lst):
     for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x800),
                                 (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9000 - 0x8440),
                                 (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x9000),
-                                (VEC / 'blit2_ovl.asm', 'blit2.bin', 0x100)):
+                                (VEC / 'blit2_ovl.asm', 'blit2.bin', 0x100),
+                                (VEC / 'fdd_banks.asm', 'fdd_banks.bin', 0x9600 - 0x9280)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())
         r = subprocess.run([str(ZASM), '--8080', '-uwy', work.name, f'{binout}.lst', binout],

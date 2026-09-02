@@ -94,6 +94,38 @@ img[0x80:0x80 + len(rom)] = rom
 for start, data in level_data:
     img[start*TRACK:start*TRACK + len(data)] = data
 
+# --- библиотека банков: каждый банк лежит на дискете ОДИН раз, наборы ссылаются на него рецептом ---
+# Один и тот же тролль нужен пяти уровням; раньше он лежал в каждом наборе, потому что банк в наборе
+# стоит по своему для этого уровня адресу. Теперь наборы идут без банков (см. build_levels), а куда
+# какой банк положить в квазидиске, сказано в рецепте — дорожку и сектор проставляем здесь.
+import json
+lib_at = {}
+sec_free = [(tr, s) for tr in free for s in range(1, 11)]
+cursor = 0
+for pak in sorted((ROOT / 'build/levels').glob('bank*.pak')):
+    data = pak.read_bytes()
+    nsec = (len(data) + SEC - 1) // SEC
+    while cursor + nsec <= len(sec_free) and sec_free[cursor][0] != sec_free[cursor + nsec - 1][0] \
+            and sec_free[cursor][1] != 1:
+        cursor += 1                      # начинать банк с начала дорожки, если не помещается в остаток
+    if cursor + nsec > len(sec_free):
+        sys.exit(f'!! библиотека не влезла: {pak.name}')
+    tr, sc = sec_free[cursor]
+    at = tr*TRACK + (sc - 1)*SEC
+    img[at:at + len(data)] = data
+    lib_at[pak.stem[4:]] = (tr, sc)      # bank{key}.pak -> ключ
+    cursor += nsec
+print(f'библиотека банков: {len(lib_at)} банков, '
+      f'{sum((ROOT / "build/levels" / f"bank{k}.pak").stat().st_size for k in lib_at)/1024:.0f} КБ')
+
+for n, start, ln in placed:                     # прошить позиции банков в рецепты наборов
+    rec = ROOT / f'build/levels/level{n}.rec.json'
+    if not rec.exists(): continue
+    for e in json.loads(rec.read_text()):
+        tr, sc = lib_at[e['key']]
+        at = start*TRACK + e['off']
+        img[at] = tr; img[at + 1] = sc
+
 def pack_picture(vrm):
     """Дамп VRAM 32 КБ -> [4 смещения по 2 байта][сжатые плоскости подряд]. Плоскость жмётся
     отдельно: распаковщик кладёт каждую по своему адресу VRAM, а целиком 32 КБ распаковывать

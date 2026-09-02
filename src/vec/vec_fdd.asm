@@ -16,6 +16,8 @@ FDD_BUF		equ string_area		; буфер сектора (1К)
 FDD_TAB		equ string_area+1024	; таблица длин блоков (64 Б)
 FDD_UNPACK	equ $C000	; куда распаковывать блок (VRAM: экран при загрузке не нужен)
 FDD_SRC		equ $8000	; куда читать сжатый блок (VRAM, вне окна квазидиска $A000-$DFFF)
+KV_WIN_BANKS	equ $43		; окно $8000-$9FFF, страница 3: там лежит загрузчик банков
+FDD_BANKCODE	equ $9280	; его адрес в наборе уровня
 
 vec_fdd_load:
 	ld a,KV_WIN_MUSIC	; маркер уже есть — квазидиск заполнен снаружи, читать нечего
@@ -45,14 +47,13 @@ vfl_go:
 	call vfl_restore
 	call vfl_seek		; B шагов внутрь
 	call vfl_fill		; первый сектор -> буфер
-	ld hl,FDD_TAB		; таблица длин блоков
-	ld bc,64
+	ld hl,FDD_TAB		; таблица длин блоков, за ней рецепт банков (см. fdd_banks.asm)
+	ld bc,64+128
 	call vfl_stream
-	call vfl_bar_init	; полоса прогресса: шрифта при первой загрузке ещё нет, поэтому просто полоса
+	call vfl_pal		; экран гасим палитрой: VRAM на время загрузки — буфер
 	xor a
 	ld (vfl_blk),a
 vfl_block:
-	call vfl_bar		; закрасить колонку, соответствующую номеру блока
 	ld a,(vfl_blk)
 	add a,a
 	ld e,a
@@ -77,6 +78,20 @@ vfl_next:
 	ld (vfl_blk),a
 	cp 32
 	jp nz,vfl_block
+	; Банки спрайтов лежат на дискете отдельной библиотекой — по одному разу, а не в каждом
+	; наборе. Кладёт их по местам код из набора (стр.3 $9280): копируем его в string_area
+	; (строки уровня попадут туда позже) и зовём — примитивы этого загрузчика ему ещё доступны.
+	di				; ISR играет музыку из своего окна и вернул бы ТЕНЬ порта,
+	ld a,KV_WIN_BANKS		; закрыв наше окно посреди копирования — держим прерывания
+	out (KV_PORT),a
+	ld hl,FDD_BANKCODE
+	ld de,string_area+1216		; за буфером сектора (1К), таблицей длин и рецептом
+	ld bc,512
+	call z_ldir
+	xor a
+	out (KV_PORT),a
+	ei
+	call string_area+1216
 	ld a,KV_WIN_MUSIC	; маркер: набор загружен
 	out (KV_PORT),a
 	ld a,'I'
@@ -94,20 +109,6 @@ vfl_done:
 ; палитрой (всё чёрное, кроме цвета 1), а полосу рисуем в плоскости младшего бита ($E000-$FFFF):
 ; её загрузка не трогает, значит видна только полоса.
 VFL_BAR_L	equ 130
-vfl_bar_init:
-	call vfl_pal		; палитра защёлкивается только в кадровом гасящем, поэтому пишем
-	ld hl,$E000		; её ещё и на каждом блоке (см. vfl_bar) — какая-то запись попадёт
-	ld b,0
-	ld c,32
-vfb_clr0:
-	ld (hl),0
-	inc hl
-	dec b
-	jp nz,vfb_clr0
-	dec c
-	jp nz,vfb_clr0
-	ret
-
 vfl_pal:
 	ld c,0
 vfb_pal:
@@ -126,20 +127,6 @@ vfb_p2:
 	ld a,c
 	cp 16
 	jp nz,vfb_pal
-	ret
-
-vfl_bar:
-	call vfl_pal		; повторяем установку палитры: одна из записей попадёт в гасящий
-	ld a,(vfl_blk)
-	add a,$E0
-	ld h,a
-	ld l,VFL_BAR_L
-	ld c,8
-vfb_fill:
-	ld (hl),$FF
-	dec l
-	dec c
-	jp nz,vfb_fill
 	ret
 
 ; --- блок 8К из VRAM $C000 в квазидиск: страница blk/8, смещение (blk%8)*8192 ---

@@ -218,6 +218,8 @@ BANK_2PLANE_ALL = {14: {1: 0, 7: 1, 2: 1, 8: 2, 4: 3, 6: 3, 11: 3},   # голе
                16: {1: 0, 2: 1, 3: 1, 7: 1, 8: 1, 9: 2, 12: 2, 13: 2, 4: 3, 5: 3, 6: 3, 11: 3},
                17: {1: 0, 2: 1, 3: 1, 7: 1, 8: 1, 9: 2, 12: 2, 13: 2, 4: 3, 5: 3, 6: 3, 11: 3}}
 BANK_2PLANE = {}       # заполняется в build_kvaz по уровню
+BANK_BLOBS = {}        # банк -> (страница, база, содержимое): библиотека банков для дискеты
+SKIP_BANKS = os.environ.get('IANNA_SKIP_BANKS') == '1'   # собрать набор без банков
 FRAME_BYTES_2P = 288
 
 def sprite_frame_bytes_2p(frame, cmap):
@@ -401,8 +403,10 @@ COLOR_TARGET_BY_LEVEL = {
     3: {0: 0, 1: 0, 2: 4, 3: 5, 4: 6, 5: 7, 6: 8, 7: 9, 8: 10, 9: 11,
         10: 12, 11: 13, 12: 14, 13: 14, 14: 15, 15: 15},
 }
-# Уровни 4, 5, 6 и 8 живут по той же схеме: фон у всех укладывается в двенадцать-тринадцать красок.
-for _l in (4, 5, 6, 8):
+# Перестановка ОДНА НА ВСЕ УРОВНИ: фон каждого укладывается в двенадцать-тринадцать красок, а
+# одинаковая перестановка нужна библиотеке банков — иначе «тот же» варвар для уровня 1 и для
+# остальных получается разным набором байт, и хранить его пришлось бы дважды.
+for _l in (1, 4, 5, 6, 7, 8, 9):
     COLOR_TARGET_BY_LEVEL[_l] = dict(COLOR_TARGET_BY_LEVEL[3])
 
 def color_perm(level=1):
@@ -574,6 +578,21 @@ def build_kvaz(level_no=1, start=None):
     for n in range(256):
         b = bg_tile_bytes(tile_pixels(sr5, n), pm_tiles)   # c8: 96 Б, шаг 128 (хвост нули)
         pages[0][BG_TILES_BASE + n*128: BG_TILES_BASE + n*128 + len(b)] = b
+    def bank_blob(bank, page, base, limit):
+        """Содержимое банка одним куском — для библиотеки на дискете: один и тот же тролль стоял
+        в пяти наборах пять раз, потому что в каждом лежал по своему адресу."""
+        frames = parse_sprite_asm(SRC / f'{BANK_FILE[bank]}.asm')
+        two = BANK_2PLANE.get(bank) if not C8MODE else None
+        fb = FRAME_BYTES_2P if two else FRAME_BYTES
+        frames = frames[:(limit - base) // fb]
+        out = bytearray()
+        for fr in frames:
+            out += sprite_frame_bytes_2p(fr, two) if two else sprite_frame_bytes(fr, bank_pmap(bank))
+        return bytes(out)
+    BANK_BLOBS.clear()
+    for bank, page, base, limit in banks:
+        BANK_BLOBS[bank] = (page, base, bank_blob(bank, page, base, limit))
+
     def put_bank(page, base, name, limit, pmap, bank=None):
         frames = parse_sprite_asm(SRC / f'{name}.asm')
         assert base % 256 == 0, (name, hex(base))
@@ -587,8 +606,9 @@ def build_kvaz(level_no=1, start=None):
         for k, fr in enumerate(frames):
             blob = sprite_frame_bytes_2p(fr, two) if two else sprite_frame_bytes(fr, pmap)
             pages[page][base + k*fb: base + (k+1)*fb] = blob
-    for bank, page, base, limit in banks:
-        put_bank(page, base, BANK_FILE[bank], limit, bank_pmap(bank), bank)
+    if not SKIP_BANKS:                     # с SKIP_BANKS набор идёт без банков: их кладёт
+        for bank, page, base, limit in banks:   # загрузчик из библиотеки на дискете
+            put_bank(page, base, BANK_FILE[bank], limit, bank_pmap(bank), bank)
     # зеркальные копии кадров (см. MIRRORS выше): тот же формат, что у прямых, но пиксели отражены
     mirr = []
     if not C8MODE:
@@ -677,6 +697,11 @@ def build_kvaz(level_no=1, start=None):
         pz = BUILD / 'pause_ovl.bin'
         if pz.exists():
             b = pz.read_bytes(); pages[3][0x9000:0x9000+len(b)] = b
+        # загрузчик банков: ROM-загрузчик копирует его отсюда в ОЗУ и зовёт (см. fdd_banks.asm)
+        fb = BUILD / 'fdd_banks.bin'
+        if fb.exists():
+            b = fb.read_bytes(); assert len(b) <= 0x9600 - 0x9280, len(b)
+            pages[3][0x9280:0x9280+len(b)] = b
     if ovl.exists() and blob.exists() and not C8MODE and level_no == 1:
         b = ovl.read_bytes(); pages[3][0x8440:0x8440+len(b)] = b
         b = blob.read_bytes(); pages[3][0x9800:0x9800+len(b)] = b
