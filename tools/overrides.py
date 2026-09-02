@@ -69,4 +69,32 @@ OVERRIDES = {
     ('scripts.asm', 169): ['ld (hl),a'],                                # ld (ix+3),a
     ('scripts.asm', 171): ['ld hl,(z_iy)'],                             # push iy / pop hl = HL := IY
     ('scripts.asm', 172): [],
+
+    # ianna_main_src.asm, RunScripts и runs_object_loop (428..488) — тело тика: восемь сущностей,
+    # у пяти объектов ещё и обход циклом. HL здесь не нужен ни на входе, ни на выходе (в оригинале
+    # его всё равно портит run_script), поэтому все push hl/pop hl вокруг работы с z_ix/z_iy лишние,
+    # а push ix / pop ix — это просто ld hl,(z_ix) / push hl и pop hl / ld (z_ix),hl.
+    ('ianna_main_src.asm', 431): ['ld hl,ENTITY_PLAYER_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 434): ['ld hl,scratch_area_player', 'ld (z_iy),hl'],
+    ('ianna_main_src.asm', 438): ['ld hl,ENTITY_PLAYER_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 444): ['ld hl,ENTITY_ENEMY1_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 445): ['ld a,(hl)'],                     # ld a,(ix+0); HL = z_ix
+    ('ianna_main_src.asm', 446): ['inc hl', 'or (hl)'],             # or (ix+1)
+    ('ianna_main_src.asm', 451): ['ld hl,scratch_area_enemy1', 'ld (z_iy),hl'],
+    ('ianna_main_src.asm', 453): ['ld hl,ENTITY_ENEMY1_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 456): ['ld hl,ENTITY_ENEMY2_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 457): ['ld a,(hl)'],
+    ('ianna_main_src.asm', 458): ['inc hl', 'or (hl)'],
+    ('ianna_main_src.asm', 463): ['ld hl,scratch_area_enemy2', 'ld (z_iy),hl'],
+    ('ianna_main_src.asm', 465): ['ld hl,ENTITY_ENEMY2_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 469): ['ld hl,ENTITY_OBJECT1_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 470): ['ld hl,scratch_area_obj1', 'ld (z_iy),hl'],
+    ('ianna_main_src.asm', 472): ['ld hl,(z_iy)', 'push hl'],       # push iy
+    ('ianna_main_src.asm', 473): ['ld hl,(z_ix)', 'push hl'],       # push ix; HL остаётся z_ix
+    ('ianna_main_src.asm', 475): ['ld a,(hl)'],                     # ld a,(ix+0) — push bc HL не трогает
+    ('ianna_main_src.asm', 476): ['inc hl', 'or (hl)'],             # or (ix+1)
+    ('ianna_main_src.asm', 481): ['pop hl', 'ld (z_ix),hl'],        # pop ix
+    ('ianna_main_src.asm', 482): ['pop hl', 'ld (z_iy),hl'],        # pop iy
+    ('ianna_main_src.asm', 484): ['ld hl,(z_ix)', 'add hl,de', 'ld (z_ix),hl'],   # add ix,de
+    ('ianna_main_src.asm', 486): ['ld hl,(z_iy)', 'add hl,de', 'ld (z_iy),hl'],   # add iy,de
 }
