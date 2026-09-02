@@ -46,13 +46,8 @@ vfl_go:
 	call vfl_seek		; B шагов внутрь
 	call vfl_fill		; первый сектор -> буфер
 	ld hl,FDD_TAB		; таблица длин блоков
-	ld b,64
-vfl_tb:
-	call vfl_byte
-	ld (hl),a
-	inc hl
-	dec b
-	jp nz,vfl_tb
+	ld bc,64
+	call vfl_stream
 	call vfl_bar_init	; полоса прогресса: шрифта при первой загрузке ещё нет, поэтому просто полоса
 	xor a
 	ld (vfl_blk),a
@@ -71,16 +66,7 @@ vfl_block:
 	or c
 	jp z,vfl_next		; нулевой блок — в квазидиске и так нули
 	ld hl,FDD_SRC
-vfl_rd:
-	push bc
-	call vfl_byte
-	pop bc
-	ld (hl),a
-	inc hl
-	dec bc
-	ld a,b
-	or c
-	jp nz,vfl_rd
+	call vfl_stream		; сжатый блок целиком
 	ld hl,FDD_SRC
 	ld de,FDD_UNPACK
 	call depack		; -> 8К в VRAM $C000
@@ -230,24 +216,40 @@ vfl_fill:
 	out ($1B),a		; обе стороны прочитаны — шаг на следующую дорожку
 	jp vfl_wait
 
-vfl_byte:			; A = очередной байт потока; HL вызывающего НЕ трогаем
-	push hl			; (он держит адрес назначения — из-за этого данные шли мимо)
+; Поток с дискеты: HL = приёмник, BC = сколько байт. Копируем из буфера сектора напрямую —
+; на байт уходит ~25 тактов вместо ~65, а набор уровня это 80 КБ.
+vfl_stream:
+	push hl
 	ld hl,(vec_fdd_ptr)
-	ld a,h
-	cp 0+((FDD_BUF+1024)>>8)
-	jp nz,vfl_by1
-	ld a,l
-	cp 0+((FDD_BUF+1024)&255)
-	jp nz,vfl_by1
-	push bc
-	call vfl_fill		; буфер кончился — следующий сектор
-	pop bc
-	ld hl,(vec_fdd_ptr)
-vfl_by1:
-	ld a,(hl)
-	inc hl
-	ld (vec_fdd_ptr),hl
+	ex de,hl		; DE = указатель в буфере сектора
 	pop hl
+vfl_st1:
+	ld a,d
+	cp 0+((FDD_BUF+1024)>>8)
+	jp nz,vfl_st2
+	ld a,e
+	cp 0+((FDD_BUF+1024)&255)
+	jp nz,vfl_st2
+	push hl			; буфер кончился — читаем следующий сектор
+	push bc
+	call vfl_fill
+	pop bc
+	pop hl
+	push hl
+	ld hl,(vec_fdd_ptr)
+	ex de,hl
+	pop hl
+vfl_st2:
+	ld a,(de)
+	inc de
+	ld (hl),a
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	jp nz,vfl_st1
+	ex de,hl		; вернуть указатель на место
+	ld (vec_fdd_ptr),hl
 	ret
 
 ; --- примитивы ВГ93 (как в рабочем блоб-загрузчике экрана меню) ---
