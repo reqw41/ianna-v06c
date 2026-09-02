@@ -43,6 +43,34 @@ isr_nopal:
 	; --- клавиатура -> joystick_state (биты: 0 up,1 down,2 left,3 right,4 fire,5 fire2) ---
 	call get_joystick
 	ld (joystick_state),a
+	; --- H/J/X: сканируем ЗДЕСЬ, в гасящем. Порт $03 — это ещё и регистр вертикального скролла,
+	; и опрос посреди кадра сдвигал картинку: экран подёргивался (get_keyboard звался каждый тик
+	; из mainloop — проверка паузы). Теперь get_keyboard только читает vec_keys.
+	ld a,$82		; порт B ППИ -> вход
+	out ($00),a
+	ld a,$DF		; ряд 5: H = бит 0, J = бит 2
+	out ($03),a
+	in a,($02)
+	cpl
+	and $05
+	ld c,a
+	ld a,$7F		; ряд 7: X = бит 0 -> кладём в бит 3
+	out ($03),a
+	in a,($02)
+	cpl
+	rrca
+	rlca
+	rlca
+	rlca
+	and $08
+	or c
+	ld (vec_keys),a
+	ld a,$80		; вернуть режим ППИ, бордюр и скролл
+	out ($00),a
+	ld a,1
+	out ($02),a
+	ld a,$FF
+	out ($03),a
 	; хук клавиатуры (экран пароля): сканирование только здесь, в VBlank — порт $03 это ещё и
 	; вертикальный скролл, дёргать его посреди кадра нельзя (картинка подпрыгивает)
 	ld hl,(vec_key_hook)
@@ -183,64 +211,36 @@ isr_hook_call:
 	jp (hl)
 
 ; get_keyboard: HL = код клавиши MSX -> A != 0, если клавиша нажата.
-; Поддержаны H (меню паузы оригинала) и J (джукбокс): ряд 5 матрицы Вектора = H I J K L M N O.
 KEY_H_CODE	equ $2003
 KEY_J_CODE	equ $8003
 KEY_X_CODE	equ $2005
-get_keyboard:
-	ld a,h
-	cp KEY_H_CODE>>8
-	jp nz,gk_j
-	ld a,l
-	cp KEY_H_CODE&255
-	jp nz,gk_j		; старший байт у KEY_H и KEY_X одинаков ($20) — перебор продолжаем
-	ld c,$01		; H = бит 0
-	jp gk_scan
-gk_j:
+get_keyboard:			; читает маску, снятую в ISR: порт $03 (он же скролл) здесь не трогаем
+	ld a,(vec_keys)
+	ld b,a
 	ld a,h
 	cp KEY_J_CODE>>8
-	jp nz,gk_x
+	jp nz,gk_hx
 	ld a,l
 	cp KEY_J_CODE&255
-	jp nz,gk_x
-	ld c,$04		; J = бит 2
-	jp gk_scan
-gk_x:
-	ld a,h
-	cp KEY_X_CODE>>8
 	jp nz,gk_no
+	ld a,b
+	and $04
+	ret
+gk_hx:				; у H и X старший байт одинаков ($20)
+	cp KEY_H_CODE>>8
+	jp nz,gk_no
+	ld a,l
+	cp KEY_H_CODE&255
+	ld a,b
+	jp z,gk_h
 	ld a,l
 	cp KEY_X_CODE&255
 	jp nz,gk_no
-	ld c,$81		; X: ряд 7 бит 0 (маркер старшего бита = другой ряд)
-gk_scan:
-	di
-	ld a,$82		; порт B ППИ -> вход
-	out ($00),a
-	ld a,$DF		; ряд 5 (H I J K L M N O)
-	ld b,a
-	ld a,c
-	and $80
-	jp z,gk_row
-	ld b,$7F		; ряд 7 (X Y Z [ \\ ] ^ ПРОБЕЛ)
-	ld a,c
-	and $7F
-	ld c,a
-gk_row:
 	ld a,b
-	out ($03),a
-	in a,($02)
-	cpl
-	and c
-	ld c,a
-	ld a,$80		; вернуть режим и скролл (как в get_joystick)
-	out ($00),a
-	xor a
-	out ($02),a
-	ld a,$FF
-	out ($03),a
-	ei
-	ld a,c
+	and $08
+	ret
+gk_h:
+	and $01
 	ret
 gk_no:
 	xor a

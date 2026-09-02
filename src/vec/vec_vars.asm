@@ -80,6 +80,7 @@ vec_pc_char:	ds 128		; символы, ряды 20..23 x 32 колонки (ко
 vec_pc_onoff:	ds 32		; drawScoreOnOff по колонке: 1 = выкл, 2 = вкл
 vec_pc_meter:	ds 64		; шкалы draw_meter по колонке: [0] Y цветной части, [1] высота пустой
 vec_key_hook:	dw 0		; экран пароля: ISR зовёт этот сканер (0 = не звать)
+vec_keys:	db 0		; маска клавиш H/J/X, снятая в ISR (бит0 H, бит2 J, бит3 X)
 vec_key:	db 0		; ASCII нажатой клавиши (0 = ничего)
 vec_ovl_tgt:	dw 0		; адрес функции движка для vec_ovl_call (оверлей паузы)
 vec_in_game:	db 0		; 1 = идёт game (ISR разрешает выход по СТОП)
