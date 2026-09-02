@@ -13,9 +13,8 @@ z_ix_rda:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ld a,(hl)
 	pop hl
@@ -26,9 +25,8 @@ z_ix_rda_nf:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	pop hl
 	ret
@@ -38,9 +36,8 @@ z_iy_rda:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ld a,(hl)
 	pop hl
@@ -50,9 +47,8 @@ z_iy_rda_nf:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	pop hl
 	ret
@@ -69,9 +65,8 @@ z_ix_hl:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ex (sp),hl		; HL=результат... нет: (SP)=старый HL -> вернём через z_ret
 	; сейчас HL=старый HL, (SP)=результат. Нам нужно вернуть результат в HL,
@@ -90,9 +85,8 @@ z_iy_hl:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ex (sp),hl
 	pop hl
@@ -112,15 +106,14 @@ z_ix_rd_b:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld b,(hl)
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -129,15 +122,14 @@ z_ix_rd_c:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld c,(hl)
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -146,15 +138,14 @@ z_ix_rd_d:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld d,(hl)
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -163,15 +154,14 @@ z_ix_rd_e:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld e,(hl)
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -181,16 +171,15 @@ z_ix_rd_h:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	ld (z_tmp),a
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl		; HL=старый HL, (SP)=адрес возврата
 	push af
@@ -203,16 +192,15 @@ z_ix_rd_l:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	ld (z_tmp),a
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	push af
@@ -225,15 +213,14 @@ z_iy_rd_b:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld b,(hl)
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -242,15 +229,14 @@ z_iy_rd_c:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld c,(hl)
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -259,15 +245,14 @@ z_iy_rd_d:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld d,(hl)
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -276,15 +261,14 @@ z_iy_rd_e:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld e,(hl)
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -293,16 +277,15 @@ z_iy_rd_h:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	ld (z_tmp),a
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	push af
@@ -315,16 +298,15 @@ z_iy_rd_l:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	ld (z_tmp),a
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	push af
@@ -343,9 +325,8 @@ z_ix_sta:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ld (hl),a
 	ld hl,(z_ret)
@@ -360,9 +341,8 @@ z_iy_sta:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ld (hl),a
 	ld hl,(z_ret)
@@ -373,15 +353,14 @@ z_ix_st_b:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),b
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -390,15 +369,14 @@ z_ix_st_c:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),c
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -407,15 +385,14 @@ z_ix_st_d:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),d
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -424,15 +401,14 @@ z_ix_st_e:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),e
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -441,15 +417,14 @@ z_iy_st_b:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),b
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -458,15 +433,14 @@ z_iy_st_c:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),c
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -475,15 +449,14 @@ z_iy_st_d:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),d
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
@@ -492,64 +465,57 @@ z_iy_st_e:
 	push af
 	ld a,(hl)
 	inc hl
-	ld (z_ret),hl
+	push hl		; адрес возврата — на стек: [ret+1][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),e
-	ld hl,(z_ret)
+	pop hl
 	pop af
 	ex (sp),hl
 	ret
 ; ld (ix+d),n : после call два байта: d, n
 z_ix_stn:
-	ex (sp),hl
+	ex (sp),hl		; HL=адрес возврата, (SP)=старый HL
 	push af
 	ld a,(hl)		; d
-	inc hl
-	ld (z_ret),hl
+	inc hl			; -> адрес n
+	push hl		; [&n][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
-	ex de,hl		; DE=адрес назначения
-	ld hl,(z_ret)
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
+	ex de,hl		; DE=адрес назначения, HL=старый DE
+	ex (sp),hl		; HL=&n, (SP)=старый DE
 	ld a,(hl)		; n
-	inc hl
-	ld (z_ret),hl
+	inc hl			; HL=адрес возврата (за двумя db)
 	ld (de),a
-	ex de,hl		; DE восстановлен, HL=мусор
-	ld hl,(z_ret)
+	pop de			; DE восстановлен (старая версия оставляла в DE мусор!)
 	pop af
-	ex (sp),hl
+	ex (sp),hl		; HL=старый HL, (SP)=адрес возврата
 	ret
 z_iy_stn:
-	ex (sp),hl
+	ex (sp),hl		; HL=адрес возврата, (SP)=старый HL
 	push af
-	ld a,(hl)
-	inc hl
-	ld (z_ret),hl
+	ld a,(hl)		; d
+	inc hl			; -> адрес n
+	push hl		; [&n][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
-	ex de,hl
-	ld hl,(z_ret)
-	ld a,(hl)
-	inc hl
-	ld (z_ret),hl
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
+	ex de,hl		; DE=адрес назначения, HL=старый DE
+	ex (sp),hl		; HL=&n, (SP)=старый DE
+	ld a,(hl)		; n
+	inc hl			; HL=адрес возврата (за двумя db)
 	ld (de),a
-	ex de,hl
-	ld hl,(z_ret)
+	pop de			; DE восстановлен (старая версия оставляла в DE мусор!)
 	pop af
-	ex (sp),hl
+	ex (sp),hl		; HL=старый HL, (SP)=адрес возврата
 	ret
 
 ; ---------------------------------------------------------------------------
