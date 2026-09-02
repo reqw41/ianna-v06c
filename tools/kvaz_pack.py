@@ -36,12 +36,14 @@ def map_len():
     """Длина карты уровня в квазидиске: у разных уровней она разная (уровень 1 — 8.4 КБ, уровень 2 — 9.3),
     а банк за ней должен начинаться с адреса, кратного 256. Берём фактическую, иначе раскладка,
     посчитанная по чужой длине, наедет на карту (так и вышло с орком на уровне 2)."""
-    return {1: 8600, 2: 9540}.get(LEVEL, 9600)
+    return {1: 8600, 2: 9540, 3: 10240}.get(LEVEL, 9600)
 
 def fixed_blocks():
-    f = [(1, 0x8000, 8600, 'карта'), (2, 0xE000, 0x1000, 'песня уровня'),
+    f = [(1, 0x8000, (map_len() + 255) & ~255, 'карта'),
+         (0, B.BG_TILES_BASE, NTILES * 128, 'тайлы'), (0, B.FG_TILES_BASE, NFG * 256, 'передние тайлы'), (2, 0xE000, 0x1000, 'песня уровня'),
          (3, 0x0000, 0x2800, 'шрифт/панель/оружие'), (3, 0x8440, 0x1BC0, 'оверлеи'),
          (3, 0xA000, 0x2800, 'пул'), (3, 0xC980, 0x1000, 'музыка'), (3, 0xD980, 0x1000, 'эффекты'),
+         (2, 0xBB00, 0x140, 'палитры экранов'),   # обязаны лежать в стр.2, в окне $A000-$DFFF
          (2, 0xBC40, 0x300, 'таблицы уровня и копия загрузчика'),
          (2, 0xBF00, 0x100, 'вынесенный блит')]
     if not SONGS_OUT: f.append((2, 0xC000, 0x2000, 'песни меню и интро'))
@@ -55,17 +57,20 @@ def solve(items, free):
     seen = set()
     pages = [0] if isinstance(nm, str) and nm.endswith('@0') else range(4)
     for pg in pages:
-        for i, (s, e) in enumerate(free[pg]):
+        for i, (s0, e) in enumerate(free[pg]):
+            s = (s0 + 255) & ~255           # база банка обязана быть кратна 256 (put_bank)
             if e - s < sz or (pg, e - s) in seen: continue
             seen.add((pg, e - s))
             nf2 = [list(map(list, x)) for x in free]
             nf2[pg][i] = [s + sz, e]
+            if s > s0: nf2[pg].insert(i, [s0, s])
             if nf2[pg][i][0] >= nf2[pg][i][1]: nf2[pg].pop(i)
             sub = solve(rest, nf2)
             if sub is not None: return [(nm, pg, s, sz)] + sub
     return None
 
 banks = [b for b in level_banks(LEVEL) if b not in DROP]
+NFG = len(sorted(set().union(*(set(s[160:320]) for s in B.screens_of((B.SRC / f'level{LEVEL}.map').read_bytes()))) - {0}))
 free = [[[0, 65536]] for _ in range(4)]
 def occ(pg, a, n):
     out = []
@@ -76,7 +81,7 @@ def occ(pg, a, n):
     free[pg] = out
 for pg, a, n, _ in fixed_blocks(): occ(pg, a, n)
 # тайлы и передние тайлы обязаны лежать в странице 0 (страница зашита в блиттере), но адрес свободен
-items = [('тайлы@0', NTILES * 128), ('FG@0', 14 * 256), ('палитры экранов', 147)]
+items = []
 items += [(b, nf(b) * (288 if b in TINY else 384 if b in SMALL else FR)) for b in banks]
 if SONGS_OUT: items.append(('песни меню', 0x2000))
 if MFONT_OUT: items.append(('шрифт меню', 0x1000))
