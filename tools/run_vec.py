@@ -63,16 +63,45 @@ ROM_NAME = 'ianna_demo' if DEMO else 'ianna'
 
 def make_cpu(keys):
     cpu = I8080()
+    # --- ВГ93: чтение секторов из образа дискеты (IANNA_FDD). Без этого дискетная ветка — загрузка
+    # уровня и переход между уровнями — headless вообще не проверялась: зависание образа ловилось
+    # только руками в эмуляторе. Геометрия 80x2x5x1024, адреса портов инвертированы, как на Векторе.
+    fdd_path = os.environ.get('IANNA_FDD')
+    fdd = pathlib.Path(fdd_path).read_bytes() if fdd_path and pathlib.Path(fdd_path).exists() else None
+    st = {'trk': 0, 'sec': 1, 'side': 0, 'buf': b'', 'pos': 0, 'busy': False}
+    cur = [0xFF]
+
     if not DEMO:
         cpu.load_edd(pathlib.Path(os.environ.get('IANNA_EDD', ROOT / 'build/ianna.edd')))
-    rom = (ROOT / f'build/{ROM_NAME}.rom').read_bytes()
+    # При дискетном прогоне ROM берём ИЗ ОБРАЗА: build_fdd прошивает в него таблицу дорожек уровней
+    # (vfl_dirtab), а в build/ianna.rom она нулевая — загрузчик решал бы, что набора на дискете нет.
+    rom = fdd[0x80:0x80+32512] if fdd else (ROOT / f'build/{ROM_NAME}.rom').read_bytes()  # в образе ROM лежит за дескриптором ($80)
     cpu.mem[0x100:0x100+len(rom)] = rom
     cpu.pc = 0x100
-    cur = [0xFF]
+    def fdd_seek_read():
+        off = ((st['trk'] * 2 + st['side']) * 5 + (st['sec'] - 1)) * 1024
+        st['buf'] = fdd[off:off + 1024] if fdd and off + 1024 <= len(fdd) else b'\x00' * 1024
+        st['pos'] = 0; st['busy'] = True
     def out_handler(port, val):
         if port == 0x03: cur[0] = val
         elif port == 0x10: cpu.kv_out(port, val)
+        elif port == 0x1C: st['side'] = 0 if (val & 4) else 1   # бит 2 инвертирован (проверено сверкой с образом)
+        elif port == 0x1A: st['trk'] = val
+        elif port == 0x19: st['sec'] = val
+        elif port == 0x1B:
+            if val == 0x00: st['trk'] = 0; st['busy'] = False          # RESTORE
+            elif val == 0x58: st['trk'] += 1; st['busy'] = False       # STEP-IN с обновлением трека
+            elif val == 0x80: fdd_seek_read()                           # READ SECTOR
     def in_handler(port):
+        if port == 0x1B:                    # статус: бит0 BUSY, бит1 DRQ
+            return (0x03 if st['busy'] and st['pos'] < len(st['buf']) else 0x00)
+        if port == 0x18:                    # данные
+            if st['pos'] < len(st['buf']):
+                v = st['buf'][st['pos']]; st['pos'] += 1
+                if st['pos'] >= len(st['buf']): st['busy'] = False
+                return v
+            return 0
+        if port == 0x1A: return st['trk']
         if port == 0x02:
             v = 0xFF
             if cur[0] == 0xFE:

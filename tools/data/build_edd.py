@@ -274,6 +274,12 @@ if os.environ.get('IANNA_NOMIRRDATA') == '1':
 # попадает в окно $A000-$DFFF, так что читается обычным ldir без стековых плясок.
 LEVELTAB_ADDR = 0xBC40
 LEVELTAB_PAGE = 2
+# Копия загрузчика уровня. В ROM он живёт по $7E00 ПОВЕРХ таблиц rev256/vec_slot_tab: отрабатывает при
+# старте и тут же затирается ими, то есть одноразовый. Чтобы можно было сменить уровень в игре, копия
+# 512 байт лежит в наборе и перед загрузкой возвращается на своё место $7E00 (таблицы после загрузки
+# строятся заново кодом). Копия берётся из собранного ROM, поэтому после его правки нужен второй
+# проход build_edd — за этим следит сторож в build_vec.
+FDDCOPY_ADDR = 0xBD00
 
 def level_table_blob(pal, banks, fg):
     by = {b: (pg, base) for b, pg, base, _ in banks}
@@ -410,6 +416,11 @@ def build_kvaz(level_no=1, start=None):
         end = LEVELTAB_ADDR + len(blob)
         assert all(v == 0 for v in pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end]), 'область таблиц уровня занята'
         pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end] = blob
+        rom = BUILD / 'ianna.rom'
+        if rom.exists():
+            r = rom.read_bytes()
+            off = 0x7E00 - 0x100               # ROM грузится с $0100
+            pages[LEVELTAB_PAGE][FDDCOPY_ADDR:FDDCOPY_ADDR+512] = r[off:off+512]
     assert all(len(p) == 65536 for p in pages), [len(p) for p in pages]
     edd = b''.join(bytes(p) for p in pages)
     (BUILD / 'ianna.edd').write_bytes(edd)
@@ -437,6 +448,7 @@ def build_kvaz(level_no=1, start=None):
         lines += ['', '; таблицы уровня лежат в самом наборе (см. level_table_blob) и читаются в ОЗУ при старте',
                   f'LEVELTAB\tequ ${LEVELTAB_ADDR:04X}',
                   f'LEVELTAB_PORT\tequ ${0x20 | LEVELTAB_PAGE:02X}\t; окно $A000-$DFFF -> страница {LEVELTAB_PAGE}',
+                  f'FDDCOPY\tequ ${FDDCOPY_ADDR:04X}\t; копия загрузчика уровня (512 Б) — возвращается на $7E00',
                   f'LEVELTAB_LEN\tequ {len(level_table_blob(level_palette(), banks, fg))}']
     if C8MODE == 'c8':
         lines += ['; карта «цвет кода 0..15 -> слот» для fillArea (шкалы панели); лежит сразу за fg_tile_lut (страница)',

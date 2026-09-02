@@ -21,6 +21,10 @@ vec_start:
 	out (KV_PORT),a		; квазидиск выкл
 	ld (current_level),a	; уровень 1: загрузчик читает эту ячейку (инициализация ниже — уже поздно)
 	call vec_fdd_load	; загрузка с дискеты, если квазидиск пуст (маркер 'IA' в стр.3 $C800)
+	ld hl,vfl_dirtab	; таблицу дорожек уровней прошивает build_fdd прямо в образ ROM, а в
+	ld de,vec_dirtab	; копии загрузчика внутри набора она нулевая — сохраняем, пока цела
+	ld bc,16
+	call z_ldir
 	call vec_load_leveltab	; палитра, банки спрайтов и передние тайлы — из набора уровня
     endif
 	call cls
@@ -75,9 +79,41 @@ vec_internal_loop:
 	ld a,(player_dead)
 	cp 2			; СТОП или attract -> главное меню (как game_loop оригинала)
 	jp z,vec_to_menu
+	cp 3			; скрипт «finish level»: current_level уже увеличен
+	jp z,vec_next_level
+	cp 4
+	jp z,vec_to_menu	; игра пройдена — пока в меню (финал ещё не сделан)
 	xor a
 	ld (player_dead),a
 	jp vec_internal_loop
+
+; Переход на следующий уровень: набор читается с дискеты заново. Загрузчик в ROM одноразовый — он
+; лежит по $7E00 поверх таблиц rev256/vec_slot_tab и затирается ими при старте, поэтому сначала
+; возвращаем его копию из набора (build_edd.FDDCOPY), а после загрузки строим таблицы заново.
+vec_next_level:
+	xor a
+	ld (player_dead),a
+	di
+	ld a,LEVELTAB_PORT
+	out (KV_PORT),a
+	ld hl,FDDCOPY
+	ld de,rev256
+	ld bc,512
+	call z_ldir
+	xor a
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	ei
+	ld hl,vec_dirtab	; вернуть таблицу дорожек: в копии из набора она нулевая
+	ld de,vfl_dirtab
+	ld bc,16
+	call z_ldir
+	call vfl_go		; загрузка без проверки маркера: набор в квазидиске уже чужой
+	call vec_init_rev256
+	call vec_slot_init
+	call vec_load_leveltab
+	call cls		; VRAM была буфером загрузки — иначе по краям поля остаётся мусор
+	jp vec_begin_level
 vec_to_menu:
 	xor a
 	ld (player_dead),a
