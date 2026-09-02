@@ -16,6 +16,35 @@ FIXRAND='--fixrand' in OPTS   # FrameCounter := номер тика перед R
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 src=open('tools/profile_vec.py').read(); i=src.index('# Такты ВЕКТОРА'); j=src.index('keys = []'); exec(src[i:j])
 FRAME=59904
+# --turbo: режим «CPU Speed 6MHz» ядра MiSTer. Там турбо — это ДВЕ вещи сразу: фазы процессора идут
+# вдвое чаще И cpu_ready держится в единице, то есть ожиданий видеоконтроллера нет вовсе (память в
+# FPGA двухпортовая, видео берёт свой порт). Поэтому такт инструкции равен её паспортному значению
+# i8080 без округления до шинного слота, а кадр вмещает вдвое больше тактов.
+if '--turbo' in OPTS:
+    _T8 = {}
+    for _op in range(256):
+        _hi, _lo, _d = _op >> 6, _op & 7, (_op >> 3) & 7
+        if _op == 0x76: _T8[_op] = 7
+        elif _hi == 1: _T8[_op] = 7 if (_lo == 6 or _d == 6) else 5
+        elif _hi == 2: _T8[_op] = 7 if _lo == 6 else 4
+        elif _hi == 0:
+            if _lo == 6: _T8[_op] = 10 if _d == 6 else 7
+            elif _lo == 1: _T8[_op] = 10
+            elif _lo == 2: _T8[_op] = {0x22: 16, 0x2A: 16, 0x32: 13, 0x3A: 13}.get(_op, 7)
+            elif _lo == 3: _T8[_op] = 5
+            elif _lo in (4, 5): _T8[_op] = 10 if _d == 6 else 5
+            else: _T8[_op] = 4
+        else:
+            if _lo == 0: _T8[_op] = 11
+            elif _lo == 1: _T8[_op] = 5 if _op in (0xE9, 0xF9) else 10
+            elif _lo == 2: _T8[_op] = 10
+            elif _lo == 3: _T8[_op] = {0xE3: 18, 0xEB: 5, 0xF3: 4, 0xFB: 4}.get(_op, 10)
+            elif _lo == 4: _T8[_op] = 17
+            elif _lo == 5: _T8[_op] = 17 if _op == 0xCD else 11
+            elif _lo == 6: _T8[_op] = 7
+            else: _T8[_op] = 11
+    CYC = [_T8[_op] for _op in range(256)]
+    FRAME = 59904 * 2          # 6 МГц: вдвое больше тактов в том же кадре 50 Гц
 syms={}
 for line in open(LST,encoding='utf-8',errors='replace'):
     m=re.match(r'([0-9A-F]{4}):\s.*?\s([A-Za-z_][A-Za-z_0-9.]*):',line)
