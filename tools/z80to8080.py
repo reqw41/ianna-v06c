@@ -241,8 +241,7 @@ def flags_dead_after(lines,i):
 # Такая последовательность НЕ трогает ни A, ни флаги — точная замена хелперу.
 # Цена в байтах: 3 + |d| вместо «call+db» (4 Б) или «ld a,d + call» (5 Б),
 # поэтому инлайним только малые d (политика IDX_INLINE, потолок по классам).
-IDX_INLINE = {'rda':-1, 'rd_r':-1, 'rd_hl':-1, 'sta':-1, 'st_r':-1, 'st_hl':-1,
-              'stn':-1, 'addr':1}
+IDX_INLINE = {'rda':0, 'rd_hl':1, 'rd_e_ix':6, 'sta':0, 'st_r':4, 'addr':7}
 
 def const_d(d):
     """смещение (ix+d) как число, если это константа; иначе None"""
@@ -320,16 +319,23 @@ class Translator:
 
         # --- индексные регистры ---
         idx=[parse_idx(x) for x in args]
-        def inl(kind,d):
-            """инлайнить (ix+d)? -> смещение-число или None"""
+        def inl(kind,d,reg=None):
+            """инлайнить (ix+d)? -> смещение-число или None.
+            Потолок ищется от частного ключа к общему: 'rd_e_ix' -> 'rd_e' -> 'rd_r'."""
             if i in getattr(self,'noinl',()): return None
             dv=const_d(d)
             if dv is None: return None
-            lim=IDX_INLINE.get(kind,-1)
-            return dv if lim>=0 and abs(dv)<=lim else None
+            keys=[f'{kind}_{reg}',kind] if reg else [kind]
+            if kind.startswith('rd_') and kind!='rd_hl': keys.append('rd_r')
+            if kind.startswith('st_') and kind!='st_hl': keys.append('st_r')
+            for k in keys:
+                lim=IDX_INLINE.get(k)
+                if lim is not None:
+                    return dv if lim>=0 and abs(dv)<=lim else None
+            return None
         def addr(reg,d):
             """HL := ix+d (вызывающий уже сохранил HL): инлайн или хелпер"""
-            dv=inl('addr',d)
+            dv=inl('addr',d,reg)
             if dv is not None:
                 self.stat('ix_addr_inl'); return idx_prep(reg,dv)
             return [f"call z_{reg}_hl", f"db {d}"]
@@ -340,38 +346,42 @@ class Translator:
             if si:
                 reg,d=si; rz='z_'+reg
                 if a[0]=='a':
-                    dv=inl('rda',d)
+                    dv=inl('rda',d,reg)
                     if dv is not None:
                         return seq(["push hl"]+idx_prep(reg,dv)+["ld a,(hl)","pop hl"],'ix_rd_a_inl')
                     h = f"{rz}_rda" if not fdead else f"{rz}_rda_nf"
                     return seq([f"ld a,{d}", f"call {h}"], 'ix_rd_a')
                 if a[0] in ('b','c','d','e'):
-                    dv=inl('rd_r',d)
+                    dv=inl(f'rd_{a[0]}',d,reg)
                     if dv is not None:
                         return seq(["push hl"]+idx_prep(reg,dv)+[f"ld {a[0]},(hl)","pop hl"],'ix_rd_r_inl')
                     return seq([f"call {rz}_rd_{a[0]}", f"db {d}"], 'ix_rd_r')
                 if a[0] in ('h','l'):
-                    # результат кладём в старый HL: через A (значит, A должен быть мёртв)
-                    dv=inl('rd_hl',d) if adead else None
+                    # результат кладём в старый HL — только через A (свободных регистров нет),
+                    # поэтому при живом A он прячется в z_a (ISR эту ячейку сохраняет)
+                    dv=inl('rd_hl',d,reg)
                     if dv is not None:
-                        return seq(["push hl"]+idx_prep(reg,dv)+["ld a,(hl)","pop hl",f"ld {a[0]},a"],'ix_rd_hl_inl')
+                        body=[] if adead else ["ld (z_a),a"]
+                        body+=["push hl"]+idx_prep(reg,dv)+["ld a,(hl)","pop hl",f"ld {a[0]},a"]
+                        if not adead: body+=["ld a,(z_a)"]
+                        return seq(body,'ix_rd_hl_inl')
                     return seq([f"call {rz}_rd_{a[0]}", f"db {d}"], 'ix_rd_r')
                 raise ValueError(f"{L.no}: {L.raw}")
             # ld (ix+d),x
             if di:
                 reg,d=di; rz='z_'+reg
                 if a[1]=='a':
-                    dv=inl('sta',d)
+                    dv=inl('sta',d,reg)
                     if dv is not None:
                         return seq(["push hl"]+idx_prep(reg,dv)+["ld (hl),a","pop hl"],'ix_st_a_inl')
                     return seq([f"call {rz}_sta", f"db {d}"], 'ix_st_a')
                 if a[1] in ('b','c','d','e'):
-                    dv=inl('st_r',d)
+                    dv=inl(f'st_{a[1]}',d,reg)
                     if dv is not None:
                         return seq(["push hl"]+idx_prep(reg,dv)+[f"ld (hl),{a[1]}","pop hl"],'ix_st_r_inl')
                     return seq([f"call {rz}_st_{a[1]}", f"db {d}"], 'ix_st_r')
                 if a[1] in ('h','l'):
-                    dv=inl('st_hl',d)
+                    dv=inl('st_hl',d,reg)
                     if dv is not None:
                         body=[] if adead else ["ld (z_a),a"]
                         body+=[f"ld a,{a[1]}","push hl"]+idx_prep(reg,dv)+["ld (hl),a","pop hl"]
@@ -382,7 +392,7 @@ class Translator:
                     if not adead: body+=["ld a,(z_a)"]
                     return seq(body,'ix_st_hl')
                 # immediate
-                dv=inl('stn',d)
+                dv=inl('stn',d,reg)
                 if dv is not None:
                     return seq(["push hl"]+idx_prep(reg,dv)+[f"ld (hl),{norm_expr(src)}","pop hl"],'ix_st_n_inl')
                 return seq([f"call {rz}_stn", f"db {d}", f"db {norm_expr(src)}"], 'ix_st_n')
