@@ -14,7 +14,8 @@ FRAMES=int(next((o[9:] for o in OPTS if o.startswith('--frames=')),'600'))
 ROUTE=next((o[8:] for o in OPTS if o.startswith('--route=')),'none:300,right:300')
 START=next((tuple(int(v) for v in o[8:].split(',')) for o in OPTS if o.startswith('--start=')),None)
 FIXRAND='--fixrand' in OPTS
-BHIST='--budget-hist' in OPTS   # гистограмма отказов бюджета: фаза кадра и цена запроса   # FrameCounter := номер тика перед RunScripts — логика не зависит от скорости сборки (сравнение A/B на сценах с врагами)
+BHIST='--budget-hist' in OPTS
+NOFG='--nofg' in OPTS   # замер без передних тайлов: слой FG обнуляется в ОЗУ при каждом DrawScreen   # гистограмма отказов бюджета: фаза кадра и цена запроса   # FrameCounter := номер тика перед RunScripts — логика не зависит от скорости сборки (сравнение A/B на сценах с врагами)
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 src=open('tools/profile_vec.py').read(); i=src.index('# Такты ВЕКТОРА'); j=src.index('keys = []'); exec(src[i:j])
 FRAME=59904
@@ -82,7 +83,7 @@ def in_h(p):
     return base_in(p)
 cpu.out_handler=out_h; cpu.in_handler=in_h
 FC=sym['FrameCounter']; AT=sym['animate_tile']; SC=sym['SaveCheckpoint']
-VBW=sym.get('vbg_wait',-1); bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
+DSCR=sym.get('DrawScreen',-1); VBW=sym.get('vbg_wait',-1); bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
 delivered=0; lost=0; lost_at=collections.Counter(); next_irq=FRAME; started=False
 def run(nframes):
     global delivered,lost,next_irq,started
@@ -124,6 +125,8 @@ for fr in range(1500):
 assert started, 'игра не стартовала'
 keys.clear(); run(10)
 print(f'{ROM}: старт {"экран "+str(START) if START else "начало уровня"}; прогрев: доставлено {delivered}, потеряно {lost}')
+if NOFG:   # NOFG после прогрева: экран уже нарисован, дальше передние тайлы не перерисовываются
+    for k in range(160): mem[sym['CURRENT_SCREEN_MAP_FG']+k]=0
 for seg in ROUTE.split(','):
     k,n=seg.split(':'); n=int(n)
     keys.clear()
