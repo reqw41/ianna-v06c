@@ -6,10 +6,13 @@
 
 Раскладка дорожек:
    0..3   ROM (32 КБ)
-   4..39  сжатые наборы уровней (build/levels/level{N}.pak) — 360 КБ
-   40..43 экран меню (дамп VRAM 32 КБ)
-   44..63 слайды интро/концовки (5 x 32 КБ)
-   64..79 продолжение уровней (160 КБ)
+   4..73  сжатые наборы уровней (build/levels/level{N}.pak) — 700 КБ, девять уровней
+   74     экран меню (сжатый, см. ниже)
+   75..79 слайды интро/концовки (по одной дорожке на слайд)
+Картинки (экран меню и пять слайдов) лежат СЖАТЫМИ и по одной на дорожку: дамп VRAM — это 32 КБ,
+и вшестером они занимали 24 дорожки из 80, из-за чего девять наборов уровней (660 КБ) на дискету
+не помещались. Каждая плоскость жмётся отдельно (aPLib, 1-2.6 КБ), в начале дорожки — заголовок
+из четырёх смещений по два байта. Читает и распаковывает mb_slide_i (menu_ram.asm).
 Сырой образ квазидиска (256 КБ) влез бы на дискету ровно один раз, поэтому наборы лежат сжатыми
 (aPLib, блоками по 8 КБ). Дорожку начала каждого набора прошиваем прямо в ROM (таблица vfl_dirtab
 из vec_fdd.asm) — тогда загрузчику не нужно отдельное чтение каталога.
@@ -18,7 +21,9 @@ import pathlib, re, sys, json, hashlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SEC = 1024
 TRACK = 10 * SEC
-LEVEL_TRACKS = list(range(4, 40)) + list(range(64, 80))
+LEVEL_TRACKS = list(range(4, 75))   # один непрерывный блок: наборы уровней по 5-9 дорожек каждый
+MENU_TRACK, MENU_SEC = 3, 3         # экран меню — в хвосте дорожек ROM (образ кончается на 32-м секторе)
+PIC_TRACK = 75                      # пять слайдов — по дорожке на каждый
 
 rom = bytearray((ROOT / 'build/ianna.rom').read_bytes())
 assert len(rom) <= 32 * 1024 - 0x80
@@ -89,17 +94,42 @@ img[0x80:0x80 + len(rom)] = rom
 for start, data in level_data:
     img[start*TRACK:start*TRACK + len(data)] = data
 
+def pack_picture(vrm):
+    """Дамп VRAM 32 КБ -> [4 смещения по 2 байта][сжатые плоскости подряд]. Плоскость жмётся
+    отдельно: распаковщик кладёт каждую по своему адресу VRAM, а целиком 32 КБ распаковывать
+    некуда — приёмник перекрыл бы буфер источника."""
+    import subprocess
+    tin, tout = ROOT / 'build/_pic.bin', ROOT / 'build/_pic.ap'
+    head, body = bytearray(), bytearray()
+    for pl in range(4):
+        tin.write_bytes(vrm[pl*8192:(pl+1)*8192])
+        r = subprocess.run([str(ROOT / 'tools/bin/apack'), str(tin), str(tout)], capture_output=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        blob = tout.read_bytes()
+        head += bytes((len(head) if False else (8 + len(body)) & 0xFF, (8 + len(body)) >> 8))
+        body += blob
+    out = bytes(head) + bytes(body)
+    assert len(out) <= TRACK, f'картинка не влезла в дорожку: {len(out)} Б'
+    return out
+
+placed_pics = []
 menu = ROOT / 'build/menu_screen.vrm'
 if menu.exists():
-    img[40*TRACK:40*TRACK+0x8000] = menu.read_bytes()
+    blob = pack_picture(menu.read_bytes())
+    at = MENU_TRACK*TRACK + (MENU_SEC - 1)*SEC
+    assert len(blob) <= TRACK - (MENU_SEC - 1)*SEC, f'экран меню не влез в хвост дорожки ROM: {len(blob)}'
+    assert at >= 0x80 + len(rom), 'экран меню наехал на ROM'
+    img[at:at + len(blob)] = blob
+    placed_pics.append((0, MENU_TRACK, len(blob)))
     for i in range(5):
-        sl = (ROOT / f'build/slide{i}.vrm').read_bytes()
-        base = (44 + i*4) * TRACK
-        img[base:base+len(sl)] = sl
+        blob = pack_picture((ROOT / f'build/slide{i}.vrm').read_bytes())
+        img[(PIC_TRACK + i)*TRACK:(PIC_TRACK + i)*TRACK + len(blob)] = blob
+        placed_pics.append((i + 1, PIC_TRACK + i, len(blob)))
 
 out = ROOT / 'build/ianna.fdd'
 out.write_bytes(img)
 for n, tr, ln in placed:
     print(f'уровень {n}: дорожка {tr}, {ln/1024:.1f} КБ')
-print('меню: экран на дорожке 40, слайды на 44/48/52/56/60')
+for i, tr, ln in placed_pics:
+    print(f'{"экран меню" if i == 0 else f"слайд {i-1}":11s} дорожка {tr}, {ln/1024:.1f} КБ (сжат)')
 print(f'{out}: {len(img)} Б; ROM {len(rom)} Б')

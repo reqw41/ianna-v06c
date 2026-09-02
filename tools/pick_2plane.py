@@ -73,7 +73,10 @@ def ntiles(L):
 
 def fits(L, tiny):
     r = subprocess.run([sys.executable, 'tools/kvaz_pack.py', f'--level={L}',
-                        ] + (['--tiles-low'] if MODE == 'low' else [f'--tiles={ntiles(L)}', '--tiles-end']) +
+                        ] + (os.environ.get('PACK_ALIGN') and ['--align=' + os.environ['PACK_ALIGN']] or []) + (
+                             ['--hero-fix'] if MODE == 'hero' else
+                             ['--tiles-low'] if MODE == 'low' else
+                             [f'--tiles={ntiles(L)}', '--tiles-end']) +
                        ([] if L == 1 else ['--menu-out']) +
                        ['--tiny=' + ','.join(map(str, sorted(tiny)))],
                        capture_output=True, text=True)
@@ -84,6 +87,7 @@ for L in [int(a) for a in sys.argv[1:]] or list(range(1, 10)):
     cands = []
     for b in sorted(seen):
         if b in (2, 3): continue
+        if MODE == 'hero' and b in (2, 3): continue
         group = [b, PAIRS[b]] if b in PAIRS else [b]
         pct, ready = cost(group)
         cands.append((pct*seen[b], pct, seen[b], group, ready))

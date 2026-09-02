@@ -17,6 +17,13 @@ SONGS_OUT = '--songs-out' in OPT
 MFONT_OUT = '--mfont-out' in OPT
 MENU_OUT = '--menu-out' in OPT
 TILES_END = '--tiles-end' in OPT  # база тайлов не $8000, а вплотную к концу страницы 0
+HERO_FIX = '--hero-fix' in OPT   # варвар (банки 2 и 3) на общем месте во всех уровнях
+HERO_AT = None                   # --hero-at=стр:адрес,стр:адрес — задать это место явно
+if '--hero-at' in OPT:
+    HERO_AT = [(int(s.split(':')[0]), int(s.split(':')[1], 16)) for s in OPT['--hero-at'].split(',')]
+    HERO_FIX = True
+ALIGN = int(OPT.get('--align', 256))   # кратность базы банка: 256 сейчас, 1 — если в таблице
+                                       # уровня хранить полный адрес базы, а не старший байт
 TILES_LOW = '--tiles-low' in OPT  # тайлы в НАЧАЛО страницы 0, передние сразу за ними: свободный
                                   # хвост становится одним куском вместо двух огрызков   # оверлей меню и его песни — только в наборе уровня 1
 
@@ -37,22 +44,34 @@ def level_banks(level):
     return sorted({2, 3} | need)
 
 def map_len():
-    """Длина карты уровня в квазидиске: у разных уровней она разная (уровень 1 — 8.4 КБ, уровень 2 — 9.3),
-    а банк за ней должен начинаться с адреса, кратного 256. Берём фактическую, иначе раскладка,
-    посчитанная по чужой длине, наедет на карту (так и вышло с орком на уровне 2)."""
-    return {1: 8600, 2: 9540, 3: 10240}.get(LEVEL, 9600)
+    """Длина карты уровня в квазидиске. Считаем ТОЧНО, тем же кодом, что и сборка набора: у уровней
+    она разная (8.4-11.4 КБ), а банк за ней начинается с адреса, кратного 256. Раскладка, посчитанная
+    по чужой длине, наезжает на карту — так вышло с орком на уровне 2 и с мумией на уровне 4."""
+    from texts_ru import LEVEL_TEXTS, build_block
+    lvl = (B.SRC / f'level{LEVEL}.map').read_bytes()
+    info = B.parse_level(lvl)
+    info['strings']['es'] = build_block(info['strings']['en'], info['nstrings'], info['nscripts'],
+                                        LEVEL_TEXTS[LEVEL])
+    return len(B.build_level(info, B.STRING_AREA_KVAZ))
 
 def fixed_blocks():
     f = [(1, 0x8000, (map_len() + 255) & ~255, 'карта'),
-         (0, 0 if TILES_LOW else ((0x10000 - NTILES*128) & ~0xFF if TILES_END else B.BG_TILES_BASE),
+         (0, 0 if (TILES_LOW or HERO_FIX) else ((0x10000 - NTILES*128) & ~0xFF if TILES_END else B.BG_TILES_BASE),
           NTILES * 128, 'тайлы'),
-         (0, NTILES*128 if TILES_LOW else B.FG_TILES_BASE, NFG * 256, 'передние тайлы'), (2, 0xE000, 0x1000, 'песня уровня'),
+         (0, NTILES*128 if (TILES_LOW or HERO_FIX) else B.FG_TILES_BASE, NFG * 256, 'передние тайлы'), (2, 0xE000, 0x1000, 'песня уровня'),
          (3, 0x0000, 0x2800, 'шрифт/панель/оружие'),
          (3, 0x9000, 0x0200, 'оверлей паузы') if MENU_OUT else (3, 0x8440, 0x1BC0, 'оверлеи'),
          (3, 0xA000, 0x2800, 'пул'), (3, 0xC980, 0x1000, 'музыка'), (3, 0xD980, 0x1000, 'эффекты'),
          (2, 0xBB00, 0x140, 'палитры экранов'),   # обязаны лежать в стр.2, в окне $A000-$DFFF
-         (2, 0xBC40, 0x300, 'таблицы уровня и копия загрузчика'),
+         (2, 0xBC40, 0x2C0, 'таблицы уровня и копия загрузчика'),   # до $BF00, где вынесенный блит
          (2, 0xBF00, 0x100, 'вынесенный блит')]
+    if HERO_FIX and not HERO_AT:
+        f.append((0, 0xA000, 24576, 'варвар, банк 1 (общее место)'))
+        f.append((1, 0xC000, 16384, 'варвар, банк 2 (общее место)'))
+    if HERO_AT:
+        (p2, a2), (p3, a3) = HERO_AT
+        f.append((p2, a2, 24576, 'варвар, банк 1 (общее место)'))
+        f.append((p3, a3, 16384, 'варвар, банк 2 (общее место)'))
     if not (SONGS_OUT or MENU_OUT): f.append((2, 0xC000, 0x2000, 'песни меню и интро'))
     if not (MFONT_OUT or MENU_OUT): f.append((3, 0xE000, 0x1000, 'шрифт меню'))
     return f
@@ -65,7 +84,7 @@ def solve(items, free):
     pages = [0] if isinstance(nm, str) and nm.endswith('@0') else range(4)
     for pg in pages:
         for i, (s0, e) in enumerate(free[pg]):
-            s = (s0 + 255) & ~255           # база банка обязана быть кратна 256 (put_bank)
+            s = (s0 + ALIGN - 1) & ~(ALIGN - 1)   # база банка кратна ALIGN (см. --align)
             # Дедупликация — по РАЗМЕРУ И НАЧАЛУ куска: одинаковые по длине куски с разным
             # выравниванием вмещают разное число банков (граница страницы и кратность 256),
             # и отсев только по длине терял верные раскладки (уровень 6 «не влезал»).
@@ -79,7 +98,7 @@ def solve(items, free):
             if sub is not None: return [(nm, pg, s, sz)] + sub
     return None
 
-banks = [b for b in level_banks(LEVEL) if b not in DROP]
+banks = [b for b in level_banks(LEVEL) if b not in DROP and not (HERO_FIX and b in (2, 3))]
 NFG = len(sorted(set().union(*(set(s[160:320]) for s in B.screens_of((B.SRC / f'level{LEVEL}.map').read_bytes()))) - {0}))
 free = [[[0, 65536]] for _ in range(4)]
 def occ(pg, a, n):
@@ -89,7 +108,13 @@ def occ(pg, a, n):
         if s < a: out.append([s, a])
         if a + n < e: out.append([a + n, e])
     free[pg] = out
-for pg, a, n, _ in fixed_blocks(): occ(pg, a, n)
+FB = fixed_blocks()
+for i, (pg, a, n, nm) in enumerate(FB):          # сторож: фиксированные блоки не должны пересекаться
+    for pg2, a2, n2, nm2 in FB[i+1:]:
+        if pg == pg2 and a < a2 + n2 and a2 < a + n:
+            sys.exit(f'!! пересекаются фиксированные блоки: {nm} (стр.{pg} ${a:04X}+{n}) '
+                     f'и {nm2} (${a2:04X}+{n2})')
+for pg, a, n, _ in FB: occ(pg, a, n)
 # тайлы и передние тайлы обязаны лежать в странице 0 (страница зашита в блиттере), но адрес свободен
 items = []
 items += [(b, nf(b) * (288 if b in TINY else 384 if b in SMALL else FR)) for b in banks]

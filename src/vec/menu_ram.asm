@@ -4,6 +4,8 @@
 	include "menu_syms.asm"
 KV_PORT		equ $10
 KV_WIN_OVL	equ $43
+MB_KV_BUF	equ $23		; окно $A000-$DFFF, страница 3: буфер сжатой картинки (пул в игре, в меню свободен)
+MB_PICBUF	equ $A000	; 10 КБ — дорожка целиком; музыка ISR лежит выше, с $C980
 KV_STK_P3	equ $1C		; стековый режим, страница 3 (чтение шрифта из квазидиска)		; окно b6 ($8000-$9FFF) -> страница 3: там оверлей меню
 	org MB_ORG
 
@@ -222,8 +224,8 @@ mb_fdc_ok:			; Z = дисковод отвечает (эхо регистра с
 	cp c
 	ret
 
-; A = дорожка; читает 24 сектора (24К) -> VRAM $8000+
-mb_load24:			; 32 сектора (полный дамп VRAM 32К) с дорожки A -> $8000..$FFFF
+; A = дорожка; читает 32 сектора (полный дамп VRAM 32К) -> VRAM $8000..$FFFF
+mb_load24:
 	ld (mb_track),a
 	call mb_fdc_ok
 	ret nz
@@ -233,6 +235,15 @@ mb_load24:			; 32 сектора (полный дамп VRAM 32К) с дорож
 	out (KV_PORT),a
 	ld (vec_kv_shadow),a
 	ei
+	call mb_seek
+	ret nz
+	ld hl,$8000
+	ld b,32
+	ld c,1
+	jp mb_sectors
+
+; seek на дорожку (mb_track); портит A, B
+mb_seek:
 	ld a,$34
 	ld (mb_ctl),a
 	call mb_ctl_w
@@ -247,10 +258,13 @@ mbl_seek:
 	call mb_wait
 	dec b
 	jp nz,mbl_seek
-	ld hl,$8000
-	ld a,1
+	xor a
+	ret
+
+; HL = приёмник, B = сколько секторов, C = первый сектор; сторона переключается каждые 5
+mb_sectors:
+	ld a,c
 	ld (mb_sec),a
-	ld b,32
 mbl_next:
 	push bc
 	ld a,(mb_sec)
@@ -326,14 +340,103 @@ mb_wait:
 	jp c,mb_wait
 	ret
 
-mb_screen_i:
+; Картинка (экран меню = 0, слайды = 1..5) лежит на дискете СЖАТОЙ, по одной дорожке на картинку:
+; [4 смещения по 2 байта][сжатые плоскости]. Дамп VRAM — это 32 КБ, вшестером они занимали 24 дорожки
+; из 80, и девять наборов уровней на дискету не помещались. Плоскости жмутся отдельно: целиком 32 КБ
+; распаковывать некуда — приёмник перекрыл бы буфер источника.
+; Читаем дорожку в квазидиск (стр.3 $A000-$C800, окно), оттуда распаковываем в VRAM. Приёмники
+; $8000 и $E000 лежат ВНЕ окна, поэтому пишутся в экран; плоскости 1 и 2 распаковываем в $8000 и
+; копируем на место при закрытом окне. Порядок такой, чтобы $8000 освободился последним.
+mb_screen_i:			; экран меню лежит в хвосте дорожек ROM: там свободно 8 КБ
 	ld a,MB_TRK_MENU
-	jp mb_load24
+	ld (mb_track),a
+	ld a,MB_SEC_MENU
+	jp mb_pic_go
 mb_slide_i:
-	add a,a
-	add a,a			; *4 дорожки на слайд (32К = 3.2 дорожки)
 	add a,MB_TRK_SLIDES
-	jp mb_load24
+	ld (mb_track),a
+	ld a,1
+mb_pic_go:
+	ld (mb_sec),a
+	call mb_fdc_ok
+	ret nz
+	di
+	xor a
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	ei
+	call mb_seek
+	ret nz
+	call mb_kv_on
+	ld hl,MB_PICBUF
+	ld b,8
+	ld a,(mb_sec)
+	ld c,a
+	call mb_sectors
+	push af
+	call mb_kv_off
+	pop af
+	ret nz
+	ld a,1			; плоскость 1 -> $8000, копия в $A000
+	ld de,$8000
+	call mb_pic_pl
+	ld hl,$8000
+	ld de,$A000
+	call mb_pic_cp
+	ld a,2			; плоскость 2 -> $8000, копия в $C000
+	ld de,$8000
+	call mb_pic_pl
+	ld hl,$8000
+	ld de,$C000
+	call mb_pic_cp
+	ld a,3			; плоскость 3 — сразу на место (вне окна)
+	ld de,$E000
+	call mb_pic_pl
+	ld a,0			; плоскость 0 — последней: до неё $8000 был буфером
+	ld de,$8000
+	call mb_pic_pl
+	xor a
+	ret
+
+; A = плоскость, DE = приёмник в VRAM; окно квазидиска открываем на время распаковки
+mb_pic_pl:
+	push de
+	add a,a
+	ld l,a
+	ld h,0
+	ld de,MB_PICBUF
+	add hl,de
+	call mb_kv_on
+	ld a,(hl)
+	inc hl
+	ld h,(hl)
+	ld l,a
+	ld de,MB_PICBUF
+	add hl,de		; HL = сжатая плоскость в окне квазидиска
+	pop de
+	call depack
+	jp mb_kv_off
+
+; HL -> DE, 8К (плоскость VRAM); окно закрыто, обе стороны — экран
+mb_pic_cp:
+	ld bc,$2000
+	jp z_ldir
+
+mb_kv_on:
+	di
+	ld a,MB_KV_BUF
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	ei
+	ret
+mb_kv_off:
+	di
+	xor a
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	ei
+	xor a
+	ret
 
 mb_target:	dw 0
 mb_spsave:	dw 0
