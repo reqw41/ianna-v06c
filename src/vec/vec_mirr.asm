@@ -17,7 +17,7 @@ vec_mirror_src:			; портит A, BC, DE, HL; вызывается один р
 	or a
 	ret z			; спрайт и так прямой
 	ld hl,vm_tab
-	ld b,3			; записей в таблице (build_edd.MIRROR_SLOTS)
+	ld b,4			; записей в таблице (build_edd.MIRROR_SLOTS)
 vm_loop:
 	push hl			; начало записи — по нему шагаем к следующей
 	ld a,(vec_spr_port)
@@ -34,6 +34,9 @@ vm_loop:
 	ld e,(hl)
 	inc hl
 	ld d,(hl)		; DE = смещение до копии
+	inc hl
+	ld a,(hl)
+	ld (vec_spr_port),a	; копии могут лежать в другой странице (орк: банк в стр.2, копии в стр.3)
 	pop hl
 vm_hit:				; метка для профиля: подмена состоялась
 	ld hl,(vec_spr_src)
@@ -44,17 +47,24 @@ vm_hit:				; метка для профиля: подмена состоялас
 	ret
 vm_next:
 	pop hl
-	ld de,5
+	ld de,6
 	add hl,de
 	dec b
 	jp nz,vm_loop
 	ret
 
-; запись: порт стека страницы, старший байт начала банка, граница, смещение до копии (слово)
+; запись 6 Б: порт стека банка, старший байт начала зеркалированного диапазона, граница,
+; смещение до копии (слово), порт стека страницы самих копий
 vm_tab:
 	db VEC_MIRR_P1, VEC_MIRR_L1, VEC_MIRR_H1
 	dw VEC_MIRR_D1
+	db VEC_MIRR_C1
 	db VEC_MIRR_P2, VEC_MIRR_L2, VEC_MIRR_H2
 	dw VEC_MIRR_D2
+	db VEC_MIRR_C2
 	db VEC_MIRR_P3, VEC_MIRR_L3, VEC_MIRR_H3
 	dw VEC_MIRR_D3
+	db VEC_MIRR_C3
+	db VEC_MIRR_P4, VEC_MIRR_L4, VEC_MIRR_H4
+	dw VEC_MIRR_D4
+	db VEC_MIRR_C4

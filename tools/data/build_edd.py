@@ -248,12 +248,14 @@ PERM = color_perm()
 # кадрами 14..17 (замер frame_stats на экранах 4,5 и 0,6), нулевые кадры — ходьба вправо, они и так
 # прямые. Место: свободные хвосты страниц; стр.2 $E000-$EFFF занимать НЕЛЬЗЯ — туда меню сохраняет
 # песню уровня (menu_ram.mb_savelvl), и зеркала затирались в рантайме (спрайт рисовался мусором).
+# Четвёртый элемент — страница копий, если она не та же, что у банка (тогда движок подменяет и порт).
 MIRRORS = {
-    9: (0xF000, 14, 7),    # мумия (стр.2 $6000): враг пяти самых медленных экранов уровня 1
-    2: (0x6900, 0, 10),    # варвар, банк 1 (стр.0 $0000)
-    3: (0x5D00, 0, 15),    # варвар, банк 2 (стр.1 $A300)
+    9: (0xF000, 14, 7),        # мумия (стр.2 $6000): ходьба влево — кадры 14..17
+    8: (0xF000, 2, 7, 3),      # орк (стр.2 $0000): ходьба влево — кадры 2..7; в стр.2 места нет
+    2: (0x6900, 0, 10),        # варвар, банк 1 (стр.0 $0000)
+    3: (0x5D00, 0, 15),        # варвар, банк 2 (стр.1 $A300)
 }
-MIRROR_SLOTS = 3        # столько записей в таблице движка (vec_mirr.asm)
+MIRROR_SLOTS = 4        # столько записей в таблице движка (vec_mirr.asm)
 if os.environ.get('IANNA_NOMIRRDATA') == '1':
     MIRRORS = {}        # сборка без готовых зеркал — для сверки картинки
 
@@ -295,21 +297,23 @@ def build_kvaz(level_no=1, start=None):
     if not C8MODE:
         for bank, page, base, limit in banks:
             if bank not in MIRRORS: continue
-            addr, first, nfr = MIRRORS[bank]
+            spec = MIRRORS[bank]
+            addr, first, nfr = spec[0], spec[1], spec[2]
+            cpage = spec[3] if len(spec) > 3 else page
             frames = parse_sprite_asm(SRC / f'{BANK_FILE[bank]}.asm')[first:first+nfr]
             end = addr + len(frames)*FRAME_BYTES
             assert end <= 65536, (BANK_FILE[bank], hex(end))
-            assert all(v == 0 for v in pages[page][addr:end]), f'область зеркал банка {bank} занята'
+            assert all(v == 0 for v in pages[cpage][addr:end]), f'область зеркал банка {bank} занята'
             for k, fr in enumerate(frames):
                 flip = [row[::-1] for row in fr]
-                pages[page][addr + k*FRAME_BYTES: addr + (k+1)*FRAME_BYTES] = \
+                pages[cpage][addr + k*FRAME_BYTES: addr + (k+1)*FRAME_BYTES] = \
                     sprite_frame_bytes(flip, bank_pmap(bank))
             # для движка: страница, границы адреса кадра по старшему байту и смещение до копии
             lo = base + first*FRAME_BYTES
             hi = lo + len(frames)*FRAME_BYTES
-            mirr.append((page, lo >> 8, hi >> 8, (addr - lo) & 0xFFFF, bank))
+            mirr.append((page, lo >> 8, hi >> 8, (addr - lo) & 0xFFFF, bank, cpage))
     while len(mirr) < MIRROR_SLOTS:
-        mirr.append((0, 0xFF, 0, 0, 0))          # пустая запись: LO выше любого адреса
+        mirr.append((0, 0xFF, 0, 0, 0, 0))       # пустая запись: LO выше любого адреса
     # страница 3: шрифт $0000 (64 символа x 32 Б), панель $1000 (256x32), оружие $2000 (4 x 192), вкл/выкл $2400 (2 x 288)
     font = sr5_rows(pletter_depack((SRC / 'font.SR5.plet1').read_bytes()), 16)
     for c in range(64):
@@ -385,7 +389,8 @@ def build_kvaz(level_no=1, start=None):
                  f'VEC_MIRR_P{i}\tequ KV_STK_P{m[0]}\t; банк {m[4] or "-"}',
                  f'VEC_MIRR_L{i}\tequ ${m[1]:02X}',
                  f'VEC_MIRR_H{i}\tequ ${m[2]:02X}',
-                 f'VEC_MIRR_D{i}\tequ ${m[3]:04X}')] + [
+                 f'VEC_MIRR_D{i}\tequ ${m[3]:04X}',
+                 f'VEC_MIRR_C{i}\tequ KV_STK_P{m[5]}\t; страница самих копий')] + [
              f'FG_TILES_BASE\tequ ${FG_TILES_BASE:04X}\t; страница 0', f'BG_TILES_BASE\tequ ${BG_TILES_BASE:04X}\t; страница 0']
     if C8MODE:
         if C8MODE == 'c8': lines.append('C8\tequ 1\t\t; 8 цветов: 3 плоскости (VRAM $A000/$C000/$E000), $8000-$9FFF свободна')
