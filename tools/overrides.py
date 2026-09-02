@@ -97,4 +97,16 @@ OVERRIDES = {
     ('ianna_main_src.asm', 482): ['pop hl', 'ld (z_iy),hl'],        # pop iy
     ('ianna_main_src.asm', 484): ['ld hl,(z_ix)', 'add hl,de', 'ld (z_ix),hl'],   # add ix,de
     ('ianna_main_src.asm', 486): ['ld hl,(z_iy)', 'add hl,de', 'ld (z_iy),hl'],   # add iy,de
+
+    # score_src.asm, draw_enemy_state (216..) — панель энергии обоих врагов, дважды за кадр
+    # (waitforvblank) плюс полная перерисовка счёта. HL не параметр и не результат (вызывающие
+    # задают только IX и A), внутри он живёт до строки 243, где его перезаписывает ld h,c.
+    ('score_src.asm', 218): ['ld hl,(z_ix)', 'ld a,(hl)'],                # ld a,(ix+0)
+    ('score_src.asm', 219): ['inc hl', 'or (hl)'],                        # or (ix+1); HL = z_ix+1
+    ('score_src.asm', 221): ['inc hl', 'inc hl', 'inc hl', 'ld a,(hl)'],  # ld a,(ix+4)
+    ('score_src.asm', 224): ['inc hl']*6 + ['ld a,(hl)'],                 # ld a,(ix+10); HL = z_ix+4
+    ('score_src.asm', 239): ['ld hl,(z_ix)', 'ld (z_iy),hl'],             # push ix / pop iy = IY := IX
+    ('score_src.asm', 240): [],
+    ('score_src.asm', 242): ['ld hl,(z_ix)'] + ['inc hl']*4 + ['ld c,(hl)'],   # ld c,(ix+4)
+    ('score_src.asm', 256): ['ld hl,(z_ix)'] + ['inc hl']*4 + ['ld e,(hl)'],   # ld e,(ix+4)
 }
