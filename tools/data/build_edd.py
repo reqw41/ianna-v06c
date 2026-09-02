@@ -49,7 +49,13 @@ LEVEL_BANKS = {
         (9, 2, 0x6000, 0x10000), (12, 3, 0x2800, 0xA000)],
     # уровень 2, оценка сцены с големом (экран 4,6): в 256К не помещаются скелет/орк/тролль/камень — на их
     # экранах будут кадры варвара (см. ANALYSIS.md, «великаны»)
-    2: [(2, 0, 0x0000, 0x5D00), (3, 1, 0x0000, 0x8000), (14, 2, 0x0000, 0x5D00), (15, 2, 0x5D00, 0xC000)],
+    # Уровень 2: семь банков — варвар (2 и 3), скелет, орк, тролль и голем (14/15, по две плоскости).
+    # Камень (банк 12) не поместился: он встречается на одном экране из 49, а места под 23 КБ уже нет.
+    # Раскладка получена перебором (tools/kvaz_pack.py): тайлы и передние тайлы остаются на своих
+    # местах в стр.0, карта — в стр.1 $8000, служебные блоки стр.3 не двигаются.
+    2: [(2, 0, 0x0000, 0x5D00), (7, 1, 0x0000, 0x8000), (8, 1, 0xA600, 0x10000),
+        (10, 2, 0x0000, 0x5D00), (3, 2, 0x5D00, 0xA000),
+        (14, 3, 0x2800, 0x5700), (15, 3, 0x5700, 0x8440)],
 }
 LEVEL_MUSIC = [1, 5, 3, 4, 5, 6, 7, 8]   # music_levels (music.asm): уровень N -> music-level{M}.mus
 STRING_AREA_DEMO = 0x7400   # демо: string_area 512 Б, vars короче (до $8000 ровно)
@@ -301,12 +307,16 @@ PERM = color_perm(1)
 # прямые. Место: свободные хвосты страниц; стр.2 $E000-$EFFF занимать НЕЛЬЗЯ — туда меню сохраняет
 # песню уровня (menu_ram.mb_savelvl), и зеркала затирались в рантайме (спрайт рисовался мусором).
 # Четвёртый элемент — страница копий, если она не та же, что у банка (тогда движок подменяет и порт).
-MIRRORS = {
-    9: (0xF000, 14, 7),        # мумия (стр.2 $6000): ходьба влево — кадры 14..17
-    8: (0xF000, 2, 7, 3),      # орк (стр.2 $0000): ходьба влево — кадры 2..7; в стр.2 места нет
-    2: (0x6900, 0, 10),        # варвар, банк 1 (стр.0 $0000)
-    3: (0x5D00, 0, 15),        # варвар, банк 2 (стр.1 $A300)
+# Готовые зеркальные копии задаются ПО УРОВНЯМ: на уровне 2 места под них нет (там семь банков),
+# да и голем зеркалится своим блитом, а не копиями.
+MIRRORS_BY_LEVEL = {
+    1: {9: (0xF000, 14, 7),        # мумия (стр.2 $6000): ходьба влево — кадры 14..17
+        8: (0xF000, 2, 7, 3),      # орк (стр.2 $0000): ходьба влево — кадры 2..7; в стр.2 места нет
+        2: (0x6900, 0, 10),        # варвар, банк 1 (стр.0 $0000)
+        3: (0x5D00, 0, 15)},       # варвар, банк 2 (стр.1 $A300)
+    2: {},
 }
+MIRRORS = MIRRORS_BY_LEVEL[1]
 MIRROR_SLOTS = 4        # столько записей в таблице движка (vec_mirr.asm)
 if os.environ.get('IANNA_NOMIRRDATA') == '1':
     MIRRORS = {}        # сборка без готовых зеркал — для сверки картинки
@@ -339,13 +349,37 @@ def level_table_blob(pal, banks, fg):
     # Пул (буфер супертайлов) несовместим с двухплоскостным спрайтом: тот рисуется прямо в экран,
     # а пул потом выводит свой буфер поверх и затирает его. На уровнях с таким врагом пул выключаем.
     out.append(1 if any(b in BANK_2PLANE for b, *_ in banks) else 0)
+    pairs = bytearray()
     for i, t in enumerate(fg):
-        out += bytes([t, i])                   # пары (номер тайла, индекс)
+        pairs += bytes([t, i])                 # пары (номер тайла, индекс)
+    assert len(pairs) <= 40, len(pairs)
+    out += pairs.ljust(40, b'\x00')            # фиксированная длина: за парами идёт таблица зеркал
+    out += mirror_table(banks)                 # 4 записи по 6 Б, см. vec_mirr.asm
     return bytes(out)
 
+def mirror_table(banks):
+    """Таблица готовых зеркальных копий для движка. Раньше лежала в ROM, но она ЗАВИСИТ ОТ УРОВНЯ
+    (на уровне 2 копий нет вовсе), а ROM теперь общий для всех уровней — значит её место в наборе."""
+    by = {b: (pg, base) for b, pg, base, _ in banks}
+    rows = []
+    for bank, spec in sorted(MIRRORS.items()):
+        if bank not in by: continue
+        pg, base = by[bank]
+        addr, first, nfr = spec[0], spec[1], spec[2]
+        cpage = spec[3] if len(spec) > 3 else pg
+        frames = parse_sprite_asm(SRC / f'{BANK_FILE[bank]}.asm')[first:first+nfr]
+        lo = base + first*FRAME_BYTES
+        hi = lo + len(frames)*FRAME_BYTES
+        rows.append(bytes([0x10 | (pg << 2), lo >> 8, hi >> 8,
+                           (addr - lo) & 0xFF, ((addr - lo) >> 8) & 0xFF, 0x10 | (cpage << 2)]))
+    while len(rows) < 4:
+        rows.append(bytes([0, 0xFF, 0, 0, 0, 0]))   # пустая запись: LO выше любого адреса
+    return b''.join(rows[:4])
+
 def build_kvaz(level_no=1, start=None):
-    global PERM
+    global PERM, MIRRORS
     PERM = color_perm(level_no)
+    MIRRORS = MIRRORS_BY_LEVEL.get(level_no, {})
     pages = [bytearray(65536) for _ in range(4)]
     banks = LEVEL_BANKS[level_no]
     if C8MODE:
@@ -375,7 +409,11 @@ def build_kvaz(level_no=1, start=None):
         assert base % 256 == 0, (name, hex(base))
         two = BANK_2PLANE.get(bank) if not C8MODE else None
         fb = FRAME_BYTES_2P if two else FRAME_BYTES
-        assert base + len(frames)*fb <= limit, (name, len(frames))
+        fit = (limit - base) // fb
+        if len(frames) > fit:                  # хвостовые кадры банка бывают пустыми — обрезаем по месту
+            empty = sum(1 for fr in frames[fit:] if not any(v for row in fr for v in row))
+            print(f'  {name}: место под {fit} кадров из {len(frames)} (пустых в хвосте: {empty})')
+            frames = frames[:fit]
         for k, fr in enumerate(frames):
             blob = sprite_frame_bytes_2p(fr, two) if two else sprite_frame_bytes(fr, pmap)
             pages[page][base + k*fb: base + (k+1)*fb] = blob

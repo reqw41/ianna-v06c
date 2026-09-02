@@ -53,18 +53,5 @@ vm_next:
 	jp nz,vm_loop
 	ret
 
-; запись 6 Б: порт стека банка, старший байт начала зеркалированного диапазона, граница,
-; смещение до копии (слово), порт стека страницы самих копий
-vm_tab:
-	db VEC_MIRR_P1, VEC_MIRR_L1, VEC_MIRR_H1
-	dw VEC_MIRR_D1
-	db VEC_MIRR_C1
-	db VEC_MIRR_P2, VEC_MIRR_L2, VEC_MIRR_H2
-	dw VEC_MIRR_D2
-	db VEC_MIRR_C2
-	db VEC_MIRR_P3, VEC_MIRR_L3, VEC_MIRR_H3
-	dw VEC_MIRR_D3
-	db VEC_MIRR_C3
-	db VEC_MIRR_P4, VEC_MIRR_L4, VEC_MIRR_H4
-	dw VEC_MIRR_D4
-	db VEC_MIRR_C4
+; Таблица vm_tab лежит в ОЗУ и приходит из набора уровня (build_edd.mirror_table): её состав
+; зависит от уровня, а ROM теперь общий для всех.
