@@ -13,9 +13,8 @@ z_ix_rda:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ld a,(hl)
 	pop hl
@@ -26,9 +25,8 @@ z_ix_rda_nf:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	pop hl
 	ret
@@ -38,9 +36,8 @@ z_iy_rda:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ld a,(hl)
 	pop hl
@@ -50,9 +47,8 @@ z_iy_rda_nf:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	pop hl
 	ret
@@ -69,9 +65,8 @@ z_ix_hl:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ex (sp),hl		; HL=результат... нет: (SP)=старый HL -> вернём через z_ret
 	; сейчас HL=старый HL, (SP)=результат. Нам нужно вернуть результат в HL,
@@ -90,9 +85,8 @@ z_iy_hl:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ex (sp),hl
 	pop hl
@@ -116,9 +110,8 @@ z_ix_rd_b:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld b,(hl)
 	ld hl,(z_ret)
 	pop af
@@ -133,9 +126,8 @@ z_ix_rd_c:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld c,(hl)
 	ld hl,(z_ret)
 	pop af
@@ -150,9 +142,8 @@ z_ix_rd_d:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld d,(hl)
 	ld hl,(z_ret)
 	pop af
@@ -167,9 +158,8 @@ z_ix_rd_e:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld e,(hl)
 	ld hl,(z_ret)
 	pop af
@@ -185,9 +175,8 @@ z_ix_rd_h:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	ld (z_tmp),a
 	ld hl,(z_ret)
@@ -207,9 +196,8 @@ z_ix_rd_l:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	ld (z_tmp),a
 	ld hl,(z_ret)
@@ -229,9 +217,8 @@ z_iy_rd_b:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld b,(hl)
 	ld hl,(z_ret)
 	pop af
@@ -246,9 +233,8 @@ z_iy_rd_c:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld c,(hl)
 	ld hl,(z_ret)
 	pop af
@@ -263,9 +249,8 @@ z_iy_rd_d:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld d,(hl)
 	ld hl,(z_ret)
 	pop af
@@ -280,9 +265,8 @@ z_iy_rd_e:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld e,(hl)
 	ld hl,(z_ret)
 	pop af
@@ -297,9 +281,8 @@ z_iy_rd_h:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	ld (z_tmp),a
 	ld hl,(z_ret)
@@ -319,9 +302,8 @@ z_iy_rd_l:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld a,(hl)
 	ld (z_tmp),a
 	ld hl,(z_ret)
@@ -343,9 +325,8 @@ z_ix_sta:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ld (hl),a
 	ld hl,(z_ret)
@@ -360,9 +341,8 @@ z_iy_sta:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	pop af
 	ld (hl),a
 	ld hl,(z_ret)
@@ -377,9 +357,8 @@ z_ix_st_b:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),b
 	ld hl,(z_ret)
 	pop af
@@ -394,9 +373,8 @@ z_ix_st_c:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),c
 	ld hl,(z_ret)
 	pop af
@@ -411,9 +389,8 @@ z_ix_st_d:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),d
 	ld hl,(z_ret)
 	pop af
@@ -428,9 +405,8 @@ z_ix_st_e:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),e
 	ld hl,(z_ret)
 	pop af
@@ -445,9 +421,8 @@ z_iy_st_b:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),b
 	ld hl,(z_ret)
 	pop af
@@ -462,9 +437,8 @@ z_iy_st_c:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),c
 	ld hl,(z_ret)
 	pop af
@@ -479,9 +453,8 @@ z_iy_st_d:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),d
 	ld hl,(z_ret)
 	pop af
@@ -496,9 +469,8 @@ z_iy_st_e:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ld (hl),e
 	ld hl,(z_ret)
 	pop af
@@ -514,9 +486,8 @@ z_ix_stn:
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ex de,hl		; DE=адрес назначения
 	ld hl,(z_ret)
 	ld a,(hl)		; n
@@ -537,9 +508,8 @@ z_iy_stn:
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
-	ld a,h
-	adc a,0
-	ld h,a
+	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
+	inc h
 	ex de,hl
 	ld hl,(z_ret)
 	ld a,(hl)
