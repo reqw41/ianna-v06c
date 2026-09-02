@@ -58,6 +58,8 @@ sym=rv.load_syms(pathlib.Path(LST))
 keys=[]; cpu=rv.make_cpu(keys)
 rom=open(ROM,'rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom; cpu.pc=0x100
 rv.patch_menu(cpu)          # набор без оверлея меню (уровни 2+): фазу меню глушим
+rv.STEP_BUDGET=400000       # прогрев без обрыва обычного кадра по числу инструкций (старт одинаков у любых
+                            # сборок), но busy-loop сообщения уровня всё же получает прерывание
 mem=cpu.mem
 # --- ВИ53 счётчик 0 ---
 pit={'reload_cyc':0,'latched':None,'wr':0,'rd':0,'lo':0}

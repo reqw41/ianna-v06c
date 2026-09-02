@@ -124,7 +124,12 @@ def make_cpu(keys):
     return cpu
 
 _start_done = [False]
-def run_frames(cpu, n, budget=13000, sym=None):
+STEP_BUDGET = 13000   # инструкций на кадр без halt (прерывание должно прийти и в busy-loop wait_till_read).
+                      # Для сверки СБОРОК между собой ставьте ~400000: иначе обычный кадр обрывается по числу
+                      # инструкций, более быстрый код получает прерывание в другой точке, и логика двух сборок
+                      # расходится без всякой ошибки (ловилось как «разные снимки после замены exx»)
+def run_frames(cpu, n, budget=None, sym=None):
+    if budget is None: budget = STEP_BUDGET
     """кадр = до HALT или ~13000 инструкций (~60К тактов), затем RST7 если EI —
     как на железе: прерывание приходит и в busy-loop (wait_till_read)."""
     for _ in range(n):
@@ -174,7 +179,7 @@ def start_game(cpu, keys, sym, max_frames=1500):
     w = Warmup(sym, keys); done = False
     for fr in range(max_frames):
         c = 0
-        while not cpu.halted and c < 13000:
+        while not cpu.halted and c < STEP_BUDGET:
             pc = cpu.pc
             if START and not _start_done[0] and pc == sym['SaveCheckpoint']:
                 cpu.mem[sym['current_levelx']] = START[0]; cpu.mem[sym['current_levely']] = START[1]; _start_done[0] = True
