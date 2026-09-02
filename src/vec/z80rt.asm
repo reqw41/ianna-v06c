@@ -478,48 +478,44 @@ z_iy_st_e:
 	ret
 ; ld (ix+d),n : после call два байта: d, n
 z_ix_stn:
-	ex (sp),hl
+	ex (sp),hl		; HL=адрес возврата, (SP)=старый HL
 	push af
 	ld a,(hl)		; d
-	inc hl
-	ld (z_ret),hl
+	inc hl			; -> адрес n
+	push hl		; [&n][af][старый HL]
 	ld hl,(z_ix)
 	add a,l
 	ld l,a
 	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
 	inc h
-	ex de,hl		; DE=адрес назначения
-	ld hl,(z_ret)
+	ex de,hl		; DE=адрес назначения, HL=старый DE
+	ex (sp),hl		; HL=&n, (SP)=старый DE
 	ld a,(hl)		; n
-	inc hl
-	ld (z_ret),hl
+	inc hl			; HL=адрес возврата (за двумя db)
 	ld (de),a
-	ex de,hl		; DE восстановлен, HL=мусор
-	ld hl,(z_ret)
+	pop de			; DE восстановлен (старая версия оставляла в DE мусор!)
 	pop af
-	ex (sp),hl
+	ex (sp),hl		; HL=старый HL, (SP)=адрес возврата
 	ret
 z_iy_stn:
-	ex (sp),hl
+	ex (sp),hl		; HL=адрес возврата, (SP)=старый HL
 	push af
-	ld a,(hl)
-	inc hl
-	ld (z_ret),hl
+	ld a,(hl)		; d
+	inc hl			; -> адрес n
+	push hl		; [&n][af][старый HL]
 	ld hl,(z_iy)
 	add a,l
 	ld l,a
 	jp nc,$+4	; перенос в старший байт редок (d мало): 12 тактов вместо 24
 	inc h
-	ex de,hl
-	ld hl,(z_ret)
-	ld a,(hl)
-	inc hl
-	ld (z_ret),hl
+	ex de,hl		; DE=адрес назначения, HL=старый DE
+	ex (sp),hl		; HL=&n, (SP)=старый DE
+	ld a,(hl)		; n
+	inc hl			; HL=адрес возврата (за двумя db)
 	ld (de),a
-	ex de,hl
-	ld hl,(z_ret)
+	pop de			; DE восстановлен (старая версия оставляла в DE мусор!)
 	pop af
-	ex (sp),hl
+	ex (sp),hl		; HL=старый HL, (SP)=адрес возврата
 	ret
 
 ; ---------------------------------------------------------------------------
