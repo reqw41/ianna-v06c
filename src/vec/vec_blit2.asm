@@ -15,7 +15,6 @@ vec_blit2:			; вход как у ds_direct: vec_spr_src, vec_spr_hcol, vec_spr_
 	ld hl,(vec_spr_src)
 	ld sp,hl
 	ld a,(vec_spr_port)
-	ld (vec_spr_curport),a
 	out (KV_PORT),a
 b2_col:
 	ld a,(vec_spr_hcol)
@@ -96,11 +95,9 @@ b2_col_end:
 	ld h,0
 	add hl,sp
 	ld sp,hl
-	ld a,(vec_spr_hcol)
-	inc a
-	ld (vec_spr_hcol),a
-	ld a,(vec_col_cnt)
-	dec a
-	ld (vec_col_cnt),a
+	ld hl,vec_spr_hcol	; HL здесь уже свободен — короче, чем через A
+	inc (hl)
+	ld hl,vec_col_cnt
+	dec (hl)
 	jp nz,b2_col
 	jp vec_stk_leave

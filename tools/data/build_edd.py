@@ -324,6 +324,9 @@ LEVELTAB_PAGE = 2
 # строятся заново кодом). Копия берётся из собранного ROM, поэтому после его правки нужен второй
 # проход build_edd — за этим следит сторож в build_vec.
 FDDCOPY_ADDR = 0xBD00
+# Двухплоскостной блит тоже не поместился в ROM, поэтому лежит здесь и при старте уровня копируется
+# поверх таблицы слотов ($7F00): на таком уровне пул выключен, слоты не нужны.
+BLIT2_ADDR = 0xBF00
 
 def level_table_blob(pal, banks, fg):
     by = {b: (pg, base) for b, pg, base, _ in banks}
@@ -469,6 +472,11 @@ def build_kvaz(level_no=1, start=None):
         end = LEVELTAB_ADDR + len(blob)
         assert all(v == 0 for v in pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end]), 'область таблиц уровня занята'
         pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end] = blob
+        blit2 = BUILD / 'blit2.bin'
+        if blit2.exists() and any(b in BANK_2PLANE for b, *_ in banks):
+            bb = blit2.read_bytes()
+            assert len(bb) <= 256, len(bb)
+            pages[LEVELTAB_PAGE][BLIT2_ADDR:BLIT2_ADDR+len(bb)] = bb
         rom = BUILD / 'ianna.rom'
         if rom.exists():
             r = rom.read_bytes()
@@ -502,6 +510,7 @@ def build_kvaz(level_no=1, start=None):
                   f'LEVELTAB\tequ ${LEVELTAB_ADDR:04X}',
                   f'LEVELTAB_PORT\tequ ${0x20 | LEVELTAB_PAGE:02X}\t; окно $A000-$DFFF -> страница {LEVELTAB_PAGE}',
                   f'FDDCOPY\tequ ${FDDCOPY_ADDR:04X}\t; копия загрузчика уровня (512 Б) — возвращается на $7E00',
+                  f'BLIT2SRC\tequ ${BLIT2_ADDR:04X}\t; двухплоскостной блит — копируется на $7F00 (таблица слотов)',
                   f'LEVELTAB_LEN\tequ {len(level_table_blob(level_palette(), banks, fg))}']
     if C8MODE == 'c8':
         lines += ['; карта «цвет кода 0..15 -> слот» для fillArea (шкалы панели); лежит сразу за fg_tile_lut (страница)',

@@ -319,7 +319,7 @@ def main():
     (TR / 'z80rt_used.asm').write_text(''.join(keep))
     order.append(TR / 'z80rt_used.asm')
     order.append(VEC / 'vec_mirr.asm')
-    order.append(VEC / 'vec_blit2.asm')   # блит банков в двух плоскостях   # хвост: выше выравнивания fg_tile_lut места нет
+    order.append(VEC / 'vec_blit2.asm')   # прямой блит двухплоскостных банков
     order += [TR / 'vars.asm', VEC / 'vec_vars.asm']   # org VARS_ADDR
     parts = [f'DEMO\tequ {1 if DEMO else 0}\n']
     for f in order:
@@ -371,7 +371,11 @@ def build_menu_bins(lst):
             'vec_ovl_call', 'vec_ovl_tgt', 'get_keyboard', 'inventory', 'inv_current_object',
             'force_inv_redraw', 'draw_weapon', 'RedrawScreen', 'InvalidateTiles', 'RedrawAllSprites',
             'FX_Play', 'get_entity_max_energy', 'remove_object_from_inventory', 'player_dead',
-            'ENTITY_PLAYER_POINTER', 'z_iy', 'vec_palette', 'vec_pc_reset', 'vec_key', 'vec_key_hook']
+            'ENTITY_PLAYER_POINTER', 'z_iy', 'vec_palette', 'vec_pc_reset', 'vec_key', 'vec_key_hook',
+            # для вынесенного двухплоскостного блита:
+            'vec_col_cnt', 'vec_row_cnt', 'vec_sp_save', 'vec_spr_src', 'vec_spr_port',
+            'vec_spr_curport', 'vec_spr_hcol', 'vec_spr_lbot', 'vec_spr_ny', 'vec_spr_skip2',
+            'vec_spr_dst', 'vec_b2_step', 'vec_stk_leave', 'rev256']
     syms = {}
     for line in lst.split('\n'):
         m = re.match(r'^([A-Za-z_][\w.]*)\s+=\s+\$([0-9A-F]{4})', line)
@@ -431,7 +435,8 @@ def build_menu_bins(lst):
     (ROOT / 'build/menu_stripes.asm').write_text('\n'.join(st) + '\n')
     for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x800),
                                 (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9000 - 0x8440),
-                                (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x9000)):
+                                (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x9000),
+                                (VEC / 'blit2_ovl.asm', 'blit2.bin', 0x100)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())
         r = subprocess.run([str(ZASM), '--8080', '-uwy', work.name, f'{binout}.lst', binout],
