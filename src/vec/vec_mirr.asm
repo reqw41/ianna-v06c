@@ -17,7 +17,7 @@ vec_mirror_src:			; портит A, BC, DE, HL; вызывается один р
 	or a
 	ret z			; спрайт и так прямой
 	ld hl,vm_tab
-	ld b,4			; записей в таблице (build_edd.MIRROR_SLOTS)
+	ld b,6			; записей в таблице (build_edd.MIRROR_SLOTS)
 vm_loop:
 	push hl			; начало записи — по нему шагаем к следующей
 	ld a,(vec_spr_port)

@@ -7,6 +7,7 @@
   IANNA_EDD=<edd> — образ квазидиска для этой сборки
 """
 import sys, re, bisect, collections, pathlib
+pc_ring=[]; bh_n=[0]
 ARGS=[a for a in sys.argv[1:] if not a.startswith('--')]; OPTS=[a for a in sys.argv[1:] if a.startswith('--')]
 ROM=ARGS[0] if ARGS else 'build/ianna.rom'; LST=ARGS[1] if len(ARGS)>1 else 'build/ianna_vec.lst'
 FRAMES=int(next((o[9:] for o in OPTS if o.startswith('--frames=')),'600'))
@@ -79,7 +80,6 @@ def in_h(p):
     return base_in(p)
 cpu.out_handler=out_h; cpu.in_handler=in_h
 FC=sym['FrameCounter']; AT=sym['animate_tile']; SC=sym['SaveCheckpoint']
-bh_n=[0]
 VBW=sym.get('vbg_wait',-1); bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
 delivered=0; lost=0; lost_at=collections.Counter(); next_irq=FRAME; started=False
 def run(nframes):
