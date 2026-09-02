@@ -11,3 +11,4 @@ tools/bin/sjasm
 tools/data/__pycache__/
 __pycache__/
 tests/*.bin
+.claude/

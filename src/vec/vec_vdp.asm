@@ -612,6 +612,8 @@ dft_found:
 	ld h,a
 	ld l,0
 	ld (vec_blit_src),hl
+	pop bc			; координаты B, C: перебор пар их портил (B — счётчик, C — число пар),
+	push bc			; и тайл ложился в верхний левый угол вместо своего места (вода на уровне 2)
     if !DEMO
 	ld a,(vec_pool_on)
 	or a
