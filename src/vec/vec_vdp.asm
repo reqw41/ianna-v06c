@@ -882,6 +882,18 @@ drawSprite:
 	ld d,(hl)
 	ld e,0
 	pop hl
+	; ВЕКТОР: бит 0 порта = банк лежит в ДВУХ плоскостях, кадр вдвое короче (288 Б вместо 576)
+	ld a,(vec_spr_port)
+	rrca
+	jp nc,ds_full
+	ld a,h
+	or a
+	rra
+	ld h,a
+	ld a,l
+	rra
+	ld l,a
+ds_full:
 	add hl,de
     endif
 	ld a,(vdpCmdSprite+VDP_NY)
@@ -894,6 +906,9 @@ drawSprite:
 	add a,a
 	add a,d			; (32-NY)*6: строка = 6 байт [p0,маска,p1,p2,p3,пропуск]
 	ld (vec_spr_skip),a
+	rra			; половина — для 2-плоскостного кадра (строка 3 байта)
+	and $7f
+	ld (vec_spr_skip2),a
 	ld e,a
 	ld d,0
 	add hl,de
@@ -942,6 +957,9 @@ ds_cost:
 	pop de
     if !DEMO
 	; буферный путь: пул включён и все супертайлы спрайта имеют слоты
+	ld a,(vec_spr_port)
+	rrca
+	jp c,ds_direct		; 2 плоскости: только прямой путь, в пуле формат не разбирают
 	ld a,(vec_pool_on)
 	or a
 	jp z,ds_direct
@@ -950,6 +968,9 @@ ds_cost:
 	jp drawSprite_pool
     endif
 ds_direct:
+	ld a,(vec_spr_port)	; банк в двух плоскостях — свой блит (кадр 288 Б, строка 3 байта)
+	rrca
+	jp c,vec_blit2
 	ld a,(vec_spr_dir)
     if NOMIRROR
 	xor a			; ЗАМЕР: см. выше
@@ -1800,6 +1821,9 @@ vpb_spr_adv:
 	ld a,(vec_tmp_ovf)
 	or a
 	jp nz,vpb_overflow2
+	ld a,(vec_pool_ban)	; уровень с двухплоскостным спрайтом — он рисуется мимо пула
+	or a
+	ret nz
 	ld a,1
 	ld (vec_pool_on),a
 	ret

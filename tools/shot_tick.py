@@ -10,7 +10,7 @@ START=tuple(int(v) for v in ARGS[0].split(',')); TAG=ARGS[1]
 KEY=ARGS[2] if len(ARGS)>2 else None
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 sym=rv.load_syms(pathlib.Path('build/ianna_vec.lst'))
-keys=set(); cpu=rv.make_cpu(keys)
+keys=[]; cpu=rv.make_cpu(keys)
 rv.START=START
 rv.start_game(cpu,keys,sym)
 if KEY: keys.add(KEY)

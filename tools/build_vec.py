@@ -304,7 +304,8 @@ def main():
             keep.append(b); kept.add(name)
     (TR / 'z80rt_used.asm').write_text(''.join(keep))
     order.append(TR / 'z80rt_used.asm')
-    order.append(VEC / 'vec_mirr.asm')   # хвост: выше выравнивания fg_tile_lut места нет
+    order.append(VEC / 'vec_mirr.asm')
+    order.append(VEC / 'vec_blit2.asm')   # блит банков в двух плоскостях   # хвост: выше выравнивания fg_tile_lut места нет
     order += [TR / 'vars.asm', VEC / 'vec_vars.asm']   # org VARS_ADDR
     parts = [f'DEMO\tequ {1 if DEMO else 0}\n']
     for f in order:

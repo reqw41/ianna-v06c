@@ -129,6 +129,34 @@ def parse_sprite_asm(path):
 
 FRAME_BYTES = 576   # 3 колонки x 32 строки x 6 байт
 
+# Банки, которые кладём в ДВЕ плоскости (четыре цвета): кадр вдвое короче — 288 Б вместо 576.
+# Строка занимает три байта [плоскость 0, маска, плоскость 1], поэтому блит читает по две строки
+# за три чтения стеком. Прозрачность несёт маска, а не нулевое значение, так что все четыре
+# значения 0..3 — цвета; значение 0 в палитре уровня и так чёрный, им красим контур.
+BANK_2PLANE = {14: {1: 0, 7: 1, 2: 1, 8: 2, 4: 3, 6: 3, 11: 3},   # голем: вариант А (белый -> голубой)
+               15: {1: 0, 7: 1, 2: 1, 8: 2, 4: 3, 6: 3, 11: 3}}
+FRAME_BYTES_2P = 288
+
+def sprite_frame_bytes_2p(frame, cmap):
+    """288 Б, строка 3 Б: [старший бит цвета, маска, младший бит]. Значения 0..3 живут в ДВУХ МЛАДШИХ
+    битах, а плоскости Вектора идут от старшего бита к младшему — поэтому эти два байта пишутся в
+    третью и четвёртую плоскости ($C000/$E000), а первые две спрайт гасит. Маска — по исходному
+    пикселю (0 = прозрачно), так что значение 0 остаётся полноценным цветом."""
+    out = bytearray()
+    for col in range(3):
+        for y in range(31, -1, -1):
+            src = frame[y][col*8:col*8+8]
+            v = [cmap.get(p, 0) for p in src]
+            p0 = p1 = mask = 0
+            for k, val in enumerate(v):
+                # порядок как у четырёхплоскостного формата: первым идёт СТАРШИЙ бит цвета
+                if val & 2: p0 |= 0x80 >> k
+                if val & 1: p1 |= 0x80 >> k
+                if src[k] == 0: mask |= 0x80 >> k
+            out += bytes((p0, mask, p1))
+    assert len(out) == FRAME_BYTES_2P, len(out)
+    return bytes(out)
+
 def sprite_frame_bytes(frame, pmap=None):
     """576 Б, строка 6 Б. 16 цветов: [p0,маска,p1,p2,p3,пропуск], маска = ~(p0|..|p3).
     c8 (3 плоскости, биты 2..0): [pl1,маска,pl2,pl3,пропуск,0]; ref8: 4 плоскости переназначенных
@@ -210,7 +238,9 @@ def bank_tab_lines(banks):
              'vec_bank_tab:']
     for b in range(2, 22):
         pg, base = by.get(b, (0, 0))
-        lines.append(f'\tdb KV_STK_P{pg},${base >> 8:02X}\t; {b} {BANK_FILE.get(b, "-")}{"" if b in by else " (нет)"}')
+        two = ' + 1' if b in BANK_2PLANE and not C8MODE else ''
+        lines.append(f'\tdb KV_STK_P{pg}{two},${base >> 8:02X}\t; {b} {BANK_FILE.get(b, "-")}'
+                     f'{"" if b in by else " (нет)"}{" — 2 плоскости (бит 0 порта)" if two else ""}')
     return lines
 
 def level_palette():
@@ -235,15 +265,29 @@ BANK_ENEMY = {7:20, 8:21, 9:22, 10:23, 11:26, 12:24, 13:25, 14:27, 15:27, 16:28,
 # Мумия (банк 9) красится в 1,3,6,7,11,13 — переносим 11 и 13 вниз, меняя местами с 5 и 2.
 # Ограничение: одновременно уложить можно только тех врагов, чьи цвета в сумме дают <= 7 ненулевых
 # (мумия и камень порознь укладываются, вместе — восемь цветов, уже нет).
-COLOR_SWAPS = [] if os.environ.get('IANNA_NOPERM') == '1' else [(11, 5), (13, 2)]
+# Перестановка номеров цветов задаётся ПО УРОВНЯМ: она должна собрать краски того врага, которого
+# кладём в две или три плоскости, в самые младшие номера. Цвета при этом не меняются — регистры
+# палитры переставляются вместе с номерами, так что картинка та же.
+#   уровень 1: мумия (6 красок) в младшие восемь — 11<->5, 13<->2
+#   уровень 2: голем в ЧЕТЫРЕ значения 0..3 — 0 чёрный (он же палитра[0]), 1 тёмно-синий,
+#              2 синий, 3 голубой; вытесненные чёрный и красный уезжают на 8 и 4
+COLOR_SWAPS_BY_LEVEL = {1: [(11, 5), (13, 2)]}
+COLOR_TARGET_BY_LEVEL = {2: {2: 1, 8: 2, 4: 3, 1: 8, 3: 4}}   # старый номер -> новый
 
-def color_perm():
+def color_perm(level=1):
     p = list(range(16))
-    for a, b in COLOR_SWAPS:
+    if os.environ.get('IANNA_NOPERM') == '1':
+        return p
+    tgt = COLOR_TARGET_BY_LEVEL.get(level)
+    if tgt:
+        assert sorted(tgt) == sorted(tgt.values()), ('перестановка не биекция', tgt)
+        for a, b in tgt.items(): p[a] = b
+        return p
+    for a, b in COLOR_SWAPS_BY_LEVEL.get(level, []):
         p[a], p[b] = p[b], p[a]
     return p
 
-PERM = color_perm()
+PERM = color_perm(1)
 
 # Готовые зеркальные копии кадров. Зеркальный блит разворачивает КАЖДЫЙ байт строки через таблицу
 # rev256 заново на каждом тике и стоит вшестеро дороже прямого (профиль экрана 4,5: dspm_row 20.9 %
@@ -286,13 +330,19 @@ def level_table_blob(pal, banks, fg):
     out = bytearray(pal)                       # 16 Б палитры
     for b in range(2, 22):                     # 40 Б: порт стека страницы + старший байт базы банка
         pg, base = by.get(b, (0, 0))
-        out += bytes([0x10 | (pg << 2), base >> 8])
+        two = 1 if b in BANK_2PLANE else 0     # бит 0 = банк в двух плоскостях, кадр 288 Б
+        out += bytes([0x10 | (pg << 2) | two, base >> 8])
     out.append(len(fg))                        # передних тайлов
+    # Пул (буфер супертайлов) несовместим с двухплоскостным спрайтом: тот рисуется прямо в экран,
+    # а пул потом выводит свой буфер поверх и затирает его. На уровнях с таким врагом пул выключаем.
+    out.append(1 if any(b in BANK_2PLANE for b, *_ in banks) else 0)
     for i, t in enumerate(fg):
         out += bytes([t, i])                   # пары (номер тайла, индекс)
     return bytes(out)
 
 def build_kvaz(level_no=1, start=None):
+    global PERM
+    PERM = color_perm(level_no)
     pages = [bytearray(65536) for _ in range(4)]
     banks = LEVEL_BANKS[level_no]
     if C8MODE:
@@ -317,14 +367,17 @@ def build_kvaz(level_no=1, start=None):
     for n in range(256):
         b = bg_tile_bytes(tile_pixels(sr5, n), pm_tiles)   # c8: 96 Б, шаг 128 (хвост нули)
         pages[0][BG_TILES_BASE + n*128: BG_TILES_BASE + n*128 + len(b)] = b
-    def put_bank(page, base, name, limit, pmap):
+    def put_bank(page, base, name, limit, pmap, bank=None):
         frames = parse_sprite_asm(SRC / f'{name}.asm')
         assert base % 256 == 0, (name, hex(base))
-        assert base + len(frames)*FRAME_BYTES <= limit, (name, len(frames))
+        two = BANK_2PLANE.get(bank) if not C8MODE else None
+        fb = FRAME_BYTES_2P if two else FRAME_BYTES
+        assert base + len(frames)*fb <= limit, (name, len(frames))
         for k, fr in enumerate(frames):
-            pages[page][base + k*FRAME_BYTES: base + (k+1)*FRAME_BYTES] = sprite_frame_bytes(fr, pmap)
+            blob = sprite_frame_bytes_2p(fr, two) if two else sprite_frame_bytes(fr, pmap)
+            pages[page][base + k*fb: base + (k+1)*fb] = blob
     for bank, page, base, limit in banks:
-        put_bank(page, base, BANK_FILE[bank], limit, bank_pmap(bank))
+        put_bank(page, base, BANK_FILE[bank], limit, bank_pmap(bank), bank)
     # зеркальные копии кадров (см. MIRRORS выше): тот же формат, что у прямых, но пиксели отражены
     mirr = []
     if not C8MODE:
