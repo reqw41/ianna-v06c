@@ -278,6 +278,26 @@ def bank_tab_lines(banks):
                      f'{"" if b in by else " (нет)"}{" — 2 плоскости (бит 0 порта)" if two else ""}')
     return lines
 
+LIVE_COLORS = None      # цвета, реально встречающиеся на уровне (фон, передние тайлы, полноцветные
+                        # спрайты); заполняется в build_kvaz, см. live_colors()
+
+def live_colors(level_no, banks):
+    """Какие исходные цвета вообще встречаются на уровне. Нужны при слиянии: если в один слот
+    перестановка сводит несколько цветов, а живёт из них ровно один — слот обязан нести именно его."""
+    sr5 = pletter_depack((SRC / f'tiles_nivel{level_no:02d}.SR5.plet1').read_bytes())
+    lvl = (SRC / f'level{level_no}.map').read_bytes()
+    used = set()
+    for s in screens_of(lvl):
+        used |= set(s[0:160]) | set(s[160:320])
+    cols = set()
+    for t in used - {0}:
+        for row in tile_pixels(sr5, t): cols |= set(row)
+    for b, *_ in banks:
+        if b in BANK_2PLANE: continue          # четырёхцветный спрайт живёт в своих слотах 1..3
+        for f in parse_sprite_asm(str(BUILD / 'msx2' / f'{BANK_FILE[b]}.asm')):
+            cols |= {v for row in f for v in row}
+    return {COLOR_MERGE.get(c, c) for c in cols if c}
+
 def level_palette(level=None):
     """Палитра уровня с учётом перестановки номеров: регистры едут вместе с номерами, поэтому цвет
     на экране остаётся прежним. Слоты, которые перестановка оставила пустыми (на уровне 2 это 1..3),
@@ -287,6 +307,13 @@ def level_palette(level=None):
         return pal
     out = [0]*16
     for c in range(16):
+        # Слияние: в один слот сводится несколько цветов, и цвет слота достаётся ПОСЛЕДНЕМУ по номеру.
+        # Это неверно, когда последний на уровне не встречается вовсе: так розовый (кожа героя, 13 %
+        # его точек) уступал слот тёмно-голубому, которого нет ни в одном уровне, — герой синел.
+        # Поэтому мёртвый цвет слот не занимает, если в него сводится живой.
+        if LIVE_COLORS and c not in LIVE_COLORS and any(
+                PERM[o] == PERM[c] and o in LIVE_COLORS for o in range(16)):
+            continue
         out[PERM[c]] = pal[c]
     return out
 
@@ -464,6 +491,8 @@ def build_kvaz(level_no=1, start=None):
     BANK_2PLANE = {b: m for b, m in BANK_2PLANE_ALL.items()
                    if b in BANK_2PLANE_BY_LEVEL.get(level_no, set())}
     PERM = color_perm(level_no)
+    global LIVE_COLORS
+    LIVE_COLORS = live_colors(level_no, LEVEL_BANKS[level_no]) if not C8MODE else None
     MIRRORS = MIRRORS_BY_LEVEL.get(level_no, {})
     pages = [bytearray(65536) for _ in range(4)]
     banks = LEVEL_BANKS[level_no]
