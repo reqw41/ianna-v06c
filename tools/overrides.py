@@ -109,4 +109,12 @@ OVERRIDES = {
     ('score_src.asm', 240): [],
     ('score_src.asm', 242): ['ld hl,(z_ix)'] + ['inc hl']*4 + ['ld c,(hl)'],   # ld c,(ix+4)
     ('score_src.asm', 256): ['ld hl,(z_ix)'] + ['inc hl']*4 + ['ld e,(hl)'],   # ld e,(ix+4)
+
+    # scripts.asm, get_enemy_rom_page (533..543) — тип врага лежит далеко, в (ix+10), поэтому
+    # смещение прибавляем через A, а не десятью inc hl. Функция теперь портит HL; проверено, что
+    # ни один из шести вызывающих (ianna.asm 652/664/702/709, scripts.asm 547, entities.asm 3304)
+    # после неё HL не читает — все они либо задают его заново, либо сразу идут в функцию,
+    # которая начинается с ld hl,(z_ix).
+    ('scripts.asm', 534): ['ld hl,(z_ix)', 'ld a,l', 'add a,10', 'ld l,a', 'jp nc,$+4', 'inc h',
+                           'ld a,(hl)'],                                  # ld a,(ix+10)
 }
