@@ -971,8 +971,10 @@ ds_direct:
 	ld a,(vec_spr_port)	; банк в двух плоскостях — свой блит (кадр 288 Б, строка 3 байта)
 	rrca
 	jp nc,ds_dir4
-	jp vec_blit2		; ЗЕРКАЛЬНЫЙ путь пока отключён: вынесенный оверлей ($7F00) падает,
-				; идёт отладка — голем, идущий влево, рисуется неотражённым
+	ld a,(vec_spr_dir)	; зеркальный блит лежит поверх таблицы слотов ($7F00), прямой — в ROM
+	or a
+	jp z,vec_blit2
+	jp vec_slot_tab
 ds_dir4:
 	ld a,(vec_spr_dir)
     if NOMIRROR
@@ -1702,6 +1704,9 @@ vec_pool_begin:
 	xor a
 	ld (vec_slot_next),a
 	ld (vec_pool_on),a
+	ld a,(vec_pool_ban)	; на уровне с двухплоскостным спрайтом в таблице слотов лежит блит —
+	or a			; разметка слотов затёрла бы его код
+	ret nz
 	ld a,(ndirtyrects)
 	or a
 	ret z
@@ -1824,9 +1829,6 @@ vpb_spr_adv:
 	ld a,(vec_tmp_ovf)
 	or a
 	jp nz,vpb_overflow2
-	ld a,(vec_pool_ban)	; уровень с двухплоскостным спрайтом — он рисуется мимо пула
-	or a
-	ret nz
 	ld a,1
 	ld (vec_pool_on),a
 	ret
