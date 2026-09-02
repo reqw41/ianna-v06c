@@ -56,4 +56,17 @@ OVERRIDES = {
     ('entities.asm', 279): ['ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)'],   # ld a,(ix+5)
     ('entities.asm', 291): ['ld a,(hl)'],                                     # ld a,(ix+5); HL = z_ix+5
     ('entities.asm', 294): ['ld (hl),a'],                                     # ld (ix+5),a
+
+    # scripts.asm, run_script (128..179) — вызывается для игрока, обоих врагов и пяти объектов
+    # каждый тик. HL на входе не параметр (RunScripts его не передаёт) и до строки 136 не нужен,
+    # поэтому указатель сущности живёт прямо в нём.
+    ('scripts.asm', 131): ['ld hl,(z_ix)', 'ld (entity_current),hl'],   # ld (entity_current),ix
+    ('scripts.asm', 132): ['inc hl', 'inc hl', 'ld a,(hl)'],            # ld a,(ix+2); HL = z_ix
+    # здесь HL занят указателем на скрипт — сохраняем его на стеке (всё равно втрое дешевле хелпера)
+    ('scripts.asm', 142): ['push hl', 'ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl', 'ld c,(hl)', 'pop hl'],
+    # после IndCall старый HL никому не нужен: строки 171-172 всё равно кладут в него IY
+    ('scripts.asm', 168): ['ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl', 'add a,(hl)'],  # add a,(ix+3)
+    ('scripts.asm', 169): ['ld (hl),a'],                                # ld (ix+3),a
+    ('scripts.asm', 171): ['ld hl,(z_iy)'],                             # push iy / pop hl = HL := IY
+    ('scripts.asm', 172): [],
 }
