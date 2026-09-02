@@ -243,6 +243,9 @@ def main():
     (TR / 'tiles_src.asm').write_text(t)
     d = (SRC / 'drawsprite.asm').read_text(encoding='utf-8', errors='replace')
     d = cut(d, lambda l: l.startswith('CheckSprOverlap:'), lambda l: l.startswith('; Redraw the sprite list'), hot_d)
+    # ВЕКТОР: обход списка спрайтов — нативно (src/vec/drawlist_hot.asm) вместо перевода через IX/IYH
+    d = cut(d, lambda l: l.startswith('DrawSpriteList:'), lambda l: l.startswith('CleanSprite:'),
+            (VEC / 'drawlist_hot.asm').read_text(encoding='utf-8'))
     (TR / 'drawsprite_src.asm').write_text(d)
     translate(TR / 'tiles_src.asm', TR / 'tiles.asm')
     translate(TR / 'drawsprite_src.asm', TR / 'drawsprite.asm')

@@ -28,4 +28,93 @@ OVERRIDES = {
     ('tiles_src.asm', 259): [],
     ('tiles_src.asm', 260): [],
     ('tiles_src.asm', 262): ['pop bc', 'pop de', 'pop hl'],
+
+    # entities.asm, начало entity_gravity (178..185) — выполняется на КАЖДОМ вызове (игрок и два
+    # врага за тик). Перевод читал три поля тремя хелперами (~144 такта каждый, z_ix_hl дороже);
+    # здесь запись сущности один раз берётся в HL и поля адресуются инкрементами. HL на входе не
+    # нужен (CheckGravities его не читает), а между строками 182 и 185 стоят только ret z и cp —
+    # HL они не трогают, поэтому указатель доживает до поля +5.
+    ('entities.asm', 182): ['ld hl,(z_ix)', 'ld a,(hl)'],                 # ld a,(ix+0)
+    ('entities.asm', 183): ['inc hl', 'or (hl)'],                          # or (ix+1); HL = z_ix+1
+    ('entities.asm', 185): ['inc hl', 'inc hl', 'inc hl', 'inc hl', 'ld a,(hl)'],  # ld a,(ix+5)
+    # ветка «уже падаем» (208..232): HL доживает от строки 185 (между ними только cp/ret z/jr)
+    ('entities.asm', 210): ['inc hl', 'ld a,(hl)'],                        # ld a,(ix+6); HL = z_ix+6
+    # после call/pop ix указатель в HL уже не тот — берём заново
+    ('entities.asm', 220): ['ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl', 'inc hl', 'inc hl', 'ld a,(hl)'],
+    # entity_fall_notfallingyet (234..255): три чтения и две записи полей одной сущности.
+    # 240 и 245 берут указатель заново (перед ними call entity_checkgravity и условный
+    # call clean_second_sprite), а 251/254/255 живут на HL от 245: and/cp/jr/add его не трогают.
+    ('entities.asm', 240): ['ld hl,(z_ix)'] + ['inc hl']*7 + ['ld a,(hl)'],   # ld a,(ix+7)
+    ('entities.asm', 245): ['ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)'],   # ld a,(ix+5)
+    ('entities.asm', 251): ['ld a,(hl)'],                                     # ld a,(ix+5); HL = z_ix+5
+    ('entities.asm', 254): ['ld (hl),a'],                                     # ld (ix+5),a
+    ('entities.asm', 255): ['inc hl', 'ld (hl),0'],                           # ld (ix+6),0
+    # после entity_move указатель берём заново
+    ('entities.asm', 268): ['ld hl,(z_ix)', 'ld a,(hl)'],                     # ld a,(ix+0)
+    ('entities.asm', 269): ['inc hl', 'or (hl)'],                             # or (ix+1)
+    # entity_dontfall / entity_finishedfalling: вход только по jp z из 281/283, HL доживает
+    ('entities.asm', 279): ['ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)'],   # ld a,(ix+5)
+    ('entities.asm', 291): ['ld a,(hl)'],                                     # ld a,(ix+5); HL = z_ix+5
+    ('entities.asm', 294): ['ld (hl),a'],                                     # ld (ix+5),a
+
+    # scripts.asm, run_script (128..179) — вызывается для игрока, обоих врагов и пяти объектов
+    # каждый тик. HL на входе не параметр (RunScripts его не передаёт) и до строки 136 не нужен,
+    # поэтому указатель сущности живёт прямо в нём.
+    ('scripts.asm', 131): ['ld hl,(z_ix)', 'ld (entity_current),hl'],   # ld (entity_current),ix
+    ('scripts.asm', 132): ['inc hl', 'inc hl', 'ld a,(hl)'],            # ld a,(ix+2); HL = z_ix
+    # здесь HL занят указателем на скрипт — сохраняем его на стеке (всё равно втрое дешевле хелпера)
+    ('scripts.asm', 142): ['push hl', 'ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl', 'ld c,(hl)', 'pop hl'],
+    # после IndCall старый HL никому не нужен: строки 171-172 всё равно кладут в него IY
+    ('scripts.asm', 168): ['ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl', 'add a,(hl)'],  # add a,(ix+3)
+    ('scripts.asm', 169): ['ld (hl),a'],                                # ld (ix+3),a
+    ('scripts.asm', 171): ['ld hl,(z_iy)'],                             # push iy / pop hl = HL := IY
+    ('scripts.asm', 172): [],
+
+    # ianna_main_src.asm, RunScripts и runs_object_loop (428..488) — тело тика: восемь сущностей,
+    # у пяти объектов ещё и обход циклом. HL здесь не нужен ни на входе, ни на выходе (в оригинале
+    # его всё равно портит run_script), поэтому все push hl/pop hl вокруг работы с z_ix/z_iy лишние,
+    # а push ix / pop ix — это просто ld hl,(z_ix) / push hl и pop hl / ld (z_ix),hl.
+    ('ianna_main_src.asm', 431): ['ld hl,ENTITY_PLAYER_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 434): ['ld hl,scratch_area_player', 'ld (z_iy),hl'],
+    ('ianna_main_src.asm', 438): ['ld hl,ENTITY_PLAYER_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 444): ['ld hl,ENTITY_ENEMY1_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 445): ['ld a,(hl)'],                     # ld a,(ix+0); HL = z_ix
+    ('ianna_main_src.asm', 446): ['inc hl', 'or (hl)'],             # or (ix+1)
+    ('ianna_main_src.asm', 451): ['ld hl,scratch_area_enemy1', 'ld (z_iy),hl'],
+    ('ianna_main_src.asm', 453): ['ld hl,ENTITY_ENEMY1_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 456): ['ld hl,ENTITY_ENEMY2_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 457): ['ld a,(hl)'],
+    ('ianna_main_src.asm', 458): ['inc hl', 'or (hl)'],
+    ('ianna_main_src.asm', 463): ['ld hl,scratch_area_enemy2', 'ld (z_iy),hl'],
+    ('ianna_main_src.asm', 465): ['ld hl,ENTITY_ENEMY2_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 469): ['ld hl,ENTITY_OBJECT1_POINTER', 'ld (z_ix),hl'],
+    ('ianna_main_src.asm', 470): ['ld hl,scratch_area_obj1', 'ld (z_iy),hl'],
+    ('ianna_main_src.asm', 472): ['ld hl,(z_iy)', 'push hl'],       # push iy
+    ('ianna_main_src.asm', 473): ['ld hl,(z_ix)', 'push hl'],       # push ix; HL остаётся z_ix
+    ('ianna_main_src.asm', 475): ['ld a,(hl)'],                     # ld a,(ix+0) — push bc HL не трогает
+    ('ianna_main_src.asm', 476): ['inc hl', 'or (hl)'],             # or (ix+1)
+    ('ianna_main_src.asm', 481): ['pop hl', 'ld (z_ix),hl'],        # pop ix
+    ('ianna_main_src.asm', 482): ['pop hl', 'ld (z_iy),hl'],        # pop iy
+    ('ianna_main_src.asm', 484): ['ld hl,(z_ix)', 'add hl,de', 'ld (z_ix),hl'],   # add ix,de
+    ('ianna_main_src.asm', 486): ['ld hl,(z_iy)', 'add hl,de', 'ld (z_iy),hl'],   # add iy,de
+
+    # score_src.asm, draw_enemy_state (216..) — панель энергии обоих врагов, дважды за кадр
+    # (waitforvblank) плюс полная перерисовка счёта. HL не параметр и не результат (вызывающие
+    # задают только IX и A), внутри он живёт до строки 243, где его перезаписывает ld h,c.
+    ('score_src.asm', 218): ['ld hl,(z_ix)', 'ld a,(hl)'],                # ld a,(ix+0)
+    ('score_src.asm', 219): ['inc hl', 'or (hl)'],                        # or (ix+1); HL = z_ix+1
+    ('score_src.asm', 221): ['inc hl', 'inc hl', 'inc hl', 'ld a,(hl)'],  # ld a,(ix+4)
+    ('score_src.asm', 224): ['inc hl']*6 + ['ld a,(hl)'],                 # ld a,(ix+10); HL = z_ix+4
+    ('score_src.asm', 239): ['ld hl,(z_ix)', 'ld (z_iy),hl'],             # push ix / pop iy = IY := IX
+    ('score_src.asm', 240): [],
+    ('score_src.asm', 242): ['ld hl,(z_ix)'] + ['inc hl']*4 + ['ld c,(hl)'],   # ld c,(ix+4)
+    ('score_src.asm', 256): ['ld hl,(z_ix)'] + ['inc hl']*4 + ['ld e,(hl)'],   # ld e,(ix+4)
+
+    # scripts.asm, get_enemy_rom_page (533..543) — тип врага лежит далеко, в (ix+10), поэтому
+    # смещение прибавляем через A, а не десятью inc hl. Функция теперь портит HL; проверено, что
+    # ни один из шести вызывающих (ianna.asm 652/664/702/709, scripts.asm 547, entities.asm 3304)
+    # после неё HL не читает — все они либо задают его заново, либо сразу идут в функцию,
+    # которая начинается с ld hl,(z_ix).
+    ('scripts.asm', 534): ['ld hl,(z_ix)', 'ld a,l', 'add a,10', 'ld l,a', 'jp nc,$+4', 'inc h',
+                           'ld a,(hl)'],                                  # ld a,(ix+10)
 }
