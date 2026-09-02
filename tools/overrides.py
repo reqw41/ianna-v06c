@@ -28,4 +28,32 @@ OVERRIDES = {
     ('tiles_src.asm', 259): [],
     ('tiles_src.asm', 260): [],
     ('tiles_src.asm', 262): ['pop bc', 'pop de', 'pop hl'],
+
+    # entities.asm, начало entity_gravity (178..185) — выполняется на КАЖДОМ вызове (игрок и два
+    # врага за тик). Перевод читал три поля тремя хелперами (~144 такта каждый, z_ix_hl дороже);
+    # здесь запись сущности один раз берётся в HL и поля адресуются инкрементами. HL на входе не
+    # нужен (CheckGravities его не читает), а между строками 182 и 185 стоят только ret z и cp —
+    # HL они не трогают, поэтому указатель доживает до поля +5.
+    ('entities.asm', 182): ['ld hl,(z_ix)', 'ld a,(hl)'],                 # ld a,(ix+0)
+    ('entities.asm', 183): ['inc hl', 'or (hl)'],                          # or (ix+1); HL = z_ix+1
+    ('entities.asm', 185): ['inc hl', 'inc hl', 'inc hl', 'inc hl', 'ld a,(hl)'],  # ld a,(ix+5)
+    # ветка «уже падаем» (208..232): HL доживает от строки 185 (между ними только cp/ret z/jr)
+    ('entities.asm', 210): ['inc hl', 'ld a,(hl)'],                        # ld a,(ix+6); HL = z_ix+6
+    # после call/pop ix указатель в HL уже не тот — берём заново
+    ('entities.asm', 220): ['ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl', 'inc hl', 'inc hl', 'ld a,(hl)'],
+    # entity_fall_notfallingyet (234..255): три чтения и две записи полей одной сущности.
+    # 240 и 245 берут указатель заново (перед ними call entity_checkgravity и условный
+    # call clean_second_sprite), а 251/254/255 живут на HL от 245: and/cp/jr/add его не трогают.
+    ('entities.asm', 240): ['ld hl,(z_ix)'] + ['inc hl']*7 + ['ld a,(hl)'],   # ld a,(ix+7)
+    ('entities.asm', 245): ['ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)'],   # ld a,(ix+5)
+    ('entities.asm', 251): ['ld a,(hl)'],                                     # ld a,(ix+5); HL = z_ix+5
+    ('entities.asm', 254): ['ld (hl),a'],                                     # ld (ix+5),a
+    ('entities.asm', 255): ['inc hl', 'ld (hl),0'],                           # ld (ix+6),0
+    # после entity_move указатель берём заново
+    ('entities.asm', 268): ['ld hl,(z_ix)', 'ld a,(hl)'],                     # ld a,(ix+0)
+    ('entities.asm', 269): ['inc hl', 'or (hl)'],                             # or (ix+1)
+    # entity_dontfall / entity_finishedfalling: вход только по jp z из 281/283, HL доживает
+    ('entities.asm', 279): ['ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)'],   # ld a,(ix+5)
+    ('entities.asm', 291): ['ld a,(hl)'],                                     # ld a,(ix+5); HL = z_ix+5
+    ('entities.asm', 294): ['ld (hl),a'],                                     # ld (ix+5),a
 }
