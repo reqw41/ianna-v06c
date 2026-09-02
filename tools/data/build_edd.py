@@ -139,8 +139,15 @@ FRAME_BYTES = 576   # 3 колонки x 32 строки x 6 байт
 # Строка занимает три байта [плоскость 0, маска, плоскость 1], поэтому блит читает по две строки
 # за три чтения стеком. Прозрачность несёт маска, а не нулевое значение, так что все четыре
 # значения 0..3 — цвета; значение 0 в палитре уровня и так чёрный, им красим контур.
-BANK_2PLANE = {14: {1: 0, 7: 1, 2: 1, 8: 2, 4: 3, 6: 3, 11: 3},   # голем: вариант А (белый -> голубой)
-               15: {1: 0, 7: 1, 2: 1, 8: 2, 4: 3, 6: 3, 11: 3}}
+# Какие банки кладём в две плоскости — ЗАВИСИТ ОТ УРОВНЯ: четырёхцветный спрайт живёт в слотах 1..3,
+# а освободить их может только перестановка, уводящая фон в 0 и 4..15 (пока сделана для уровня 2).
+BANK_2PLANE_BY_LEVEL = {1: set(), 2: {14, 15, 7}}
+BANK_2PLANE_ALL = {14: {1: 0, 7: 1, 2: 1, 8: 2, 4: 3, 6: 3, 11: 3},   # голем: вариант А (белый -> голубой)
+               15: {1: 0, 7: 1, 2: 1, 8: 2, 4: 3, 6: 3, 11: 3},
+               # скелет: кость белая, полутень бежевая, тень тёмно-серая; жёлтые и салатовые
+               # искры уходят в белый, оранжевые — в бежевый, красные — в тень (вместе 7 % точек)
+               7:  {1: 0, 6: 1, 5: 1, 12: 1, 11: 2, 10: 2, 7: 3, 3: 3}}
+BANK_2PLANE = {}       # заполняется в build_kvaz по уровню
 FRAME_BYTES_2P = 288
 
 def sprite_frame_bytes_2p(frame, cmap):
@@ -249,13 +256,14 @@ def bank_tab_lines(banks):
                      f'{"" if b in by else " (нет)"}{" — 2 плоскости (бит 0 порта)" if two else ""}')
     return lines
 
-def level_palette():
-    """Палитра уровня с учётом перестановки номеров цветов (COLOR_SWAPS): регистры едут вместе с
-    номерами, поэтому цвет на экране остаётся прежним."""
+def level_palette(level=None):
+    """Палитра уровня с учётом перестановки номеров: регистры едут вместе с номерами, поэтому цвет
+    на экране остаётся прежним. Слоты, которые перестановка оставила пустыми (на уровне 2 это 1..3),
+    заполняются по экранам — см. screen_palettes()."""
     pal = msx_palette((SRC / 'test.plt').read_bytes())
     if C8MODE:
         return pal
-    out = list(pal)
+    out = [0]*16
     for c in range(16):
         out[PERM[c]] = pal[c]
     return out
@@ -277,8 +285,21 @@ BANK_ENEMY = {7:20, 8:21, 9:22, 10:23, 11:26, 12:24, 13:25, 14:27, 15:27, 16:28,
 #   уровень 1: мумия (6 красок) в младшие восемь — 11<->5, 13<->2
 #   уровень 2: голем в ЧЕТЫРЕ значения 0..3 — 0 чёрный (он же палитра[0]), 1 тёмно-синий,
 #              2 синий, 3 голубой; вытесненные чёрный и красный уезжают на 8 и 4
+# Слияние близких красок — применяется на ВСЕХ уровнях, чтобы враг выглядел везде одинаково.
+# Салатовый #91FF00 сливается с зелёным #00B600: это блики на коже орка (15 % его точек, на глаз
+# почти не видно) и 0.7 % фона; герой и тролль не затронуты вовсе. Освобождает один слот палитры —
+# без него цвета фона и обычных спрайтов не помещаются в двенадцать мест.
+COLOR_MERGE = {12: 13}
+
+# Перестановка номеров цветов. Цвета от неё не меняются: регистры палитры едут вместе с номерами.
+#   уровень 1: мумия (6 красок) в младшие восемь — 11<->5, 13<->2
+#   уровень 2: фон и обычные спрайты сдвинуты в слоты 0 и 4..15, а слоты 1..3 остаются ПУСТЫМИ —
+#              их занимает четырёхцветный спрайт экрана, и палитра там своя для каждого экрана
 COLOR_SWAPS_BY_LEVEL = {1: [(11, 5), (13, 2)]}
-COLOR_TARGET_BY_LEVEL = {2: {2: 1, 8: 2, 4: 3, 1: 8, 3: 4}}   # старый номер -> новый
+COLOR_TARGET_BY_LEVEL = {
+    2: {0: 0, 1: 0, 2: 4, 3: 5, 4: 6, 5: 7, 6: 8, 7: 9, 8: 10, 9: 11,
+        10: 12, 11: 13, 12: 14, 13: 14, 14: 15, 15: 15},
+}
 
 def color_perm(level=1):
     p = list(range(16))
@@ -286,11 +307,12 @@ def color_perm(level=1):
         return p
     tgt = COLOR_TARGET_BY_LEVEL.get(level)
     if tgt:
-        assert sorted(tgt) == sorted(tgt.values()), ('перестановка не биекция', tgt)
         for a, b in tgt.items(): p[a] = b
         return p
     for a, b in COLOR_SWAPS_BY_LEVEL.get(level, []):
         p[a], p[b] = p[b], p[a]
+    for a, b in COLOR_MERGE.items():
+        p[a] = p[b]          # слияние ПОСЛЕ перестановки: иначе слитый цвет уедет в чужой слот
     return p
 
 PERM = color_perm(1)
@@ -317,6 +339,7 @@ MIRRORS_BY_LEVEL = {
     2: {},
 }
 MIRRORS = MIRRORS_BY_LEVEL[1]
+LEVEL_NOW = 1
 MIRROR_SLOTS = 4        # столько записей в таблице движка (vec_mirr.asm)
 if os.environ.get('IANNA_NOMIRRDATA') == '1':
     MIRRORS = {}        # сборка без готовых зеркал — для сверки картинки
@@ -337,6 +360,11 @@ FDDCOPY_ADDR = 0xBD00
 # Двухплоскостной блит тоже не поместился в ROM, поэтому лежит здесь и при старте уровня копируется
 # поверх таблицы слотов ($7F00): на таком уровне пул выключен, слоты не нужны.
 BLIT2_ADDR = 0xBF00
+# Палитра, своя для каждого экрана: три байта (слоты 1..3), которые занимает четырёхцветный спрайт
+# этого экрана. Фон в эти слоты не заглядывает — перестановка уровня увела его в 0 и 4..15.
+# Адрес таблицы палитр экранов свой у каждого уровня: она обязана лежать В ОКНЕ $A000-$DFFF
+# (ниже окно не отображается), а свободное место там у уровней разное.
+SCRPAL_BY_LEVEL = {1: 0xC900, 2: 0xA000}
 
 def level_table_blob(pal, banks, fg):
     by = {b: (pg, base) for b, pg, base, _ in banks}
@@ -349,12 +377,36 @@ def level_table_blob(pal, banks, fg):
     # Пул (буфер супертайлов) несовместим с двухплоскостным спрайтом: тот рисуется прямо в экран,
     # а пул потом выводит свой буфер поверх и затирает его. На уровнях с таким врагом пул выключаем.
     out.append(1 if any(b in BANK_2PLANE for b, *_ in banks) else 0)
+    a = SCRPAL_BY_LEVEL.get(LEVEL_NOW, 0)      # адрес таблицы палитр: у каждого уровня свой, а ROM общий
+    out += bytes([a & 0xFF, a >> 8])
     pairs = bytearray()
     for i, t in enumerate(fg):
         pairs += bytes([t, i])                 # пары (номер тайла, индекс)
     assert len(pairs) <= 40, len(pairs)
     out += pairs.ljust(40, b'\x00')            # фиксированная длина: за парами идёт таблица зеркал
     out += mirror_table(banks)                 # 4 записи по 6 Б, см. vec_mirr.asm
+    return bytes(out)
+
+def screen_palettes(screens, banks):
+    """Для каждого экрана — три байта: цвета слотов 1..3. Их занимает четырёхцветный спрайт экрана
+    (голем синий, скелет белый, валун коричневый), а фон туда не заглядывает."""
+    pal = msx_palette((SRC / 'test.plt').read_bytes())
+    # исходные номера цветов -> тройка для слотов 1,2,3
+    TRIPLE = {14: (2, 8, 4), 15: (2, 8, 4),          # голем: тёмно-синий, синий, голубой
+              7:  (6, 11, 7),                        # скелет: белый, бежевый, тёмно-серый
+              12: (9, 7, 11)}                        # валун: коричневый, тёмно-серый, бежевый
+    ENEMY_BANK = {20: 7, 21: 8, 22: 9, 23: 10, 24: 12, 25: 13, 26: 11,
+                  27: 14, 28: 16, 29: 18, 30: 20}
+    have = {b for b, *_ in banks}
+    out = bytearray()
+    for scr in screens:
+        ob = scr[360:403]
+        trip = None
+        for t in (ob[2], ob[8] if ob[2] not in (27, 28, 29, 30) else 0):
+            b = ENEMY_BANK.get(t)
+            if b in TRIPLE and b in have:
+                trip = TRIPLE[b]; break
+        out += bytes(pal[c] for c in trip) if trip else bytes(3)
     return bytes(out)
 
 def mirror_table(banks):
@@ -377,7 +429,11 @@ def mirror_table(banks):
     return b''.join(rows[:4])
 
 def build_kvaz(level_no=1, start=None):
-    global PERM, MIRRORS
+    global PERM, MIRRORS, LEVEL_NOW, BANK_2PLANE
+    LEVEL_NOW = level_no
+    global BANK_2PLANE
+    BANK_2PLANE = {b: m for b, m in BANK_2PLANE_ALL.items()
+                   if b in BANK_2PLANE_BY_LEVEL.get(level_no, set())}
     PERM = color_perm(level_no)
     MIRRORS = MIRRORS_BY_LEVEL.get(level_no, {})
     pages = [bytearray(65536) for _ in range(4)]
@@ -510,6 +566,12 @@ def build_kvaz(level_no=1, start=None):
         end = LEVELTAB_ADDR + len(blob)
         assert all(v == 0 for v in pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end]), 'область таблиц уровня занята'
         pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end] = blob
+        if any(b in BANK_2PLANE for b, *_ in banks):    # таблица нужна только там, где есть
+            sp = screen_palettes(screens_of(list((SRC / f'level{level_no}.map').read_bytes())), banks)
+            SCRPAL_ADDR = SCRPAL_BY_LEVEL[level_no]
+            end = SCRPAL_ADDR + len(sp)                # четырёхцветный спрайт: на других уровнях
+            assert all(v == 0 for v in pages[LEVELTAB_PAGE][SCRPAL_ADDR:end]), 'место под палитры экранов занято'
+            pages[LEVELTAB_PAGE][SCRPAL_ADDR:end] = sp
         blit2 = BUILD / 'blit2.bin'
         if blit2.exists() and any(b in BANK_2PLANE for b, *_ in banks):
             bb = blit2.read_bytes()
@@ -549,6 +611,8 @@ def build_kvaz(level_no=1, start=None):
                   f'LEVELTAB_PORT\tequ ${0x20 | LEVELTAB_PAGE:02X}\t; окно $A000-$DFFF -> страница {LEVELTAB_PAGE}',
                   f'FDDCOPY\tequ ${FDDCOPY_ADDR:04X}\t; копия загрузчика уровня (512 Б) — возвращается на $7E00',
                   f'BLIT2SRC\tequ ${BLIT2_ADDR:04X}\t; двухплоскостной блит — копируется на $7F00 (таблица слотов)',
+                  '; адрес таблицы палитр экранов приходит из блока таблиц уровня (vec_scrpal_addr)',
+                  f'LEVEL_W\tequ {info["w"]}\t; ширина уровня в экранах — для адреса в таблице палитр',
                   f'LEVELTAB_LEN\tequ {len(level_table_blob(level_palette(), banks, fg))}']
     if C8MODE == 'c8':
         lines += ['; карта «цвет кода 0..15 -> слот» для fillArea (шкалы панели); лежит сразу за fg_tile_lut (страница)',

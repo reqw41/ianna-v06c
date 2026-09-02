@@ -9,6 +9,48 @@
 KV_PORT		equ $10
 	org $7F00
 
+	jp vec_blit2m		; $7F00 — зеркальный блит четырёхцветного спрайта
+	jp vec_scrpal		; $7F03 — палитра экрана (слоты 1..3) из набора уровня
+
+; Палитра, своя для каждого экрана: три байта по адресу SCRPAL + номер экрана * 3. Фон в слоты 1..3
+; не заглядывает (перестановка уровня увела его в 0 и 4..15), поэтому смена их цвета его не трогает.
+vec_scrpal:
+	ld hl,0
+	ld a,(level_width)
+	ld e,a
+	ld d,0
+	ld a,(current_levely)
+	ld b,a
+	or a
+	jp z,sp_x
+sp_mul:
+	add hl,de
+	dec b
+	jp nz,sp_mul
+sp_x:
+	ld a,(current_levelx)
+	ld e,a
+	ld d,0
+	add hl,de
+	push hl
+	add hl,hl
+	pop de
+	add hl,de		; номер экрана * 3
+	ex de,hl		; на i8080 нет ld de,(nn): адрес таблицы читаем через HL
+	ld hl,(vec_scrpal_addr)	; он приходит из набора — у каждого уровня свой
+	add hl,de
+	ld a,LEVELTAB_PORT
+	out (KV_PORT),a
+	ld de,vec_palette+1
+	ld bc,3
+	call z_ldir
+	xor a
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	ld a,1
+	ld (vec_pal_dirty),a
+	ret
+
 vec_blit2m:
 	ld a,(vec_spr_hcol)
 	add a,2
@@ -123,11 +165,9 @@ b2m_col_end:
 	ld h,0
 	add hl,sp
 	ld sp,hl
-	ld a,(vec_spr_hcol)
-	dec a
-	ld (vec_spr_hcol),a
-	ld a,(vec_col_cnt)
-	dec a
-	ld (vec_col_cnt),a
+	ld hl,vec_spr_hcol	; HL здесь свободен — короче, чем через A
+	dec (hl)
+	ld hl,vec_col_cnt
+	dec (hl)
 	jp nz,b2m_col
 	jp vec_stk_leave

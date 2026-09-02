@@ -277,6 +277,13 @@ def main():
     _t = _t.replace(_old,
         '\tld a, (animate_tile)\n\tinc a\n\tld (animate_tile), a\n'
         f'\tand {_mask}\t\t; ВЕКТОР: анимация каждый {int(_mask)+1}-й тик\n')
+    # ВЕКТОР: на уровнях с четырёхцветным спрайтом слоты палитры 1..3 отданы ему, и на каждом экране
+    # там своя тройка цветов — читаем её из набора при загрузке экрана (процедура в вынесенном
+    # оверлее, $7F03). Фон в эти слоты не заглядывает: перестановка уровня увела его в 0 и 4..15.
+    _old = 'LoadScreen:\n'
+    assert _old in _t
+    _t = _t.replace(_old, 'LoadScreen:\n\tpush af\n\tld a,(vec_pool_ban)\n\tor a\n'
+                          '\tjp z,ls_nopal\n\tcall vec_slot_tab+3\nls_nopal:\n\tpop af\n', 1)
     _f.write_text(_t)
     translate(TR / 'score_src.asm', TR / 'score.asm')
     translate(TR / 'font_src.asm', TR / 'font.asm')
@@ -375,7 +382,8 @@ def build_menu_bins(lst):
             # для вынесенного двухплоскостного блита:
             'vec_col_cnt', 'vec_row_cnt', 'vec_sp_save', 'vec_spr_src', 'vec_spr_port',
             'vec_spr_curport', 'vec_spr_hcol', 'vec_spr_lbot', 'vec_spr_ny', 'vec_spr_skip2',
-            'vec_spr_dst', 'vec_b2_step', 'vec_stk_leave', 'rev256']
+            'vec_spr_dst', 'vec_b2_step', 'vec_stk_leave', 'rev256',
+            'level_width', 'current_levelx', 'current_levely', 'z_ldir', 'vec_scrpal_addr']
     syms = {}
     for line in lst.split('\n'):
         m = re.match(r'^([A-Za-z_][\w.]*)\s+=\s+\$([0-9A-F]{4})', line)
@@ -384,6 +392,9 @@ def build_menu_bins(lst):
     missing = [n for n in need if n not in syms]
     assert not missing, f'нет символов для меню: {missing}'
     out = ['; сгенерировано build_vec (символы игры для оверлея меню)']
+    for line in lst.split('\n'):                      # константы набора уровня (SCRPAL, LEVELTAB_PORT...)
+        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|BLIT2SRC)\s+=\s+\$([0-9A-F]{2,4})', line)
+        if m: out.append(f'{m.group(1)}\tequ ${m.group(2)}')
     for n, v in syms.items():
         out.append(f'{n}\tequ ${v:04X}')
     out += [f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 40', 'MB_TRK_SLIDES\tequ 44']
