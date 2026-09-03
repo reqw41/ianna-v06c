@@ -42,6 +42,12 @@ STRING_AREA_C8 = 0x6C00     # c8: rev256/slot_tab в свободной плос
 # перестановка констант: адреса тайлов движок берёт отсюда (gen_data.asm), номера тайлов не меняются.
 BG_TILES_BASE = 0x0000      # страница 0: 256 тайлов x 128 = 32К
 FG_TILES_BASE = 0x8000      # страница 0, сразу за тайлами (до 35 FG-тайлов x 256)
+# Готовые тайлы «фон + передний слой» (src/vec/fgc_ovl.asm): только на уровнях, где переднего слоя
+# много (туман уровня 3: 115 пар, до 100 стайлов на экране) и где в string_area есть хвост под код.
+FGC_LEVELS = {3} if os.environ.get("FGC_OFF") is None else set()   # FGC_OFF=1: стендовый обход
+FGC_CODE = 0x7200           # org оверлея (vec_vars FGC_ENTRY), до 256 Б, конец = $7300 = OBJECT_DATA
+FGC_PTRS = 0x71C0           # таблица указателей групп по индексу переднего тайла (до 32)
+FGC_TILES = (2, 0xC000)     # страница и адрес готовых тайлов, по 128 Б (стр.2 за BLIT2 $BF00; зеркала уровня 3 — в стр.1)
 BANK_FILE = {2: 'sprite_barbaro_1', 3: 'sprite_barbaro_2', 7: 'sprite_esqueleto', 8: 'sprite_orc', 9: 'sprite_mummy',
              10: 'sprite_troll', 11: 'sprite_dalgurak', 12: 'sprite_rollingstone', 13: 'sprite_caballerorenegado',
              14: 'sprite_golem_inf', 15: 'sprite_golem_sup', 16: 'sprite_ogro_inf', 17: 'sprite_ogro_sup',
@@ -70,7 +76,7 @@ LEVEL_BANKS = {
     # огра и тролль. Рыцарь и орк остаются шестнадцатицветными. Раскладка получена перебором
     # (tools/kvaz_pack.py) при закреплённых тайлах ($8000 стр.0), передних тайлах ($5D00 стр.0)
     # и карте (стр.1 $8000): без сжатия дефицит 23 КБ, три сжатых банка его не закрывают.
-    3: [(2, 0, 0x9E00, 0xFA40), (8, 1, 0x0000, 0x5C40), (3, 1, 0xA800, 0xE940),
+    3: [(2, 0, 0x9E00, 0xFA40), (8, 1, 0x0000, 0x5C40), (3, 1, 0xAD00, 0xEF40),
         (13, 2, 0x0000, 0x5C40), (10, 2, 0x5D00, 0x8B20), (12, 2, 0x8C00, 0xBA20),
         (16, 3, 0x2800, 0x5620), (17, 3, 0x5700, 0x8520)],
     # Уровни 4-9. Раскладки — перебором (kvaz_pack --tiles-low --menu-out), карты слияния
@@ -489,7 +495,7 @@ BLIT2_ADDR = 0xBF00
 # (ниже окно не отображается), а свободное место там у уровней разное.
 SCRPAL_BY_LEVEL = {n: 0xBB00 for n in range(1, 10)}   # хвост стр.2 перед таблицами уровня
 
-def level_table_blob(pal, banks, fg):
+def level_table_blob(pal, banks, fg, fgc=False):
     by = {b: (pg, base) for b, pg, base, _ in banks}
     out = bytearray(pal)                       # 40 Б: порт стека страницы + старший байт базы банка
     for b in range(2, 22):
@@ -508,6 +514,7 @@ def level_table_blob(pal, banks, fg):
     assert len(pairs) <= 60, len(pairs)
     out += pairs.ljust(60, b'\x00')            # фиксированная длина: за парами идёт таблица зеркал
     out += mirror_table(banks)                 # 4 записи по 6 Б, см. vec_mirr.asm
+    out.append(1 if fgc else 0)                # fgc_on: готовые тайлы фон+FG в наборе
     return bytes(out)
 
 def screen_palettes(screens, banks):
@@ -560,6 +567,41 @@ def mirror_table(banks):
     while len(rows) < MIRROR_SLOTS:
         rows.append(bytes([0, 0xFF, 0, 0, 0, 0]))   # пустая запись: LO выше любого адреса
     return b''.join(rows[:MIRROR_SLOTS])
+
+def build_fgc(level, sr5, pm_tiles, fg, pages, sa):
+    """Готовые тайлы фон+FG для уровня: тайлы в стр.2, таблицы и код (build/fgc.bin) — хвостом
+    блока строк по фиксированным адресам. Возвращает tail для build_level."""
+    fgidx = {t: i for i, t in enumerate(fg)}
+    pairs = sorted({(s[k], s[160+k]) for s in screens_of(level) for k in range(160) if s[160+k]})
+    pg, base = FGC_TILES
+    assert all(v == 0 for v in pages[pg][base:base + len(pairs)*128]), 'область готовых тайлов занята'
+    for i, (bg, f) in enumerate(pairs):
+        rows = [[fp if fp else bp for bp, fp in zip(br, fr)] for br, fr in zip(tile_pixels(sr5, bg), tile_pixels(sr5, f))]
+        b = bg_tile_bytes(rows, pm_tiles)
+        assert len(b) == 128
+        pages[pg][base + i*128: base + (i+1)*128] = b
+    end = base + len(pairs)*128
+    assert end <= 0x10000, f'готовые тайлы: {len(pairs)} пар не влезают в стр.{pg} с ${base:04X}'
+    groups = {}
+    for i, (bg, f) in enumerate(pairs):
+        groups.setdefault(fgidx[f], bytearray()).extend((bg, i))
+    assert len(fg) <= 32
+    code = (ROOT / 'build/fgc.bin').read_bytes()
+    assert len(code) <= FGC_CODE + 0x100 - FGC_CODE, 'fgc.bin длиннее 256 Б'
+    # раскладка хвоста: [группы][указатели @FGC_PTRS][код @FGC_CODE]
+    glen = sum(len(g) + 1 for g in groups.values())
+    gbase = FGC_PTRS - glen
+    blob = bytearray(); ptrs = bytearray()
+    for i in range(len(fg)):
+        g = groups.get(i)
+        if g is None:
+            ptrs += b'\xff\xff'
+        else:
+            a = gbase + len(blob); ptrs += bytes((a & 0xFF, a >> 8)); blob += g + b'\xff'
+    assert len(blob) == glen and len(ptrs) <= FGC_CODE - FGC_PTRS
+    tail = bytes(blob) + bytes(ptrs).ljust(FGC_CODE - FGC_PTRS, b'\0') + code
+    print(f'  готовые тайлы: {len(pairs)} пар ({len(pairs)*128} Б в стр.{pg} ${base:04X}-${end:04X}), таблицы {glen}+{len(ptrs)} Б с ${gbase:04X}, код {len(code)} Б с ${FGC_CODE:04X}')
+    return (gbase - sa, tail)
 
 def build_kvaz(level_no=1, start=None):
     global PERM, MIRRORS, LEVEL_NOW, BANK_2PLANE
@@ -692,7 +734,10 @@ def build_kvaz(level_no=1, start=None):
     if start:                                              # стартовый экран (x,y) — для стендов
         hdr = bytearray(info['header']); hdr[17], hdr[18] = start; info['header'] = bytes(hdr)
     sa = STRING_AREA_C8 if C8MODE == 'c8' else STRING_AREA_KVAZ
-    level2 = build_level(info, sa)                        # строки/скрипты -> string_area Вектора
+    fgc_tail = None
+    if level_no in FGC_LEVELS and not C8MODE:
+        fgc_tail = build_fgc(level, sr5, pm_tiles, fg, pages, sa)
+    level2 = build_level(info, sa, tail=fgc_tail)         # строки/скрипты (+ оверлей готовых тайлов) -> string_area
     lvl_end = 0x8000 + len(level2)
     for bank, page, base, limit in banks:                  # карта не должна лечь на банк страницы 1
         assert page != 1 or lvl_end <= base or base >= lvl_end or limit <= 0x8000, (bank, hex(lvl_end))
@@ -728,7 +773,7 @@ def build_kvaz(level_no=1, start=None):
             mb = (SRC / mus).read_bytes(); assert len(mb) <= 0x1000
             pages[2][slot:slot+len(mb)] = mb
     if not C8MODE:
-        blob = level_table_blob(level_palette(), banks, fg)
+        blob = level_table_blob(level_palette(), banks, fg, level_no in FGC_LEVELS and not C8MODE)
         # Сторож: ROM копирует таблицу уровня в ОЗУ по константе LEVELTAB_LEN из gen_data.asm той
         # сборки. Набор с таблицей другой длины (например, после смены MIRROR_SLOTS без пересборки
         # ROM) даёт полузаполненный vm_tab и уход спрайтов в мусор — ловилось как крах по $010A.
@@ -785,6 +830,8 @@ def build_kvaz(level_no=1, start=None):
                   f'LEVELTAB_PORT\tequ ${0x20 | LEVELTAB_PAGE:02X}\t; окно $A000-$DFFF -> страница {LEVELTAB_PAGE}',
                   f'FDDCOPY\tequ ${FDDCOPY_ADDR:04X}\t; копия загрузчика уровня (512 Б) — возвращается на $7E00',
                   f'BLIT2SRC\tequ ${BLIT2_ADDR:04X}\t; двухплоскостной блит — копируется на $7F00 (таблица слотов)',
+                  f'FGC_CODE\tequ ${FGC_CODE:04X}\t; оверлей готовых тайлов (fgc_ovl.asm) в хвосте string_area',
+                  f'FGC_PTRS\tequ ${FGC_PTRS:04X}', f'FGC_TILES\tequ ${FGC_TILES[1]:04X}\t; стр.{FGC_TILES[0]}',
                   '; адрес таблицы палитр экранов приходит из блока таблиц уровня (vec_scrpal_addr)',
                   f'LEVEL_W\tequ {info["w"]}\t; ширина уровня в экранах — для адреса в таблице палитр',
                   f'LEVELTAB_LEN\tequ {len(level_table_blob(level_palette(), banks, fg))}']

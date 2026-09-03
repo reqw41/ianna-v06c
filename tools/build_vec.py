@@ -259,7 +259,15 @@ def main():
         t = t.replace('DrawScreen:\n', 'DrawScreen:\n\tcall vec_scr_palette\t; ВЕКТОР C8: палитра экрана\n')
     old = 'InvalidateSTiles:\n\tpush de'
     assert old in t
-    (TR / 'tiles.asm').write_text(t.replace(old, 'InvalidateSTiles:\n\tld a,c\t; ВЕКТОР: ряды панели не рисуются — прямоугольник не нужен\n\tcp 10\n\tret nc\n\tpush de'))
+    # Высоту тоже режем до ряда 9: LoadScreen инвалидирует 16x12, а карты RedrawInvTiles (overlap_hot.asm,
+    # 16x10 бит) на рядах 10-11 переполняют младший байт адреса — карта фона писала в карту переднего слоя
+    # (туман в рядах 0-1 пропадал после смены экрана), карта переднего слоя — в код по $6A00 (вход vec_blit2).
+    (TR / 'tiles.asm').write_text(t.replace(old, 'InvalidateSTiles:\n\tld a,c\t; ВЕКТОР: ряды панели не рисуются — прямоугольник не нужен\n\tcp 10\n\tret nc\n\tadd a,e\n\tcp 11\n\tjp c,ist_hok\n\tld a,10\n\tsub c\n\tld e,a\t; ряды 10-11 не копим: карты RedrawInvTiles на 10 рядов\nist_hok:\n\tpush de'))
+    # готовые тайлы фон+FG (fgc_ovl.asm): хук в DrawTile после чтения карты — код живёт в наборе уровня
+    t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
+    old = '\tld hl, CURRENT_SCREEN_MAP\n\tadd hl, de\n\tld a, (hl)\n\tjp drawTile'
+    assert t.count(old) == 1, 'DrawTile: не нашёл место хука готовых тайлов'
+    (TR / 'tiles.asm').write_text(t.replace(old, '\tld hl, CURRENT_SCREEN_MAP\n\tadd hl, de\n\tld a, (fgc_on)\t; ВЕКТОР: готовые тайлы фон+FG — код в хвосте string_area из набора уровня\n\tor a\n\tjp nz, FGC_ENTRY\n\tld a, (hl)\n\tjp drawTile'))
     # накладные обхода грязных тайлов в RedrawInvTiles_FG (z_exx x2 на тайл, EI) — зарядить в бюджет DI
     t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
     old = 'DrawFGTile:\n'
@@ -392,7 +400,10 @@ def build_menu_bins(lst):
             'vec_col_cnt', 'vec_row_cnt', 'vec_sp_save', 'vec_spr_src', 'vec_spr_port',
             'vec_spr_curport', 'vec_spr_hcol', 'vec_spr_lbot', 'vec_spr_ny', 'vec_spr_skip2',
             'vec_spr_dst', 'vec_b2_step', 'vec_stk_leave', 'rev256',
-            'level_width', 'current_levelx', 'current_levely', 'z_ldir', 'vec_scrpal_addr']
+            'level_width', 'current_levelx', 'current_levely', 'z_ldir', 'vec_scrpal_addr',
+            # для оверлея готовых тайлов (fgc_ovl.asm):
+            'drawTile', 'vec_pool_on', 'SPDATA', 'fg_tile_pairs', 'fg_lut_n', 'vec_budget', 'vec_blit_src',
+            'vec_blit_ret', 'vec_blit128_vram']
     syms = {}
     for line in lst.split('\n'):
         m = re.match(r'^([A-Za-z_][\w.]*)\s+=\s+\$([0-9A-F]{4})', line)
@@ -402,7 +413,7 @@ def build_menu_bins(lst):
     assert not missing, f'нет символов для меню: {missing}'
     out = ['; сгенерировано build_vec (символы игры для оверлея меню)']
     for line in lst.split('\n'):                      # константы набора уровня (SCRPAL, LEVELTAB_PORT...)
-        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|BLIT2SRC|FDD_TAB)\s+=\s+\$([0-9A-F]{2,4})', line)
+        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|BLIT2SRC|FDD_TAB|FGC_CODE|FGC_PTRS|FGC_TILES)\s+=\s+\$([0-9A-F]{2,4})', line)
         if m: out.append(f'{m.group(1)}\tequ ${m.group(2)}')
     for n, v in syms.items():
         out.append(f'{n}\tequ ${v:04X}')
@@ -459,7 +470,8 @@ def build_menu_bins(lst):
                                 (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9000 - 0x8440),
                                 (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x9000),
                                 (VEC / 'blit2_ovl.asm', 'blit2.bin', 0x100),
-                                (VEC / 'fdd_banks.asm', 'fdd_banks.bin', 0x9600 - 0x9280)):
+                                (VEC / 'fdd_banks.asm', 'fdd_banks.bin', 0x9600 - 0x9280),
+                                (VEC / 'fgc_ovl.asm', 'fgc.bin', 0x100)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())
         r = subprocess.run([str(ZASM), '--8080', '-uwy', work.name, f'{binout}.lst', binout],

@@ -55,9 +55,11 @@ def parse_level(level):
     return {'n': n, 'w': level[13], 'h': level[14], 'nscripts': level[15], 'nstrings': level[16],
             'header': bytes(level[:22]), 'screens': screens, 'strings': packs}
 
-def build_level(info, string_base, level_base=0x8000, screen_map=None, langs=('en', 'es')):
+def build_level(info, string_base, level_base=0x8000, screen_map=None, langs=('en', 'es'), tail=None):
     """Собрать карту заново. screen_map: список индексов исходных экранов для каждой
-    ячейки (None = как было). langs: какие блоки строк включать ('es' указывает на 'en', если нет)."""
+    ячейки (None = как было). langs: какие блоки строк включать ('es' указывает на 'en', если нет).
+    tail: (смещение, байты) — данные, которые распакуются в string_area вместе со строками по фиксированному
+    смещению (оверлей готовых тайлов); строки обоих языков обязаны кончаться раньше."""
     n = info['n']
     idx = screen_map if screen_map is not None else list(range(n))
     assert len(idx) == n
@@ -78,6 +80,10 @@ def build_level(info, string_base, level_base=0x8000, screen_map=None, langs=('e
         src = lang if lang in langs else 'en'
         if src not in str_addr:
             rel = relocate_strings(info['strings'][src], info['nstrings'], info['nscripts'], string_base)
+            if tail:
+                off, data = tail
+                assert len(rel) <= off, f'строки {src} {len(rel)} Б залезают на хвост по смещению {off}'
+                rel = rel.ljust(off, b'\0') + data
             str_addr[src] = level_base + body_off + len(body)
             body += pack(rel)
         str_addr[lang] = str_addr[src]
