@@ -954,8 +954,8 @@ ds_full:
 	pop af
 	ld (vec_spr_dir),a
 	call vec_mirror_src	; ВЕКТОР: готовая зеркальная копия кадра вместо разворота на лету
-	; бюджет по колонкам, калибровка по стенду (calib: реальные такты между вызовами бюджета, сцена с големом):
-	; прямой через пул медиана 1.35 ед./строку (p90 1.7) -> NY + NY/2 + 5; зеркальный 2.25 (p90 2.4) -> 2*NY + NY/4 + 5
+	; бюджет по колонкам, calib по ОКНУ DI (blitcalib, сцена с големом): прямой 1.25 ед./строку
+	; (окно 40.1 ед. на NY=32) -> NY + NY/4 + 8; зеркальный 2.25 (окно 72.2) -> 2*NY + NY/4 + 5
 	push de
 	ld a,(vec_spr_ny)
 	ld e,a
@@ -971,8 +971,10 @@ ds_full:
 	jp ds_cost
 ds_cost_fwd:
 	rrca
-	and $7f			; NY/2
-	add a,e			; прямой: NY + NY/2
+	rrca
+	and $3f			; NY/4
+	add a,e			; прямой: NY + NY/4
+	add a,3			; (+8 суммарно с общим +5 ниже)
 ds_cost:
 	add a,5
 	ld (vec_spr_colcost),a
@@ -1400,13 +1402,15 @@ dsp_n_ok:
 	ld a,(vec_spr_row)
 	sub b
 	ld (vec_spr_row),a
-	; бюджет DI на сегмент (calib: прямой 1.35 ед./строку + голова): n + n/2 + 2. HL — единственный живой регистр
+	; бюджет DI на сегмент (calib по окну DI, blitcalib: 1.25 ед./строку + голова): n + n/4 + 4.
+	; HL — единственный живой регистр
 	ld (vec_spr_dst),hl
 	ld a,b
 	rrca
-	and $7f
+	rrca
+	and $3f
 	add a,b
-	add a,2
+	add a,4
 	ld (vec_spr_colcost),a
 	ld hl,dsp_seg_go
 	ld (vec_blit_ret),hl
@@ -1576,8 +1580,8 @@ dspm_n_ok:
 	ld a,(vec_spr_row)
 	sub b
 	ld (vec_spr_row),a
-	; бюджет DI на сегмент, зеркальный. 16ц: 2n + n/2 + 2 (медиана 2.25/строку, p90 2.4); c8: 2n + 2
-	; (медиана 18.6 при n~8, p90 33.8 при n=16 — впритык к 34). Живой регистр — DE (адрес в пуле)
+	; бюджет DI на сегмент, зеркальный. 16ц: 2n + n/4 + 4 (calib по окну DI: 37.4 ед. при n=16);
+	; c8: 2n + 2 (медиана 18.6 при n~8, p90 33.8 при n=16). Живой регистр — DE (адрес в пуле)
 	ex de,hl
 	ld (vec_spr_dst),hl
 	ld a,b
@@ -1586,10 +1590,11 @@ dspm_n_ok:
 	add a,2
     else
 	rrca
-	and $7f
+	rrca
+	and $3f
 	add a,b
 	add a,b
-	add a,2
+	add a,4
     endif
 	ld (vec_spr_colcost),a
 	ld hl,dspm_seg_go
