@@ -117,4 +117,23 @@ OVERRIDES = {
     # которая начинается с ld hl,(z_ix).
     ('scripts.asm', 534): ['ld hl,(z_ix)', 'ld a,l', 'add a,10', 'ld l,a', 'jp nc,$+4', 'inc h',
                            'ld a,(hl)'],                                  # ld a,(ix+10)
+
+    # drawsprite_src.asm, UpdateSprite (85..99) — вызывается на каждое движение любой сущности
+    # (игрок + два врага + объекты), пять обращений к записи спрайта подряд. HL здесь занят новой
+    # позицией в символах (строки 78/84), поэтому прячем его на стек, а запись адресуем одним
+    # указателем: +3, +4, +5, +6, +7. Флаг перерисовки (ix+7) переехал со строки 85 на строку 99 —
+    # между ними ни одного вызова и ни одного чтения SPDATA, порядок записей не наблюдаем.
+    # Флаги: push/ld hl,(nn)/inc hl/ld (hl),n их не трогают, как и оригинальные ld (ix+d),n / ld r,(ix+d).
+    ('drawsprite_src.asm', 85): ['push hl', 'ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl'],  # -> +3
+    ('drawsprite_src.asm', 86): ['ld a,(hl)'],                            # ld a,(ix+3)
+    ('drawsprite_src.asm', 92): ['inc hl', 'ld a,(hl)'],                  # ld a,(ix+4)
+    ('drawsprite_src.asm', 98): ['inc hl', 'ld d,(hl)'],                  # ld d,(ix+5)
+    ('drawsprite_src.asm', 99): ['inc hl', 'ld e,(hl)',                   # ld e,(ix+6)
+                                 'inc hl', 'ld (hl),1',                   # ld (ix+7),1 (со строки 85)
+                                 'pop hl'],                               # HL = новая позиция
+    # update_storenewpos (142..143): сюда приходят и по jr из Update_inv_two, и падением из
+    # Update_inv. HL на входе разный (после InvalidateTiles — мусор), поэтому его бережём.
+    ('drawsprite_src.asm', 142): ['push hl', 'ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl',
+                                  'ld (hl),b'],                           # ld (ix+3),b
+    ('drawsprite_src.asm', 143): ['inc hl', 'ld (hl),c', 'pop hl'],       # ld (ix+4),c
 }
