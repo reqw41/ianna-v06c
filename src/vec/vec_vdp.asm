@@ -2029,6 +2029,28 @@ vpb_x:
 	ld a,e			; H уже стоит на таблице слотов (метка строки выше)
 	or c
 	ld l,a
+	; Под стайлом есть передний тайл? Тогда слот: прямой путь клал бы фон и FG в VRAM порознь, и луч
+	; между ними видел фон без воды/тумана (мерцание воды под мечом у голема, Emu80 2026-09-04).
+	; Индекс L = sy*16+sx — тот же, что у карты переднего слоя.
+	push hl
+	ld a,l
+	add a,CURRENT_SCREEN_MAP_FG & $FF
+	ld l,a
+	ld a,0
+	adc a,CURRENT_SCREEN_MAP_FG >> 8
+	ld h,a
+	ld a,(hl)
+	pop hl
+	or a
+	jp z,vpb_fe
+	ld a,(vec_slot_next)
+	cp 80
+	jp nc,vpb_fe
+	ld (hl),a
+	inc a
+	ld (vec_slot_next),a
+	jp vpb_x_next
+vpb_fe:
 	ld (hl),$fe		; грязный супертайл без слота: рисуется прямо в VRAM (и BG, и FG)
 vpb_x_next:
 	inc c
