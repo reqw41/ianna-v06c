@@ -649,7 +649,8 @@ drawFGTile:
 	push de
 	push bc
 	push af
-	ld a,31 - C8*6		; FG: 16ц медиана 29-30 / c8 24.4 (calib)
+	ld a,35 - C8*10		; FG: окно DI 16ц медиана 30.9 / макс 34.7 (blitcalib 2026-09-03, ур.3 1,0);
+				; цена 31 была занижена ещё до пула, а с пулом FG-тайлов на тик стало больше
 	call vec_budget
 	pop af
 	ld hl,fg_tile_pairs	; передних тайлов дюжина — ищем перебором пар, таблица на 256 Б не окупалась
@@ -910,7 +911,8 @@ dft_exit:
 ; Кадр 384 Б: for col 0..2: for row 31..0: [p0,p1,p2,p3]; маска на лету.
 drawSprite:
 	push af
-	ld a,13 + C8*2		; накладные DrawSpriteList/пролога спрайта: окно DI 11.7 медиана, 12.5 макс (blitcalib 2026-09-04; цена 10 была занижена и ела запас VEC_BUDGET_LIMIT)
+	ld a,17 + C8*2		; накладные DrawSpriteList/пролога спрайта: окно DI медиана 9.5, макс 16.8
+				; (blitcalib 2026-09-03, ур.1 4,5 — там пул был и до правки; цена 13 занижена)
 	call vec_budget
 	pop af
 	push af
