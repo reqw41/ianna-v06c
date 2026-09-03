@@ -2,7 +2,7 @@
 """ОРАКУЛ ЗВУКА: дамп всех записей в регистры AY на детерминированном игровом прогоне.
 
   python3 tools/aydump.py <rom> <lst> <edd> <сцена> <кадров> [--route=...] [--out=файл]
-                          [--cycles] [--rand]
+                          [--fxlog=файл] [--cycles] [--rand]
 
 <сцена> — либо «X,Y» (стартовый экран уровня, как в cmpbuild), либо «menu»: без старта игры,
 меню/интро (там играет своя песня music_menu и свои эффекты).
@@ -18,6 +18,15 @@
 ГПСЧ нейтрализуется, как в cmpbuild --norand (иначе любая правка байтов ROM сдвигает случайные
 числа, траектория расходится и эффекты играют в другие моменты). --rand отключает нейтрализацию.
 
+--out пишет поток «вызов регистр значение», --fxlog — события «вызов K номер»: L=MUSIC_Load с
+номером песни, F=FX_Play с номером эффекта, S=MUSIC_Stop, Z=игра ИЗВНЕ плеера обнулила теневые
+_atVAR_Reg6/Reg11/Reg12 (LoadScreen после MUSIC_Load — «сбросить шум и огибающую от песни
+меню/интро», см. build_vec.py). Z — часть интерфейса: любой новый плеер обязан держать эти три
+теневых байта по этим же меткам. Этой парой файлов сверяется модель
+tools/arkos_model.py --check-game: она загружает ту же песню в тот же момент и отыгрывает те же
+эффекты в те же кадры. Перехват включён С ЗАГРУЗКИ (прогрев тоже пишется) — иначе неизвестно,
+сколько кадров песня уже отыграла к началу окна.
+
 Печатает: число вызовов плеера, число записей в AY, md5 потока; с --cycles ещё и такты внутри
 MUSIC_Play (среднее на вызов и всего) по модели тактов Вектора из tools/profile_vec.py.
 """
@@ -30,6 +39,7 @@ if len(A) < 5:
 ROM, LST, EDD, SCENE, NFRAMES = A[0], A[1], A[2], A[3], int(A[4])
 ROUTE = next((o[8:] for o in OPTS if o.startswith('--route=')), 'right')
 OUT = next((o[6:] for o in OPTS if o.startswith('--out=')), None)
+FXLOG = next((o[8:] for o in OPTS if o.startswith('--fxlog=')), None)
 CYCLES = '--cycles' in OPTS
 NORAND = '--rand' not in OPTS
 os.environ['IANNA_EDD'] = EDD
@@ -77,6 +87,46 @@ def out_handler(port, val):
 cpu.out_handler = out_handler
 
 MP = sym['MUSIC_Play']
+FXP = sym['FX_Play']
+MLD = sym['MUSIC_Load']
+MST = sym['MUSIC_Stop']
+R6 = sym['_atVAR_Reg6']
+PLO, PHI = sym['atPlay'], sym['atSfxStop'] + 64      # диапазон кода плеера
+_r6 = [cpu.mem[R6]]
+fxlog = []          # (номер вызова, 'L'|'F'|'S', параметр)
+tot_cyc = [0]
+_in_music = [False, 0]
+
+
+def watch(pc):
+    """Перехват на каждой инструкции: события плеера и такты внутри MUSIC_Play."""
+    if pc == MP:
+        state['call'] += 1
+        if CYCLES and not _in_music[0]:
+            _in_music[0] = True; _in_music[1] = cpu.sp
+    elif pc == FXP:
+        fxlog.append((state['call'], 'F', cpu.a))
+    elif pc == MLD:
+        fxlog.append((state['call'], 'L', cpu.a))
+    elif pc == MST:
+        fxlog.append((state['call'], 'S', 0))
+    v = cpu.mem[R6]
+    if v != _r6[0]:
+        if not (PLO <= pc <= PHI):
+            fxlog.append((state['call'], 'Z', v))
+        _r6[0] = v
+    if CYCLES and _in_music[0]:
+        if cpu.sp > _in_music[1]:
+            _in_music[0] = False
+        else:
+            tot_cyc[0] += CYC[cpu.mem[pc]]
+
+
+_step = cpu.step
+def step():
+    watch(cpu.pc)
+    _step()
+cpu.step = step
 if SCENE == 'menu':
     # меню/интро: игру не стартуем, ROM грузим как есть (patch_menu уже применён в make_cpu —
     # при наборе без оверлея меню фаза заглушена, тогда сцена вырождается: об этом предупредим)
@@ -92,28 +142,8 @@ else:
     keys.clear()
     keys.extend(k for k in ROUTE.split('+') if k != 'none')
 
-tot_cyc = 0
-in_music = False
-sp0 = 0
-step = cpu.step
-mem = cpu.mem
-for _ in range(NFRAMES):
-    c = 0
-    while not cpu.halted and c < rv.STEP_BUDGET:
-        pc = cpu.pc
-        if pc == MP:
-            state['call'] += 1
-            if CYCLES and not in_music:
-                in_music = True; sp0 = cpu.sp
-        if CYCLES and in_music:
-            if cpu.sp > sp0:
-                in_music = False
-            else:
-                tot_cyc += CYC[mem[pc]]
-        step(); c += 1
-    cpu.halted = False
-    if cpu.ie:
-        cpu.ie = False; cpu.push(cpu.pc); cpu.pc = 0x38
+rv.run_frames(cpu, NFRAMES, sym=sym)
+tot_cyc = tot_cyc[0]
 
 blob = b''.join(bytes((r, v)) + state_call.to_bytes(2, 'little')
                 for state_call, r, v in stream)
@@ -124,6 +154,13 @@ print('  регистры:', ' '.join(f'R{r}={n}' for r, n in sorted(byreg.items
 if CYCLES:
     n = max(1, state['call'])
     print(f'  такты в MUSIC_Play: всего {tot_cyc}, на вызов {tot_cyc / n:.0f}, на тик (6 кадров) {tot_cyc / n * 6:.0f}')
+if FXLOG:
+    with open(FXLOG, 'w') as f:
+        for c, k, n in fxlog:
+            f.write(f'{c} {k} {n}\n')
+    print('  события: MUSIC_Load %d, FX_Play %d, MUSIC_Stop %d -> %s'
+          % (sum(1 for x in fxlog if x[1] == 'L'), sum(1 for x in fxlog if x[1] == 'F'),
+             sum(1 for x in fxlog if x[1] == 'S'), FXLOG))
 if OUT:
     with open(OUT, 'w') as f:
         for c, r, v in stream:
