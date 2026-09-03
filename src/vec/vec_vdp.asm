@@ -121,15 +121,14 @@ vec_slot_for_bc:
 	ld a,c
 	cp 160
 	jp nc,vsf_none
+	and $f0
+	ld l,a
 	ld a,b
 	rrca
 	rrca
 	rrca
 	rrca
 	and $0f
-	ld l,a
-	ld a,c
-	and $f0
 	or l
 	ld l,a
 	ld h,vec_slot_tab/256
@@ -1373,6 +1372,19 @@ drawSprite_pool:
 	jp nz,dsp_mirror
 	ld a,3
 	ld (vec_col_cnt),a
+	; Колонка спрайта меняется трижды, а сегментов на неё два: разбор vec_spr_cx (слот по x и
+	; смещение колонки внутри слота) вынесен из пролога сегмента в самомодифицируемые константы.
+	ld a,(vec_spr_cx)
+	rrca
+	and $0f
+	ld (dsp_sx+1),a
+	ld a,(vec_spr_cx)
+	and 1
+	rrca
+	rrca
+	rrca
+	rrca
+	ld (dsp_coff+1),a
 	di
 	ld hl,0
 	add hl,sp
@@ -1383,21 +1395,22 @@ drawSprite_pool:
 	or KV_POOL_WIN
 	ld (vec_spr_curport),a
 	out (KV_PORT),a
-dsp_col:			; бюджет DI — по сегментам (dsp_seg), не по колонкам
+dsp_col:			; бюджет DI — на колонку целиком (как у прямого пути ds_col), а не на сегмент:
+	ld hl,dsp_col_go	; окно DI то же (сегменты идут подряд), а проверка одна вместо двух и
+	ld (vec_blit_ret),hl	; адрес сегмента больше не надо прятать в память через vec_spr_dst
+	jp vec_spr_colbud
 dsp_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_rows_left),a
 	ld a,(vec_spr_ybot)
 	ld (vec_spr_row),a
 dsp_seg:
-	; слот и адрес сегмента
-	ld a,(vec_spr_cx)
-	rrca
-	and $0f
-	ld l,a
+	; слот и адрес сегмента (vec_spr_row читаем один раз в D, разбор cx — в константах ниже)
 	ld a,(vec_spr_row)
+	ld d,a
 	and $f0
-	or l
+dsp_sx:
+	or 0			; самомодификация (dsp_col_go/dsp_seg_end): (cx>>1)&15
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
@@ -1409,22 +1422,16 @@ dsp_seg:
 	ld a,l
 	and 1
 	rrca
-	ld l,a
-	ld a,(vec_spr_cx)
-	and 1
-	rlca
-	rlca
-	rlca
-	rlca
-	add a,l
-	ld l,a
-	ld a,(vec_spr_row)
+dsp_coff:
+	add a,0			; самомодификация: (cx&1)*16
+	ld e,a
+	ld a,d
 	and 15
-	add a,l
+	ld c,a
+	add a,e
 	ld l,a			; HL = адрес плоскости 0 нижней строки сегмента
 	; n = min(rows_left, (row&15)+1)
-	ld a,(vec_spr_row)
-	and 15
+	ld a,c
 	inc a
 	ld b,a
 	ld a,(vec_rows_left)
@@ -1441,22 +1448,7 @@ dsp_n_ok:
 	ld (vec_rows_left),a
 	ld a,(vec_spr_row)
 	sub b
-	ld (vec_spr_row),a
-	; бюджет DI на сегмент (calib по окну DI, blitcalib: 1.25 ед./строку + голова): n + n/4 + 4.
-	; HL — единственный живой регистр
-	ld (vec_spr_dst),hl
-	ld a,b
-	rrca
-	rrca
-	and $3f
-	add a,b
-	add a,4
-	ld (vec_spr_colcost),a
-	ld hl,dsp_seg_go
-	ld (vec_blit_ret),hl
-	jp vec_spr_colbud
-dsp_seg_go:
-	ld hl,(vec_spr_dst)
+	ld (vec_spr_row),a	; бюджет колонки взят в dsp_col (vec_spr_colcost = NY + NY/4 + 8 из drawSprite)
 dsp_row:
 	pop bc			; C = p0, B = маска
 	pop de			; E = p1, D = p2
@@ -1538,20 +1530,43 @@ dsp_seg_end:
 	ld h,0
 	add hl,sp
 	ld sp,hl
-	ld a,(vec_spr_cx)
+	ld a,(dsp_coff+1)	; cx+1: смещение колонки переключается, слот по x растёт на нечётной cx
+	xor 16
+	ld (dsp_coff+1),a
+	jp nz,dsp_col_next
+	ld a,(dsp_sx+1)
 	inc a
-	ld (vec_spr_cx),a
+	ld (dsp_sx+1),a
+dsp_col_next:
 	ld a,(vec_col_cnt)
 	dec a
 	ld (vec_col_cnt),a
 	jp nz,dsp_col
 	jp vec_stk_leave
 dsp_mirror:
+	; Цена колонки в пуле СВОЯ: зеркальная строка пула стоит 381 такт (было 490), окно DI на NY=32
+	; — медиана 53.3 / p90 58.7 ед. (blitcalib, сцена 4,5), а ds_cost дал бы 2*NY + NY/4 + 5 = 77.
+	ld a,(vec_spr_ny)
+	add a,a
+	add a,8			; 2*NY + 8 (запас 22 % над p90)
+	ld (vec_spr_colcost),a
 	ld a,(vec_spr_cx)
 	add a,2
 	ld (vec_spr_cx),a
 	ld a,3
 	ld (vec_col_cnt),a
+	; разбор cx — в самомодифицируемые константы пролога сегмента (см. drawSprite_pool)
+	ld a,(vec_spr_cx)
+	rrca
+	and $0f
+	ld (dspm_sx+1),a
+	ld a,(vec_spr_cx)
+	and 1
+	rrca
+	rrca
+	rrca
+	rrca
+	ld (dspm_coff+1),a
 	di
 	ld hl,0
 	add hl,sp
@@ -1562,20 +1577,21 @@ dsp_mirror:
 	or KV_POOL_WIN
 	ld (vec_spr_curport),a
 	out (KV_PORT),a
-dspm_col:			; бюджет DI — по сегментам (dspm_seg)
+dspm_col:			; бюджет DI — на колонку целиком (см. dsp_col)
+	ld hl,dspm_col_go
+	ld (vec_blit_ret),hl
+	jp vec_spr_colbud
 dspm_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_rows_left),a
 	ld a,(vec_spr_ybot)
 	ld (vec_spr_row),a
 dspm_seg:
-	ld a,(vec_spr_cx)
-	rrca
-	and $0f
-	ld l,a
 	ld a,(vec_spr_row)
+	ld d,a
 	and $f0
-	or l
+dspm_sx:
+	or 0			; самомодификация (dsp_mirror/dspm_seg_end): (cx>>1)&15
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
@@ -1587,22 +1603,15 @@ dspm_seg:
 	ld a,l
 	and 1
 	rrca
-	ld l,a
-	ld a,(vec_spr_cx)
-	and 1
-	rlca
-	rlca
-	rlca
-	rlca
-	add a,l
-	ld l,a
-	ld a,(vec_spr_row)
+dspm_coff:
+	add a,0			; самомодификация: (cx&1)*16
+	ld e,a
+	ld a,d
 	and 15
-	add a,l
-	ld l,a
-	ex de,hl		; DE = адрес в пуле
-	ld a,(vec_spr_row)
-	and 15
+	ld c,a
+	add a,e
+	ld l,a			; HL = адрес плоскости 0 нижней строки сегмента
+	ld a,c
 	inc a
 	ld b,a
 	ld a,(vec_rows_left)
@@ -1610,8 +1619,8 @@ dspm_seg:
 	jp nc,dspm_n_ok
 	ld b,a
 dspm_n_ok:
-	ld a,e			; конец сегмента по L (в пуле строка = -1), см. dsp_n_ok.
-	sub b			; ВНИМАНИЕ: здесь адрес в DE (ex de,hl выше), а не в HL
+	ld a,l			; конец сегмента по L (в пуле строка = -1), см. dsp_n_ok
+	sub b
 	ld (dspm_end+1),a
 	ld (dspm_rem+1),a
 	ld a,(vec_rows_left)
@@ -1619,125 +1628,99 @@ dspm_n_ok:
 	ld (vec_rows_left),a
 	ld a,(vec_spr_row)
 	sub b
-	ld (vec_spr_row),a
-	; бюджет DI на сегмент, зеркальный. 16ц: 2n + n/4 + 4 (calib по окну DI: 37.4 ед. при n=16);
-	; c8: 2n + 2 (медиана 18.6 при n~8, p90 33.8 при n=16). Живой регистр — DE (адрес в пуле)
-	ex de,hl
-	ld (vec_spr_dst),hl
-	ld a,b
-    if C8+SPR3
-	add a,b
-	add a,2
-    else
-	rrca
-	rrca
-	and $3f
-	add a,b
-	add a,b
-	add a,4
-    endif
-	ld (vec_spr_colcost),a
-	ld hl,dspm_seg_go
-	ld (vec_blit_ret),hl
-	jp vec_spr_colbud
-dspm_seg_go:
-	ld hl,(vec_spr_dst)
-	ex de,hl
-dspm_row:
-	ex de,hl
-	ld (vec_spr_dst),hl	; адрес в пуле — на время просмотра rev256
-	ld h,rev256/256
+	ld (vec_spr_row),a	; бюджет колонки взят в dspm_col (vec_spr_colcost из ds_cost + 3)
+dspm_row:			; HL = адрес плоскости 0 текущей строки в пуле; таблица разворота — через DE
+	; Указатель НЕ прячется в память на время просмотра rev256 (было ld (vec_spr_dst),hl + ld hl,(nn)
+	; = 40 тактов на строку): rev256 выровнена на страницу, поэтому индекс кладём в E, страницу в D,
+	; и байт берём `ld a,(de)` — HL всё время держит приёмник. Маска и p0 остаются в регистрах
+	; (было 4 обращения к vec_spr_mask/vec_spr_p01 по 16 тактов), пропуск переезжает в C.
+	ld d,rev256/256
 	pop bc			; C = p0, B = маска
-	ld l,c
-	ld a,(hl)
-	ld (vec_spr_p01),a
-	ld l,b
-	ld a,(hl)
-	ld (vec_spr_mask),a
-	pop de			; E = p1, D = p2
-	ld l,e
-	ld e,(hl)
-	ld l,d
-	ld d,(hl)
-    if C8+SPR3
-	pop bc			; C = 0, B = пропуск
-	ld hl,(vec_spr_dst)
-	ld a,l
-	add a,64
-	ld l,a			; плоскость 2 из трёх
-	ld a,(vec_spr_mask)
-	and (hl)
-	or d
+	ld e,c
+	ld a,(de)
+	ld c,a			; C = p0 развёрнутый
+	ld e,b
+	ld a,(de)
+	ld b,a			; B = маска развёрнутая (A уже равен ей)
+	and (hl)		; плоскость 0 — сразу, пока маска в A
+	or c
 	ld (hl),a
-    else
-	pop bc			; C = p3, B = пропуск
-	ld l,c
-	ld c,(hl)
-	ld hl,(vec_spr_dst)
+	pop de			; E = p1, D = p2
+	ld c,d			; C = p2 (сырой)
+	ld d,rev256/256
+	ld a,(de)		; E уже = p1
+	ld e,a			; E = p1 развёрнутый
 	ld a,l
-	add a,96
-	ld l,a			; плоскость 3
-	ld a,(vec_spr_mask)
-	and (hl)
+	add a,32
+	ld l,a
+	ld a,b
+	and (hl)		; плоскость 1
+	or e
+	ld (hl),a
+	ld e,c
+	ld a,(de)
+	ld e,a			; E = p2 развёрнутый
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,b
+	and (hl)		; плоскость 2
+	or e
+	ld (hl),a
+    if C8+SPR3
+	pop de			; E = 0 (заполнитель), D = пропуск
+	ld c,d			; C = пропуск
+	ld a,l
+	sub 64+1		; указатель стоит на 3-й плоскости (+64) — назад на плоскость 0 и строкой выше
+    else
+	pop de			; E = p3, D = пропуск
+	ld c,d			; C = пропуск
+	ld d,rev256/256
+	ld a,(de)
+	ld e,a			; E = p3 развёрнутый
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,b
+	and (hl)		; плоскость 3
       if !SPR3CLR
-	or c			; SPR3CLR: плоскость 3 только чистим
+	or e			; SPR3CLR: плоскость 3 только чистим
       endif
 	ld (hl),a
 	ld a,l
-	sub 32
-	ld l,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or d
-	ld (hl),a
+	sub 96+1		; назад на плоскость 0 и строкой выше
     endif
-	ld a,l
-	sub 32
-	ld l,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or e
-	ld (hl),a
-	ld a,l
-	sub 32
-	ld l,a
-	ld a,(vec_spr_p01)
-	ld e,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or e
-	ld (hl),a
-	dec l			; строкой выше
-	ex de,hl		; DE = адрес в пуле, E = новый L
-	ld a,e
+	ld l,a			; A уже равен новому L
 dspm_end:
 	cp 0			; самомодификация: L конца сегмента
 	jp z,dspm_seg_end
-	ld a,b			; пропуск
+	ld a,c			; пропуск
 	or a
 	jp z,dspm_row
-	ld a,e			; осталось строк = L - конец
+	ld a,l			; осталось строк = L - конец
 dspm_rem:
 	sub 0			; самомодификация: L конца сегмента
 	dec a
 	jp z,dspm_row
-	cp b
+	cp c
 	jp c,dspm_k
-	ld a,b
+	ld a,c
 dspm_k:
-	ld b,a
-	ld a,e
-	sub b
-	ld e,a			; k строк вверх
-	ld a,b
-	add a,a
 	ld c,a
+	ld a,l
+	sub c
+	ld l,a			; k строк вверх (в пуле строка = -1)
+	ld (vec_spr_p01),hl
+	ld a,c
 	add a,a
-	add a,c
+	ld e,a
+	add a,a
+	add a,e			; 6k байт источника
 	ld l,a
 	ld h,0
 	add hl,sp
 	ld sp,hl
+	ld hl,(vec_spr_p01)
 	jp dspm_row
 dspm_seg_end:
 	ld a,(vec_rows_left)
@@ -1748,9 +1731,14 @@ dspm_seg_end:
 	ld h,0
 	add hl,sp
 	ld sp,hl
-	ld a,(vec_spr_cx)
+	ld a,(dspm_coff+1)	; cx-1: смещение переключается, слот по x падает на чётной cx
+	xor 16
+	ld (dspm_coff+1),a
+	jp z,dspm_col_next
+	ld a,(dspm_sx+1)
 	dec a
-	ld (vec_spr_cx),a
+	ld (dspm_sx+1),a
+dspm_col_next:
 	ld a,(vec_col_cnt)
 	dec a
 	ld (vec_col_cnt),a
@@ -1803,20 +1791,30 @@ vpb_y:
 	ld a,(vec_tmp_sy)
 	cp 10
 	jp nc,vpb_rect_done	; панель — без слотов
+	; Метка «в строке супертайлов есть грязные»: сброс пула иначе перечитывает ВСЕ прямоугольники
+	; на каждой из 10 строк (на сцене ур.1 4,5 занято 4 строки из 10). Метки лежат в хвосте таблицы
+	; слотов ($A0..$A9): индексов >= 160 у неё нет (vec_slot_for_bc режет y >= 160), а на уровне с
+	; двухплоскостным спрайтом, где по этому адресу лежит блит, сюда не приходят — vec_pool_begin
+	; выходит по vec_pool_ban выше. Полная очистка таблицы ($FF) метки только взводит — это безопасно.
+	ld e,a
+	add a,160
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld (hl),1
+	ld a,e
 	rlca
 	rlca
 	rlca
 	rlca
-	ld (vec_tmp_row16),a
+	ld e,a			; E = sy*16 (в ячейке держать незачем — регистр свободен)
 	ld a,(vec_tmp_nx)
 	ld b,a
 	ld a,(vec_tmp_sx)
 	ld c,a
 vpb_x:
-	ld a,(vec_tmp_row16)
+	ld a,e			; H уже стоит на таблице слотов (метка строки выше)
 	or c
 	ld l,a
-	ld h,vec_slot_tab/256
 	ld (hl),$fe		; грязный супертайл без слота: рисуется прямо в VRAM (и BG, и FG)
 vpb_x_next:
 	inc c
@@ -1918,11 +1916,18 @@ vpb_clr3:
 ; vpb_rect_assign: HL -> [x px, y px, nx, ny (символы по 8)]; грязным ($FE) супертайлам под ним — слоты.
 ; nx = 0 — пропуск. Переполнение слотов -> vec_tmp_ovf = 1.
 vpb_rect_assign:
+	; Регистры вместо ячеек: C = sx0, E = sx1, B = текущая строка (sy*16), D = L конца строки,
+	; HL = указатель в таблицу слотов (по строке идём inc l — sx0 <= sx1 <= 15, за строку не выходим).
+	; Ширина/высота умножаются сдвигом вместо цикла «прибавить 8 nx раз» (nx, ny — размер спрайта
+	; в символах, <= 31: сдвиг даёт то же по модулю 256, а перенос — то же условие обрезки).
 	inc hl
 	inc hl
 	ld a,(hl)		; nx
 	or a
 	ret z
+	add a,a
+	add a,a
+	add a,a			; nx*8
 	ld b,a
 	dec hl
 	dec hl
@@ -1932,14 +1937,11 @@ vpb_rect_assign:
 	rrca
 	rrca
 	and $0f
-	ld (vec_tmp_sx),a	; sx0
+	ld c,a			; C = sx0
 	ld a,(hl)
 	dec a
-vpb_sx1:
-	add a,8
+	add a,b			; x - 1 + nx*8
 	jp c,vpb_sx1_clip
-	dec b
-	jp nz,vpb_sx1		; x + nx*8 - 1
 	rrca
 	rrca
 	rrca
@@ -1949,24 +1951,22 @@ vpb_sx1:
 vpb_sx1_clip:
 	ld a,15
 vpb_sx1_ok:
-	ld (vec_tmp_sx1),a	; sx1
+	ld e,a			; E = sx1
 	inc hl
 	ld a,(hl)		; y px
 	cp 160
 	ret nc			; панель
+	ld d,a
 	and $f0
-	ld (vec_tmp_sy),a	; sy0*16
+	ld b,a			; B = sy0*16
 	inc hl
 	inc hl
-	ld b,(hl)		; ny
-	dec hl
-	dec hl
-	ld a,(hl)		; y
-	dec a
-vpb_sy1:
-	add a,8
-	dec b
-	jp nz,vpb_sy1		; y + ny*8 - 1
+	ld a,(hl)		; ny
+	add a,a
+	add a,a
+	add a,a			; ny*8
+	add a,d
+	dec a			; y - 1 + ny*8 (по модулю 256 — как старый цикл)
 	cp 160
 	jp c,vpb_sy_ok
 	ld a,159
@@ -1974,13 +1974,14 @@ vpb_sy_ok:
 	and $f0
 	ld (vec_tmp_ny),a	; sy1*16
 vpb_sy:
-	ld a,(vec_tmp_sx)
-vpb_sxl:
-	ld b,a
-	ld a,(vec_tmp_sy)
-	or b
+	ld a,b
+	or e
+	ld d,a			; D = L конца строки
+	ld a,b
+	or c
 	ld l,a
 	ld h,vec_slot_tab/256
+vpb_sxl:
 	ld a,(hl)
 	cp $fe
 	jp nz,vpb_sx_next	; не грязный (или уже со слотом)
@@ -1991,38 +1992,22 @@ vpb_sxl:
 	inc a
 	ld (vec_slot_next),a
 vpb_sx_next:
-	ld a,(vec_tmp_sx1)
-	cp b
+	ld a,l
+	cp d
 	jp z,vpb_sy_next
-	ld a,b
-	inc a
+	inc l
 	jp vpb_sxl
 vpb_sy_next:
-	ld a,(vec_tmp_sy)
-	ld b,a
 	ld a,(vec_tmp_ny)
 	cp b
 	ret z
 	ld a,b
 	add a,16
-	ld (vec_tmp_sy),a
+	ld b,a
 	jp vpb_sy
 vpb_ovf:
 	ld a,1
 	ld (vec_tmp_ovf),a
-	ret
-vpb_overflow:
-	pop bc
-	pop de
-	ld hl,vec_slot_tab
-	ld b,0
-vpb_clr2:
-	ld (hl),$ff
-	inc l
-	dec b
-	jp nz,vpb_clr2
-	xor a
-	ld (vec_pool_on),a
 	ret
 
 ; vec_pool_flush — вместо TransferDirtyTiles в RedrawScreen_part2: слоты -> VRAM,
@@ -2052,9 +2037,26 @@ vpf_go:
 	ld (vec_kv_shadow),a
 	out (KV_PORT),a
 	ei
+	ld hl,vpf_x_next	; адрес возврата блита на весь сброс один — не на каждый слот
+	ld (vec_blit_ret),hl
 	xor a
 	ld (vec_tmp_sy),a	; текущая строка
 vpf_yloop:
+	ld a,(vec_tmp_sy)	; строка без грязных супертайлов — не перебирать прямоугольники (см. vpb_y)
+	ld b,a
+	add a,160
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld a,(hl)
+	or a
+	jp z,vpf_ynext
+	ld (hl),0
+	ld a,b			; sy*16 — один раз на строку, а не на каждую колонку
+	rlca
+	rlca
+	rlca
+	rlca
+	ld (vec_tmp_row16),a
 	ld a,(ndirtyrects)
 	ld (vec_tmp_rc),a
 	ld hl,tiles_dirty
@@ -2084,13 +2086,10 @@ vpf_rect:
 	ld a,(vec_tmp_sx)
 	ld (vec_tmp_cx),a	; текущая колонка
 vpf_x:
-	ld a,(vec_tmp_sy)
-	rlca
-	rlca
-	rlca
-	rlca
+	ld a,(vec_tmp_row16)
 	ld b,a			; sy*16
 	ld a,(vec_tmp_cx)
+	ld c,a			; колонка — в регистр: vpf_slot берёт её оттуда
 	or b
 	ld l,a
 	ld h,vec_slot_tab/256
@@ -2111,7 +2110,7 @@ vpf_slot:
 	rrca
 	ld l,a
 	ld sp,hl
-	ld a,(vec_tmp_cx)
+	ld a,c			; колонка взята в vpf_x
 	add a,a
 	add a,VEC_P0H
 	ld d,a
@@ -2127,8 +2126,6 @@ vpf_slot:
 vpf_bud_ok:
 	ld (vec_bud_used),a
     endif			; ВИ53: фаза всегда реальная, самоучёт сброса не нужен
-	ld hl,vpf_x_next
-	ld (vec_blit_ret),hl
 	jp vec_blit128_vram
 vpf_x_next:
 	ld a,(vec_tmp_cx)
@@ -2143,6 +2140,7 @@ vpf_next:
 	dec a
 	ld (vec_tmp_rc),a
 	jp nz,vpf_rect
+vpf_ynext:
 	ld a,(vec_tmp_sy)
 	inc a
 	ld (vec_tmp_sy),a
