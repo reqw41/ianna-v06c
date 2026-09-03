@@ -238,6 +238,26 @@ def prev_instr(lines,i):
         if L.op in DIRECTIVES: return None
         return j
     return None
+def idx_word(lines,i,j,noinl,kind):
+    """Пара соседних строк, работающих со СЛОВОМ в записи по (ix+d)/(iy+d+1):
+      kind='st': 'ld (i?+d),l' + 'ld (i?+d+1),h'   — сохранить HL в поле;
+      kind='rd': 'ld e,(i?+d)'  + 'ld d,(i?+d+1)'  — прочитать поле в DE.
+    Возвращает (ix|iy, d) либо None. Обе половины обязаны быть рядом, без метки
+    на второй (туда могут прыгнуть) и вне окрестности 'jr cc,$+n' (noinl)."""
+    if j is None or i in noinl or j in noinl: return None
+    A,B=lines[i],lines[j]
+    if A.op!='ld' or B.op!='ld' or len(A.args)!=2 or len(B.args)!=2: return None
+    if kind=='st':
+        p1,p2=parse_idx(A.args[0]),parse_idx(B.args[0])
+        if A.args[1].strip().lower()!='l' or B.args[1].strip().lower()!='h': return None
+    else:
+        p1,p2=parse_idx(A.args[1]),parse_idx(B.args[1])
+        if A.args[0].strip().lower()!='e' or B.args[0].strip().lower()!='d': return None
+    if not p1 or not p2 or p1[0]!=p2[0]: return None
+    d1,d2=const_d(p1[1]),const_d(p2[1])
+    if d1 is None or d2 is None or d2!=d1+1 or d1<0: return None
+    return p1[0],d1
+
 def idx_pair(lines,i,j,noinl):
     """Пара 'ld i?h,r' + 'ld i?l,r2' одного индексного регистра (в любом порядке),
     источники — из b/c/d/e (h/l нельзя: пара собирается через HL, a дешевле и так).
@@ -376,6 +396,27 @@ class Translator:
         if op=='ld' and len(args)==2:
             dst,src=args
             di,si=idx
+            # --- СЛОВО в записи: пара соседних строк вместо двух отдельных обращений ---
+            # 'ld (ix+d),l' + 'ld (ix+d+1),h' в оригинале — просто «сохранить HL в поле».
+            # Порознь каждая половина стоила ld (z_a),a / ld a,l / call z_ix_sta / db d /
+            # ld a,(z_a) — 11 байт и 280 тактов (A прячется, потому что жив). Вместе достаточно
+            # одолжить BC: 12 байт и 104 такта на обе, причём A, DE, BC, HL и флаги целы.
+            # Симметрично 'ld e,(ix+d)' + 'ld d,(ix+d+1)' — «прочитать поле в DE».
+            noinl=getattr(self,'noinl',())
+            for kind,tag in (('st','ix_word_st'),('rd','ix_word_rd')):
+                w=idx_word(lines,i,next_instr(lines,i),noinl,kind)
+                if w:
+                    reg,dv=w
+                    if kind=='st':
+                        body=["push bc","ld c,l","ld b,h"]+idx_prep(reg,dv)+[
+                              "ld (hl),c","inc hl","ld (hl),b","ld h,b","ld l,c","pop bc"]
+                    else:
+                        body=["push hl"]+idx_prep(reg,dv)+["ld e,(hl)","inc hl","ld d,(hl)","pop hl"]
+                    return seq(body,tag)
+                k=prev_instr(lines,i)
+                if k is not None and idx_word(lines,k,i,noinl,kind):
+                    self.stat(tag+'_2nd')
+                    return pre+[f"\t; Z80> {op} {', '.join(args)}{cmt} — сделано парой выше"]
             # ld r,(ix+d)
             if si:
                 reg,d=si; rz='z_'+reg
