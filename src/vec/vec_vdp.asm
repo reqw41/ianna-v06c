@@ -1797,6 +1797,17 @@ vpb_y:
 	ld a,(vec_tmp_sy)
 	cp 10
 	jp nc,vpb_rect_done	; панель — без слотов
+	; Метка «в строке супертайлов есть грязные»: сброс пула иначе перечитывает ВСЕ прямоугольники
+	; на каждой из 10 строк (на сцене ур.1 4,5 занято 4 строки из 10). Метки лежат в хвосте таблицы
+	; слотов ($A0..$A9): индексов >= 160 у неё нет (vec_slot_for_bc режет y >= 160), а на уровне с
+	; двухплоскостным спрайтом, где по этому адресу лежит блит, сюда не приходят — vec_pool_begin
+	; выходит по vec_pool_ban выше. Полная очистка таблицы ($FF) метки только взводит — это безопасно.
+	ld e,a
+	add a,160
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld (hl),1
+	ld a,e
 	rlca
 	rlca
 	rlca
@@ -2049,6 +2060,14 @@ vpf_go:
 	xor a
 	ld (vec_tmp_sy),a	; текущая строка
 vpf_yloop:
+	ld a,(vec_tmp_sy)	; строка без грязных супертайлов — не перебирать прямоугольники (см. vpb_y)
+	add a,160
+	ld l,a
+	ld h,vec_slot_tab/256
+	ld a,(hl)
+	or a
+	jp z,vpf_ynext
+	ld (hl),0
 	ld a,(ndirtyrects)
 	ld (vec_tmp_rc),a
 	ld hl,tiles_dirty
@@ -2137,6 +2156,7 @@ vpf_next:
 	dec a
 	ld (vec_tmp_rc),a
 	jp nz,vpf_rect
+vpf_ynext:
 	ld a,(vec_tmp_sy)
 	inc a
 	ld (vec_tmp_sy),a
