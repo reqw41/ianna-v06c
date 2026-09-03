@@ -2147,17 +2147,21 @@ vpf_ynext:
 	cp 10
 	jp nz,vpf_yloop
 	ld hl,(vec_sp_save)
-	ld sp,hl		; настоящий SP (порт ещё в стековом режиме — стек не трогаем до перехода)
-	call vec_phase
-	cp 206
-	jp c,vpf_done
-	halt			; halt в стековом режиме безопасен: ISR целиком работает в странице 3
-vpf_done:
+	ld sp,hl		; настоящий SP
+	; Порт — ДО call/halt. Раньше стековый режим держался до vpf_done, и call vec_phase вместе с ISR
+	; клали адреса возврата и регистры в СТРАНИЦУ 3 по адресам игрового стека ($7Dxx): симметрично
+	; и потому «безопасно», но квазидиск там портился (2026-09-04: копии кадров героя 37..40 на
+	; уровне 1 получали байты адреса возврата — один неверный пиксель при падении).
 	ld a,(vec_kv_prev)
 	di
 	ld (vec_kv_shadow),a
 	out (KV_PORT),a		; вернуть окно, каким его держит главный код
 	ei
+	call vec_phase
+	cp 206
+	jp c,vpf_done
+	halt
+vpf_done:
 	xor a
 	ld (ndirtyrects),a
 	ld (vec_pool_on),a
