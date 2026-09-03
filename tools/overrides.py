@@ -57,6 +57,20 @@ OVERRIDES = {
     ('entities.asm', 291): ['ld a,(hl)'],                                     # ld a,(ix+5); HL = z_ix+5
     ('entities.asm', 294): ['ld (hl),a'],                                     # ld (ix+5),a
 
+    # entities.asm, get_sprite_pointer_iy (453..457) и хвост get_sprite_pointer_ix (478..481) —
+    # обе читают (ix+0)/(ix+1) и кладут пару в IY/IX. Перевод делал это четырьмя блоками
+    # (два раза ld hl,(z_ix) с push/pop и два раза push af / ld (z_i?+n),a / pop af).
+    # HL бережём стеком (оригинал его не портит, у функций десятки вызывающих), A не трогаем
+    # вовсе (в get_sprite_pointer_ix он — результат строки 477), флаги ни одна команда не меняет.
+    ('entities.asm', 454): ['push hl', 'ld hl,(z_ix)', 'ld e,(hl)'],      # ld e,(ix+0)
+    ('entities.asm', 455): ['inc hl', 'ld d,(hl)'],                       # ld d,(ix+1)
+    ('entities.asm', 456): ['ld h,d', 'ld l,e', 'ld (z_iy),hl', 'pop hl'],  # ld iyh,d / ld iyl,e
+    ('entities.asm', 457): [],
+    ('entities.asm', 478): ['push hl', 'ld hl,(z_ix)', 'ld e,(hl)'],      # ld e,(ix+0)
+    ('entities.asm', 479): ['inc hl', 'ld d,(hl)'],                       # ld d,(ix+1)
+    ('entities.asm', 480): ['ld h,d', 'ld l,e', 'ld (z_ix),hl', 'pop hl'],  # ld ixh,d / ld ixl,e
+    ('entities.asm', 481): [],
+
     # scripts.asm, run_script (128..179) — вызывается для игрока, обоих врагов и пяти объектов
     # каждый тик. HL на входе не параметр (RunScripts его не передаёт) и до строки 136 не нужен,
     # поэтому указатель сущности живёт прямо в нём.
@@ -117,4 +131,70 @@ OVERRIDES = {
     # которая начинается с ld hl,(z_ix).
     ('scripts.asm', 534): ['ld hl,(z_ix)', 'ld a,l', 'add a,10', 'ld l,a', 'jp nc,$+4', 'inc h',
                            'ld a,(hl)'],                                  # ld a,(ix+10)
+
+    # scripts.asm, action_patrol (184..234) — скрипт патрулирования обоих врагов каждый тик,
+    # восемь обращений к (ix+5)/(iy+d) на вызов. HL здесь — указатель на скрипт (строка 185
+    # ex de,hl), но живёт он только до строки 191: строка 199 кладёт в HL ENTITY_PLAYER_POINTER,
+    # а после строки 202 HL больше нигде в функции не читается — ниже он свободен под указатель.
+    ('scripts.asm', 187): ['push hl', 'ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)', 'pop hl'],
+    ('scripts.asm', 195): ['ld hl,(z_ix)', 'ld e,(hl)'],                  # ld e,(ix+0)
+    ('scripts.asm', 196): ['inc hl', 'ld d,(hl)'],                        # ld d,(ix+1)
+    ('scripts.asm', 197): ['ld h,d', 'ld l,e', 'ld (z_iy),hl'],           # ld iyh,d / ld iyl,e
+    ('scripts.asm', 198): [],
+    ('scripts.asm', 208): ['ld hl,(z_iy)'] + ['inc hl']*4 + ['cp (hl)'],  # cp (iy+4)
+    # 212 и 216 читают одно и то же поле подряд: between них только and/cp/jp — HL доживает
+    ('scripts.asm', 212): ['ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)'],   # ld a,(ix+5)
+    ('scripts.asm', 216): ['ld a,(hl)'],                                     # ld a,(ix+5)
+    ('scripts.asm', 221): ['ld hl,(z_iy)', 'inc hl', 'inc hl', 'inc hl', 'sub (hl)'],  # sub (iy+3)
+    ('scripts.asm', 231): ['ld hl,(z_iy)', 'inc hl', 'inc hl', 'inc hl', 'sub (hl)'],  # sub (iy+3)
+    # в action_patrol_noplayer приходят с тремя разными HL (z_iy+4, z_iy+3, z_ix+5) — берём заново
+    ('scripts.asm', 234): ['ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)'],   # ld a,(ix+5)
+
+    # scripts.asm, check_stile_entity_overlap (1727..1751) — зовётся из десятка скриптов объектов
+    # каждый тик, десять обращений к (ix+d)/(iy+d) на вызов. Три наблюдения:
+    #  * HL функция и так не бережёт: внутри стоит call check_sprite_overlap, который его портит,
+    #    поэтому push hl/ex (sp),hl вокруг каждой строки лишние;
+    #  * IY здесь всегда simulatedsprite (строка 1730), значит (iy+3..6) — АБСОЛЮТНЫЕ адреса;
+    #  * (ix+6) и (ix+7) читаются подряд, между ними только add a,a и запись по абсолютному адресу,
+    #    так что указатель в HL доживает.
+    # A на строках 1743/1744 портится (там кладётся 2): между 1744 и call check_sprite_overlap
+    # A никто не читает — нативный check_sprite_overlap (src/vec/overlap_hot.asm) на входе сразу
+    # грузит B и A из полей записей. Флаги: pop/ld (nn),hl/ld (hl),r их не трогают, поэтому CY,
+    # который функция возвращает из check_sprite_overlap, доживает до ret (строка 1751).
+    ('scripts.asm', 1728): ['ld hl,(z_ix)', 'push hl'],                   # push ix
+    ('scripts.asm', 1729): ['ld hl,(z_iy)', 'push hl'],                   # push iy
+    ('scripts.asm', 1730): ['ld hl,simulatedsprite', 'ld (z_iy),hl'],     # ld iy,simulatedsprite
+    ('scripts.asm', 1731): ['ld hl,(z_ix)'] + ['inc hl']*6 + ['ld a,(hl)'],   # ld a,(ix+6)
+    ('scripts.asm', 1736): ['ld (simulatedsprite+3),a'],                  # ld (iy+3),a
+    ('scripts.asm', 1737): ['inc hl', 'ld a,(hl)'],                       # ld a,(ix+7); HL = z_ix+6
+    ('scripts.asm', 1742): ['ld (simulatedsprite+4),a'],                  # ld (iy+4),a
+    ('scripts.asm', 1743): ['ld a,2', 'ld (simulatedsprite+5),a'],        # ld (iy+5),2
+    ('scripts.asm', 1744): ['ld (simulatedsprite+6),a'],                  # ld (iy+6),2
+    # снятый со стека указатель на сущность нужен тут же (строки 1746/1747), а z_ix всё равно
+    # перезаписывается строкой 1748 — промежуточное сохранение не нужно
+    ('scripts.asm', 1745): ['pop hl'],                                    # pop ix
+    ('scripts.asm', 1746): ['ld e,(hl)'],                                 # ld e,(ix+0)
+    ('scripts.asm', 1747): ['inc hl', 'ld d,(hl)'],                       # ld d,(ix+1)
+    ('scripts.asm', 1748): ['ld h,d', 'ld l,e', 'ld (z_ix),hl'],          # ld ixh,d / ld ixl,e
+    ('scripts.asm', 1749): [],
+    ('scripts.asm', 1751): ['pop hl', 'ld (z_ix),hl'],                    # pop ix (CY сохраняется)
+
+    # drawsprite_src.asm, UpdateSprite (85..99) — вызывается на каждое движение любой сущности
+    # (игрок + два врага + объекты), пять обращений к записи спрайта подряд. HL здесь занят новой
+    # позицией в символах (строки 78/84), поэтому прячем его на стек, а запись адресуем одним
+    # указателем: +3, +4, +5, +6, +7. Флаг перерисовки (ix+7) переехал со строки 85 на строку 99 —
+    # между ними ни одного вызова и ни одного чтения SPDATA, порядок записей не наблюдаем.
+    # Флаги: push/ld hl,(nn)/inc hl/ld (hl),n их не трогают, как и оригинальные ld (ix+d),n / ld r,(ix+d).
+    ('drawsprite_src.asm', 85): ['push hl', 'ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl'],  # -> +3
+    ('drawsprite_src.asm', 86): ['ld a,(hl)'],                            # ld a,(ix+3)
+    ('drawsprite_src.asm', 92): ['inc hl', 'ld a,(hl)'],                  # ld a,(ix+4)
+    ('drawsprite_src.asm', 98): ['inc hl', 'ld d,(hl)'],                  # ld d,(ix+5)
+    ('drawsprite_src.asm', 99): ['inc hl', 'ld e,(hl)',                   # ld e,(ix+6)
+                                 'inc hl', 'ld (hl),1',                   # ld (ix+7),1 (со строки 85)
+                                 'pop hl'],                               # HL = новая позиция
+    # update_storenewpos (142..143): сюда приходят и по jr из Update_inv_two, и падением из
+    # Update_inv. HL на входе разный (после InvalidateTiles — мусор), поэтому его бережём.
+    ('drawsprite_src.asm', 142): ['push hl', 'ld hl,(z_ix)', 'inc hl', 'inc hl', 'inc hl',
+                                  'ld (hl),b'],                           # ld (ix+3),b
+    ('drawsprite_src.asm', 143): ['inc hl', 'ld (hl),c', 'pop hl'],       # ld (ix+4),c
 }
