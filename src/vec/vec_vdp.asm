@@ -1599,8 +1599,7 @@ dspm_seg:
 	ld a,(vec_spr_row)
 	and 15
 	add a,l
-	ld l,a
-	ex de,hl		; DE = адрес в пуле
+	ld l,a			; HL = адрес плоскости 0 нижней строки сегмента
 	ld a,(vec_spr_row)
 	and 15
 	inc a
@@ -1610,8 +1609,8 @@ dspm_seg:
 	jp nc,dspm_n_ok
 	ld b,a
 dspm_n_ok:
-	ld a,e			; конец сегмента по L (в пуле строка = -1), см. dsp_n_ok.
-	sub b			; ВНИМАНИЕ: здесь адрес в DE (ex de,hl выше), а не в HL
+	ld a,l			; конец сегмента по L (в пуле строка = -1), см. dsp_n_ok
+	sub b
 	ld (dspm_end+1),a
 	ld (dspm_rem+1),a
 	ld a,(vec_rows_left)
@@ -1621,8 +1620,7 @@ dspm_n_ok:
 	sub b
 	ld (vec_spr_row),a
 	; бюджет DI на сегмент, зеркальный. 16ц: 2n + n/4 + 4 (calib по окну DI: 37.4 ед. при n=16);
-	; c8: 2n + 2 (медиана 18.6 при n~8, p90 33.8 при n=16). Живой регистр — DE (адрес в пуле)
-	ex de,hl
+	; c8: 2n + 2 (медиана 18.6 при n~8, p90 33.8 при n=16). Живой регистр — HL (адрес в пуле)
 	ld (vec_spr_dst),hl
 	ld a,b
     if C8+SPR3
@@ -1642,102 +1640,98 @@ dspm_n_ok:
 	jp vec_spr_colbud
 dspm_seg_go:
 	ld hl,(vec_spr_dst)
-	ex de,hl
-dspm_row:
-	ex de,hl
-	ld (vec_spr_dst),hl	; адрес в пуле — на время просмотра rev256
-	ld h,rev256/256
+dspm_row:			; HL = адрес плоскости 0 текущей строки в пуле; таблица разворота — через DE
+	; Указатель НЕ прячется в память на время просмотра rev256 (было ld (vec_spr_dst),hl + ld hl,(nn)
+	; = 40 тактов на строку): rev256 выровнена на страницу, поэтому индекс кладём в E, страницу в D,
+	; и байт берём `ld a,(de)` — HL всё время держит приёмник. Маска и p0 остаются в регистрах
+	; (было 4 обращения к vec_spr_mask/vec_spr_p01 по 16 тактов), пропуск переезжает в C.
+	ld d,rev256/256
 	pop bc			; C = p0, B = маска
-	ld l,c
-	ld a,(hl)
-	ld (vec_spr_p01),a
-	ld l,b
-	ld a,(hl)
-	ld (vec_spr_mask),a
-	pop de			; E = p1, D = p2
-	ld l,e
-	ld e,(hl)
-	ld l,d
-	ld d,(hl)
-    if C8+SPR3
-	pop bc			; C = 0, B = пропуск
-	ld hl,(vec_spr_dst)
-	ld a,l
-	add a,64
-	ld l,a			; плоскость 2 из трёх
-	ld a,(vec_spr_mask)
-	and (hl)
-	or d
+	ld e,c
+	ld a,(de)
+	ld c,a			; C = p0 развёрнутый
+	ld e,b
+	ld a,(de)
+	ld b,a			; B = маска развёрнутая (A уже равен ей)
+	and (hl)		; плоскость 0 — сразу, пока маска в A
+	or c
 	ld (hl),a
-    else
-	pop bc			; C = p3, B = пропуск
-	ld l,c
-	ld c,(hl)
-	ld hl,(vec_spr_dst)
+	pop de			; E = p1, D = p2
+	ld c,d			; C = p2 (сырой)
+	ld d,rev256/256
+	ld a,(de)		; E уже = p1
+	ld e,a			; E = p1 развёрнутый
 	ld a,l
-	add a,96
-	ld l,a			; плоскость 3
-	ld a,(vec_spr_mask)
-	and (hl)
+	add a,32
+	ld l,a
+	ld a,b
+	and (hl)		; плоскость 1
+	or e
+	ld (hl),a
+	ld e,c
+	ld a,(de)
+	ld e,a			; E = p2 развёрнутый
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,b
+	and (hl)		; плоскость 2
+	or e
+	ld (hl),a
+    if C8+SPR3
+	pop de			; E = 0 (заполнитель), D = пропуск
+	ld c,d			; C = пропуск
+	ld a,l
+	sub 64+1		; указатель стоит на 3-й плоскости (+64) — назад на плоскость 0 и строкой выше
+    else
+	pop de			; E = p3, D = пропуск
+	ld c,d			; C = пропуск
+	ld d,rev256/256
+	ld a,(de)
+	ld e,a			; E = p3 развёрнутый
+	ld a,l
+	add a,32
+	ld l,a
+	ld a,b
+	and (hl)		; плоскость 3
       if !SPR3CLR
-	or c			; SPR3CLR: плоскость 3 только чистим
+	or e			; SPR3CLR: плоскость 3 только чистим
       endif
 	ld (hl),a
 	ld a,l
-	sub 32
-	ld l,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or d
-	ld (hl),a
+	sub 96+1		; назад на плоскость 0 и строкой выше
     endif
-	ld a,l
-	sub 32
-	ld l,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or e
-	ld (hl),a
-	ld a,l
-	sub 32
-	ld l,a
-	ld a,(vec_spr_p01)
-	ld e,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or e
-	ld (hl),a
-	dec l			; строкой выше
-	ex de,hl		; DE = адрес в пуле, E = новый L
-	ld a,e
+	ld l,a			; A уже равен новому L
 dspm_end:
 	cp 0			; самомодификация: L конца сегмента
 	jp z,dspm_seg_end
-	ld a,b			; пропуск
+	ld a,c			; пропуск
 	or a
 	jp z,dspm_row
-	ld a,e			; осталось строк = L - конец
+	ld a,l			; осталось строк = L - конец
 dspm_rem:
 	sub 0			; самомодификация: L конца сегмента
 	dec a
 	jp z,dspm_row
-	cp b
+	cp c
 	jp c,dspm_k
-	ld a,b
+	ld a,c
 dspm_k:
-	ld b,a
-	ld a,e
-	sub b
-	ld e,a			; k строк вверх
-	ld a,b
-	add a,a
 	ld c,a
+	ld a,l
+	sub c
+	ld l,a			; k строк вверх (в пуле строка = -1)
+	ld (vec_spr_p01),hl
+	ld a,c
 	add a,a
-	add a,c
+	ld e,a
+	add a,a
+	add a,e			; 6k байт источника
 	ld l,a
 	ld h,0
 	add hl,sp
 	ld sp,hl
+	ld hl,(vec_spr_p01)
 	jp dspm_row
 dspm_seg_end:
 	ld a,(vec_rows_left)
