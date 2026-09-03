@@ -121,15 +121,14 @@ vec_slot_for_bc:
 	ld a,c
 	cp 160
 	jp nc,vsf_none
+	and $f0
+	ld l,a
 	ld a,b
 	rrca
 	rrca
 	rrca
 	rrca
 	and $0f
-	ld l,a
-	ld a,c
-	and $f0
 	or l
 	ld l,a
 	ld h,vec_slot_tab/256
@@ -2038,10 +2037,13 @@ vpf_go:
 	ld (vec_kv_shadow),a
 	out (KV_PORT),a
 	ei
+	ld hl,vpf_x_next	; адрес возврата блита на весь сброс один — не на каждый слот
+	ld (vec_blit_ret),hl
 	xor a
 	ld (vec_tmp_sy),a	; текущая строка
 vpf_yloop:
 	ld a,(vec_tmp_sy)	; строка без грязных супертайлов — не перебирать прямоугольники (см. vpb_y)
+	ld b,a
 	add a,160
 	ld l,a
 	ld h,vec_slot_tab/256
@@ -2049,6 +2051,12 @@ vpf_yloop:
 	or a
 	jp z,vpf_ynext
 	ld (hl),0
+	ld a,b			; sy*16 — один раз на строку, а не на каждую колонку
+	rlca
+	rlca
+	rlca
+	rlca
+	ld (vec_tmp_row16),a
 	ld a,(ndirtyrects)
 	ld (vec_tmp_rc),a
 	ld hl,tiles_dirty
@@ -2078,13 +2086,10 @@ vpf_rect:
 	ld a,(vec_tmp_sx)
 	ld (vec_tmp_cx),a	; текущая колонка
 vpf_x:
-	ld a,(vec_tmp_sy)
-	rlca
-	rlca
-	rlca
-	rlca
+	ld a,(vec_tmp_row16)
 	ld b,a			; sy*16
 	ld a,(vec_tmp_cx)
+	ld c,a			; колонка — в регистр: vpf_slot берёт её оттуда
 	or b
 	ld l,a
 	ld h,vec_slot_tab/256
@@ -2105,7 +2110,7 @@ vpf_slot:
 	rrca
 	ld l,a
 	ld sp,hl
-	ld a,(vec_tmp_cx)
+	ld a,c			; колонка взята в vpf_x
 	add a,a
 	add a,VEC_P0H
 	ld d,a
@@ -2121,8 +2126,6 @@ vpf_slot:
 vpf_bud_ok:
 	ld (vec_bud_used),a
     endif			; ВИ53: фаза всегда реальная, самоучёт сброса не нужен
-	ld hl,vpf_x_next
-	ld (vec_blit_ret),hl
 	jp vec_blit128_vram
 vpf_x_next:
 	ld a,(vec_tmp_cx)
