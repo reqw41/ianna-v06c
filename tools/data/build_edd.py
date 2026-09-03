@@ -550,7 +550,7 @@ def level_table_blob(pal, banks, fg, fgc=False):
     out.append(len(fg))                        # передних тайлов
     # Пул (буфер супертайлов) несовместим с двухплоскостным спрайтом: тот рисуется прямо в экран,
     # а пул потом выводит свой буфер поверх и затирает его. На уровнях с таким врагом пул выключаем.
-    out.append(1 if any(b in BANK_2PLANE for b, *_ in banks) else 0)
+    out.append(1 if (any(b in BANK_2PLANE for b, *_ in banks) or os.environ.get("POOL_OFF")) else 0)   # POOL_OFF=1 — стенд: прямой режим без пула
     a = SCRPAL_BY_LEVEL.get(LEVEL_NOW, 0)      # адрес таблицы палитр: у каждого уровня свой, а ROM общий
     out += bytes([a & 0xFF, a >> 8])
     pairs = bytearray()
@@ -982,14 +982,14 @@ def build_kvaz(level_no=1, start=None):
         end = LEVELTAB_ADDR + len(blob)
         assert all(v == 0 for v in pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end]), 'область таблиц уровня занята'
         pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end] = blob
-        if any(b in BANK_2PLANE for b, *_ in banks):    # таблица нужна только там, где есть
+        if any(b in BANK_2PLANE for b, *_ in banks) or os.environ.get('POOL_OFF'):    # таблица нужна там, где есть
             sp = screen_palettes(screens_of(list((SRC / f'level{level_no}.map').read_bytes())), banks)
             SCRPAL_ADDR = SCRPAL_BY_LEVEL[level_no]
             end = SCRPAL_ADDR + len(sp)                # четырёхцветный спрайт: на других уровнях
             assert all(v == 0 for v in pages[LEVELTAB_PAGE][SCRPAL_ADDR:end]), 'место под палитры экранов занято'
             pages[LEVELTAB_PAGE][SCRPAL_ADDR:end] = sp
         blit2 = BUILD / 'blit2.bin'
-        if blit2.exists() and any(b in BANK_2PLANE for b, *_ in banks):
+        if blit2.exists() and (any(b in BANK_2PLANE for b, *_ in banks) or os.environ.get('POOL_OFF')):   # без пула LoadScreen зовёт палитру экрана из этого оверлея
             bb = blit2.read_bytes()
             assert len(bb) <= 256, len(bb)
             pages[LEVELTAB_PAGE][BLIT2_ADDR:BLIT2_ADDR+len(bb)] = bb
