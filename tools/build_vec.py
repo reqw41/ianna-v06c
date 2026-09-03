@@ -326,12 +326,12 @@ def main():
         '\tld a, (animate_tile)\n\tinc a\n\tld (animate_tile), a\n'
         f'\tand {_mask}\t\t; ВЕКТОР: анимация каждый {int(_mask)+1}-й тик\n')
     # ВЕКТОР: на уровнях с четырёхцветным спрайтом слоты палитры 1..3 отданы ему, и на каждом экране
-    # там своя тройка цветов — читаем её из набора при загрузке экрана (процедура в вынесенном
-    # оверлее, $7F03). Фон в эти слоты не заглядывает: перестановка уровня увела его в 0 и 4..15.
+    # там своя тройка цветов — читаем её из набора при загрузке экрана. Процедура vec_scrpal живёт
+    # в образе (src/vec/vec_blit2.asm) и сама выходит, если у уровня такой таблицы нет
+    # (vec_scrpal_addr = 0). Фон в эти слоты не заглядывает: перестановка увела его в 0 и 4..15.
     _old = 'LoadScreen:\n'
     assert _old in _t
-    _t = _t.replace(_old, 'LoadScreen:\n\tpush af\n\tld a,(vec_pool_ban)\n\tor a\n'
-                          '\tjp z,ls_nopal\n\tcall vec_slot_tab+3\nls_nopal:\n\tpop af\n', 1)
+    _t = _t.replace(_old, 'LoadScreen:\n\tpush af\n\tcall vec_scrpal\n\tpop af\n', 1)
     _f.write_text(_t)
     translate(TR / 'score_src.asm', TR / 'score.asm')
     translate(TR / 'font_src.asm', TR / 'font.asm')
@@ -433,11 +433,7 @@ def build_menu_bins(lst):
             'force_inv_redraw', 'draw_weapon', 'RedrawScreen', 'InvalidateTiles', 'RedrawAllSprites',
             'FX_Play', 'get_entity_max_energy', 'remove_object_from_inventory', 'player_dead',
             'ENTITY_PLAYER_POINTER', 'z_iy', 'vec_palette', 'vec_pc_reset', 'vec_key', 'vec_key_hook',
-            # для вынесенного двухплоскостного блита:
-            'vec_col_cnt', 'vec_row_cnt', 'vec_sp_save', 'vec_spr_src', 'vec_spr_port',
-            'vec_spr_curport', 'vec_spr_hcol', 'vec_spr_lbot', 'vec_spr_ny', 'vec_spr_skip2',
-            'vec_spr_dst', 'vec_b2_step', 'vec_stk_leave', 'rev256',
-            'level_width', 'current_levelx', 'current_levely', 'z_ldir', 'vec_scrpal_addr',
+            'level_width', 'current_levelx', 'current_levely', 'z_ldir', 'vec_sp_save', 'rev256',
             # для оверлея готовых тайлов (fgc_ovl.asm):
             'drawTile', 'drawTile_nosave', 'vec_pool_on', 'SPDATA', 'fg_tile_pairs', 'fg_lut_n', 'vec_budget', 'vec_blit_src',
             'vec_blit_ret', 'vec_blit128_vram']
@@ -450,7 +446,7 @@ def build_menu_bins(lst):
     assert not missing, f'нет символов для меню: {missing}'
     out = ['; сгенерировано build_vec (символы игры для оверлея меню)']
     for line in lst.split('\n'):                      # константы набора уровня (SCRPAL, LEVELTAB_PORT...)
-        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|BLIT2SRC|FDD_TAB|FGC_CODE|FGC_PTRS|FGC_TILES)\s+=\s+\$([0-9A-F]{2,4})', line)
+        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|FDD_TAB|FGC_CODE|FGC_PTRS|FGC_TILES)\s+=\s+\$([0-9A-F]{2,4})', line)
         if m: out.append(f'{m.group(1)}\tequ ${m.group(2)}')
     for n, v in syms.items():
         out.append(f'{n}\tequ ${v:04X}')
@@ -506,7 +502,6 @@ def build_menu_bins(lst):
     for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x800),
                                 (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9000 - 0x8440),
                                 (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x9000),
-                                (VEC / 'blit2_ovl.asm', 'blit2.bin', 0x100),
                                 (VEC / 'fdd_banks.asm', 'fdd_banks.bin', 0x9600 - 0x9280),
                                 (VEC / 'fgc_ovl.asm', 'fgc.bin', 0x100)):
         work = ROOT / f'build/{src.name}'

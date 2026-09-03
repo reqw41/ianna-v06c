@@ -30,11 +30,7 @@ vec_start:
 	call cls
 	call vec_init_rev256
     if !DEMO
-	ld a,(vec_pool_ban)	; на уровне с двухплоскостным спрайтом там лежит блит, не слоты
-	or a
-	jp nz,vec_noslots
-	call vec_slot_init	; таблица слотов пула = $FF
-vec_noslots:
+	call vec_slot_init	; таблица слотов пула = $FF (пул работает на всех уровнях)
     endif
 	call initROMbanks
 	call initVDPBuffers
@@ -149,18 +145,8 @@ vec_load_leveltab:
 	ld (vec_kv_shadow),a
 	ld a,1
 	ld (vec_pal_dirty),a
-	; блит кладём всегда: если пул на уровне нужен, vec_slot_init тут же перезапишет это место
-	ld a,LEVELTAB_PORT
-	out (KV_PORT),a
-	ld hl,BLIT2SRC
-	ld de,vec_slot_tab
-	ld bc,256
-	call z_ldir
-	xor a
-	out (KV_PORT),a
-	ld (vec_kv_shadow),a
-	ei
-	ret
+	ei			; двухплоскостной блит и палитра экрана переехали в образ (vec_blit2.asm):
+	ret			; $7F00 нужен под таблицу слотов — пул работает на всех уровнях
 
 vec_init_rev256:
 	ld hl,rev256

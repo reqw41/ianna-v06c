@@ -531,9 +531,8 @@ LEVELTAB_PAGE = 2
 # строятся заново кодом). Копия берётся из собранного ROM, поэтому после его правки нужен второй
 # проход build_edd — за этим следит сторож в build_vec.
 FDDCOPY_ADDR = 0xBD00
-# Двухплоскостной блит тоже не поместился в ROM, поэтому лежит здесь и при старте уровня копируется
-# поверх таблицы слотов ($7F00): на таком уровне пул выключен, слоты не нужны.
-BLIT2_ADDR = 0xBF00
+BLIT2_ADDR = 0xBF00     # раньше здесь лежал вынесенный двухплоскостной блит; теперь он в образе
+                        # ($7F00 отдан таблице слотов — пул работает на всех уровнях), место свободно
 # Палитра, своя для каждого экрана: три байта (слоты 1..3), которые занимает четырёхцветный спрайт
 # этого экрана. Фон в эти слоты не заглядывает — перестановка уровня увела его в 0 и 4..15.
 # Адрес таблицы палитр экранов свой у каждого уровня: она обязана лежать В ОКНЕ $A000-$DFFF
@@ -548,10 +547,12 @@ def level_table_blob(pal, banks, fg, fgc=False):
         two = 1 if b in BANK_2PLANE else 0     # бит 0 = банк в двух плоскостях, кадр 288 Б
         out += bytes([0x10 | (pg << 2) | two, base >> 8])
     out.append(len(fg))                        # передних тайлов
-    # Пул (буфер супертайлов) несовместим с двухплоскостным спрайтом: тот рисуется прямо в экран,
-    # а пул потом выводит свой буфер поверх и затирает его. На уровнях с таким врагом пул выключаем.
-    out.append(1 if (any(b in BANK_2PLANE for b, *_ in banks) or os.environ.get("POOL_OFF")) else 0)   # POOL_OFF=1 — стенд: прямой режим без пула
-    a = SCRPAL_BY_LEVEL.get(LEVEL_NOW, 0)      # адрес таблицы палитр: у каждого уровня свой, а ROM общий
+    # Пул работает на ВСЕХ уровнях: двухплоскостной спрайт рисуется в слот пула своим телом строки
+    # (vec_vdp.b2p_row/b2pm_row). Флаг остался только стендовым обходом — POOL_OFF=1 даёт прямой
+    # режим для сравнения «пул против прямого».
+    out.append(1 if os.environ.get("POOL_OFF") else 0)
+    # адрес таблицы палитр экранов: 0 = у уровня нет четырёхцветных банков, vec_scrpal сразу выходит
+    a = SCRPAL_BY_LEVEL.get(LEVEL_NOW, 0) if any(b in BANK_2PLANE for b, *_ in banks) else 0
     out += bytes([a & 0xFF, a >> 8])
     pairs = bytearray()
     for i, t in enumerate(fg):
@@ -982,17 +983,12 @@ def build_kvaz(level_no=1, start=None):
         end = LEVELTAB_ADDR + len(blob)
         assert all(v == 0 for v in pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end]), 'область таблиц уровня занята'
         pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end] = blob
-        if any(b in BANK_2PLANE for b, *_ in banks) or os.environ.get('POOL_OFF'):    # таблица нужна там, где есть
+        if any(b in BANK_2PLANE for b, *_ in banks):    # таблица нужна там, где есть
             sp = screen_palettes(screens_of(list((SRC / f'level{level_no}.map').read_bytes())), banks)
             SCRPAL_ADDR = SCRPAL_BY_LEVEL[level_no]
             end = SCRPAL_ADDR + len(sp)                # четырёхцветный спрайт: на других уровнях
             assert all(v == 0 for v in pages[LEVELTAB_PAGE][SCRPAL_ADDR:end]), 'место под палитры экранов занято'
             pages[LEVELTAB_PAGE][SCRPAL_ADDR:end] = sp
-        blit2 = BUILD / 'blit2.bin'
-        if blit2.exists() and (any(b in BANK_2PLANE for b, *_ in banks) or os.environ.get('POOL_OFF')):   # без пула LoadScreen зовёт палитру экрана из этого оверлея
-            bb = blit2.read_bytes()
-            assert len(bb) <= 256, len(bb)
-            pages[LEVELTAB_PAGE][BLIT2_ADDR:BLIT2_ADDR+len(bb)] = bb
         rom = BUILD / 'ianna.rom'
         if rom.exists():
             r = rom.read_bytes()
@@ -1026,7 +1022,6 @@ def build_kvaz(level_no=1, start=None):
                   f'LEVELTAB\tequ ${LEVELTAB_ADDR:04X}',
                   f'LEVELTAB_PORT\tequ ${0x20 | LEVELTAB_PAGE:02X}\t; окно $A000-$DFFF -> страница {LEVELTAB_PAGE}',
                   f'FDDCOPY\tequ ${FDDCOPY_ADDR:04X}\t; копия загрузчика уровня (512 Б) — возвращается на $7E00',
-                  f'BLIT2SRC\tequ ${BLIT2_ADDR:04X}\t; двухплоскостной блит — копируется на $7F00 (таблица слотов)',
                   f'FGC_CODE\tequ ${FGC_CODE:04X}\t; оверлей готовых тайлов (fgc_ovl.asm) в хвосте string_area',
                   f'FGC_PTRS\tequ ${FGC_PTRS:04X}', f'FGC_TILES\tequ ${FGC_TILES[1]:04X}\t; стр.{FGC_TILES[0]}',
                   '; адрес таблицы палитр экранов приходит из блока таблиц уровня (vec_scrpal_addr)',
