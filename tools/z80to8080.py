@@ -216,6 +216,40 @@ def flags_live_after(lines,i,fl,depth=0,seen=None):
 def reads_flags(op,args): return bool(flags_read(op,args))
 def writes_flags(op,args): return flags_written(op,args)==FL_ALL
 
+DIRECTIVES=('db','dw','ds','equ','org','end','include','incbin')
+def next_instr(lines,i):
+    """Индекс следующей команды. None, если по дороге (или на ней самой) стоит метка:
+    туда могут прыгнуть, и склеивать пару нельзя."""
+    for j in range(i+1,len(lines)):
+        L=lines[j]
+        if L.label: return None
+        if L.op is None: continue
+        if L.op in DIRECTIVES: return None
+        return j
+    return None
+def prev_instr(lines,i):
+    """Индекс предыдущей команды (метка на самой lines[i] или между ними запрещает пару)."""
+    if lines[i].label: return None
+    for j in range(i-1,-1,-1):
+        L=lines[j]
+        if L.op is None:
+            if L.label: return None
+            continue
+        if L.op in DIRECTIVES: return None
+        return j
+    return None
+def idx_pair(lines,i,j,noinl):
+    """Пара 'ld i?h,r' + 'ld i?l,r2' одного индексного регистра (в любом порядке),
+    источники — из b/c/d/e (h/l нельзя: пара собирается через HL, a дешевле и так).
+    Возвращает (ix|iy, регистр-старший, регистр-младший) либо None."""
+    if j is None or i in noinl or j in noinl: return None
+    A,B=lines[i],lines[j]
+    if A.op!='ld' or B.op!='ld' or len(A.args)!=2 or len(B.args)!=2: return None
+    d1,s1=A.args[0].lower(),A.args[1].lower(); d2,s2=B.args[0].lower(),B.args[1].lower()
+    if d1 not in IDXH or d2 not in IDXH or IDXH[d1]!=IDXH[d2] or d1[-1]==d2[-1]: return None
+    if s1 not in ('b','c','d','e') or s2 not in ('b','c','d','e'): return None
+    return (IDXH[d1], s1, s2) if d1.endswith('h') else (IDXH[d1], s2, s1)
+
 def a_dead_after(lines,i):
     """A мёртв после lines[i]? (в пределах прямолинейного участка)"""
     for j in range(i+1,len(lines)):
@@ -407,6 +441,22 @@ class Translator:
                 return seq(["push hl", f"ld hl,({rz})", f"ld {norm_expr(dst)},hl", "pop hl"],'ix_st_mem')
             # ixh/ixl
             if a[0] in IDXH:
+                # Пара 'ld ixh,d' + 'ld ixl,e' (в любом порядке) — это просто IX := DE.
+                # Порознь каждая половина стоит push af / ld a,r / ld (nn),a / pop af — 6 байт и
+                # 52 такта; вместе — push hl / ld h,r / ld l,r2 / ld (z_ix),hl / pop hl: 7 байт и
+                # 60 тактов на обе. A и флаги не трогаются, HL бережётся стеком, поэтому склейка
+                # безопасна при любом вызывающем. Метка между половинами (и на второй) запрещена:
+                # туда могут прыгнуть. Запись z_ix становится двухбайтовой — прерывание между
+                # половинами больше невозможно, а ISR z_ix/z_iy и так сохраняет и восстанавливает.
+                noinl=getattr(self,'noinl',())
+                p=idx_pair(lines,i,next_instr(lines,i),noinl)
+                if p:
+                    reg,hi,lo=p
+                    return seq(["push hl", f"ld h,{hi}", f"ld l,{lo}", f"ld (z_{reg}),hl", "pop hl"],'ixh_pair')
+                k=prev_instr(lines,i)
+                if k is not None and idx_pair(lines,k,i,noinl):
+                    self.stat('ixh_pair_2nd')
+                    return pre+[f"\t; Z80> {op} {', '.join(args)}{cmt} — собрано парой выше"]
                 cell='z_'+IDXH[a[0]]+('+1' if a[0].endswith('h') else '')
                 if a[1]=='a': return seq([f"ld ({cell}),a"],'ixh_ld_a')
                 if a[1] in REG8: return seq(["push af", f"ld a,{a[1]}", f"ld ({cell}),a", "pop af"],'ixh_ld_r')
