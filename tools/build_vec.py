@@ -255,8 +255,15 @@ def per_offset_helpers(order):
     def st_sub(m):
         reg, d = m.group(1), int(m.group(2))
         return f'\tcall z_{reg}_st{d}\n' if (reg, 'st', d) in take else m.group(0)
+    # 'ld (i?+d),n' там, где A мёртв (метку ставит транслятор): те же 5 байт, но 136 тактов
+    # вместо 252 — вшитый хелпер уже есть, новых байт не появляется
+    SN = re.compile(r'(?m)^\tcall z_(ix|iy)_stn\n\tdb (\d+)\n\tdb (.*?)\t; A мёртв\n')
+    def sn_sub(m):
+        reg, d, n = m.group(1), int(m.group(2)), m.group(3)
+        return f'\tld a,{n}\n\tcall z_{reg}_st{d}\n' if (reg, 'st', d) in take else m.group(0)
     for f, t in texts.items():
-        t2 = ST.sub(st_sub, RD.sub(rd_sub, t))
+        t2 = SN.sub(sn_sub, ST.sub(st_sub, RD.sub(rd_sub, t)))
+        t2 = t2.replace('\t; A мёртв\n', '\n')
         if t2 != t: f.write_text(t2)
     out = ['\n; --- хелперы (i?+d) со вшитым смещением (сгенерированы build_vec.py) ---\n']
     for reg, kind, d in sorted(take):

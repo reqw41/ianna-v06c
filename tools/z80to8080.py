@@ -470,7 +470,9 @@ class Translator:
                 dv=inl('stn',d,reg)
                 if dv is not None:
                     return seq(["push hl"]+idx_prep(reg,dv)+[f"ld (hl),{norm_expr(src)}","pop hl"],'ix_st_n_inl')
-                return seq([f"call {rz}_stn", f"db {d}", f"db {norm_expr(src)}"], 'ix_st_n')
+                # метка «A мёртв» — build_vec.per_offset_helpers превращает такие площадки в
+                # 'ld a,n / call z_i?_st{d}' (те же 5 байт, 136 тактов против 252)
+                return seq([f"call {rz}_stn", f"db {d}", f"db {norm_expr(src)}"+("\t; A мёртв" if adead else '')], 'ix_st_n')
             # ld ix,nn / ld ix,(nn) / ld (nn),ix
             if a[0] in IDX:
                 rz='z_'+a[0]
