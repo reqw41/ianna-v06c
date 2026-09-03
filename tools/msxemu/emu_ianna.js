@@ -46,6 +46,14 @@ class MsxEmu {
   writeMem(addr, val) { this.m.bus.write(addr & 0xffff, val & 0xff); }
   // Вызвать подпрограмму игры: выставить регистры (regs: {A,DE,HL,...}), PC=addr,
   // прогнать тактами до возврата на sentinel. Возвращает true если вернулась.
+  // Вставить call addr в текущую точку игры (возврат туда, где стояли), не останавливая кадры/прерывания.
+  injectCall(addr, regs = {}) {
+    const cpu = this.m.cpu, bus = this.m.bus;
+    const st = cpu.saveState(); const sp = (st.SP - 2) & 0xffff;
+    bus.write(sp, st.PC & 0xff); bus.write((sp + 1) & 0xffff, (st.PC >> 8) & 0xff);
+    st.SP = sp; st.PC = addr; st.Tn = 0; st.ai = false; st.p = 0;
+    Object.assign(st, regs); cpu.loadState(st);
+  }
   callSub(addr, regs = {}, { sp = 0xf000, sentinel = 0xf200, maxCyc = 8000000 } = {}) {
     const cpu = this.m.cpu, bus = this.m.bus;
     bus.write(sentinel & 0xffff, 0x76);            // HALT на sentinel: RET сюда -> PC замрёт
@@ -53,6 +61,8 @@ class MsxEmu {
     bus.write((sp - 1) & 0xffff, (sentinel >> 8) & 0xff);
     bus.write((sp - 2) & 0xffff, sentinel & 0xff);
     st.SP = (sp - 2) & 0xffff; st.PC = addr; st.IFF1 = 0; st.IFF2 = 0;
+    // сброс конвейера Z80 WebMSX: иначе доисполнится уже выбранная инструкция (halt/jr) по новому PC
+    st.Tn = 0; st.ai = false; st.p = 0;
     Object.assign(st, regs);
     cpu.loadState(st);
     let c = 0;
