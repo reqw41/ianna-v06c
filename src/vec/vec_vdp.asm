@@ -1373,6 +1373,19 @@ drawSprite_pool:
 	jp nz,dsp_mirror
 	ld a,3
 	ld (vec_col_cnt),a
+	; Колонка спрайта меняется трижды, а сегментов на неё два: разбор vec_spr_cx (слот по x и
+	; смещение колонки внутри слота) вынесен из пролога сегмента в самомодифицируемые константы.
+	ld a,(vec_spr_cx)
+	rrca
+	and $0f
+	ld (dsp_sx+1),a
+	ld a,(vec_spr_cx)
+	and 1
+	rrca
+	rrca
+	rrca
+	rrca
+	ld (dsp_coff+1),a
 	di
 	ld hl,0
 	add hl,sp
@@ -1393,14 +1406,12 @@ dsp_col_go:
 	ld a,(vec_spr_ybot)
 	ld (vec_spr_row),a
 dsp_seg:
-	; слот и адрес сегмента
-	ld a,(vec_spr_cx)
-	rrca
-	and $0f
-	ld l,a
+	; слот и адрес сегмента (vec_spr_row читаем один раз в D, разбор cx — в константах ниже)
 	ld a,(vec_spr_row)
+	ld d,a
 	and $f0
-	or l
+dsp_sx:
+	or 0			; самомодификация (dsp_col_go/dsp_seg_end): (cx>>1)&15
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
@@ -1412,22 +1423,16 @@ dsp_seg:
 	ld a,l
 	and 1
 	rrca
-	ld l,a
-	ld a,(vec_spr_cx)
-	and 1
-	rlca
-	rlca
-	rlca
-	rlca
-	add a,l
-	ld l,a
-	ld a,(vec_spr_row)
+dsp_coff:
+	add a,0			; самомодификация: (cx&1)*16
+	ld e,a
+	ld a,d
 	and 15
-	add a,l
+	ld c,a
+	add a,e
 	ld l,a			; HL = адрес плоскости 0 нижней строки сегмента
 	; n = min(rows_left, (row&15)+1)
-	ld a,(vec_spr_row)
-	and 15
+	ld a,c
 	inc a
 	ld b,a
 	ld a,(vec_rows_left)
@@ -1526,9 +1531,14 @@ dsp_seg_end:
 	ld h,0
 	add hl,sp
 	ld sp,hl
-	ld a,(vec_spr_cx)
+	ld a,(dsp_coff+1)	; cx+1: смещение колонки переключается, слот по x растёт на нечётной cx
+	xor 16
+	ld (dsp_coff+1),a
+	jp nz,dsp_col_next
+	ld a,(dsp_sx+1)
 	inc a
-	ld (vec_spr_cx),a
+	ld (dsp_sx+1),a
+dsp_col_next:
 	ld a,(vec_col_cnt)
 	dec a
 	ld (vec_col_cnt),a
@@ -1546,6 +1556,18 @@ dsp_mirror:
 	ld (vec_spr_cx),a
 	ld a,3
 	ld (vec_col_cnt),a
+	; разбор cx — в самомодифицируемые константы пролога сегмента (см. drawSprite_pool)
+	ld a,(vec_spr_cx)
+	rrca
+	and $0f
+	ld (dspm_sx+1),a
+	ld a,(vec_spr_cx)
+	and 1
+	rrca
+	rrca
+	rrca
+	rrca
+	ld (dspm_coff+1),a
 	di
 	ld hl,0
 	add hl,sp
@@ -1566,13 +1588,11 @@ dspm_col_go:
 	ld a,(vec_spr_ybot)
 	ld (vec_spr_row),a
 dspm_seg:
-	ld a,(vec_spr_cx)
-	rrca
-	and $0f
-	ld l,a
 	ld a,(vec_spr_row)
+	ld d,a
 	and $f0
-	or l
+dspm_sx:
+	or 0			; самомодификация (dsp_mirror/dspm_seg_end): (cx>>1)&15
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
@@ -1584,21 +1604,15 @@ dspm_seg:
 	ld a,l
 	and 1
 	rrca
-	ld l,a
-	ld a,(vec_spr_cx)
-	and 1
-	rlca
-	rlca
-	rlca
-	rlca
-	add a,l
-	ld l,a
-	ld a,(vec_spr_row)
+dspm_coff:
+	add a,0			; самомодификация: (cx&1)*16
+	ld e,a
+	ld a,d
 	and 15
-	add a,l
+	ld c,a
+	add a,e
 	ld l,a			; HL = адрес плоскости 0 нижней строки сегмента
-	ld a,(vec_spr_row)
-	and 15
+	ld a,c
 	inc a
 	ld b,a
 	ld a,(vec_rows_left)
@@ -1718,9 +1732,14 @@ dspm_seg_end:
 	ld h,0
 	add hl,sp
 	ld sp,hl
-	ld a,(vec_spr_cx)
+	ld a,(dspm_coff+1)	; cx-1: смещение переключается, слот по x падает на чётной cx
+	xor 16
+	ld (dspm_coff+1),a
+	jp z,dspm_col_next
+	ld a,(dspm_sx+1)
 	dec a
-	ld (vec_spr_cx),a
+	ld (dspm_sx+1),a
+dspm_col_next:
 	ld a,(vec_col_cnt)
 	dec a
 	ld (vec_col_cnt),a
