@@ -118,6 +118,35 @@ OVERRIDES = {
     ('scripts.asm', 534): ['ld hl,(z_ix)', 'ld a,l', 'add a,10', 'ld l,a', 'jp nc,$+4', 'inc h',
                            'ld a,(hl)'],                                  # ld a,(ix+10)
 
+    # scripts.asm, check_stile_entity_overlap (1727..1751) — зовётся из десятка скриптов объектов
+    # каждый тик, десять обращений к (ix+d)/(iy+d) на вызов. Три наблюдения:
+    #  * HL функция и так не бережёт: внутри стоит call check_sprite_overlap, который его портит,
+    #    поэтому push hl/ex (sp),hl вокруг каждой строки лишние;
+    #  * IY здесь всегда simulatedsprite (строка 1730), значит (iy+3..6) — АБСОЛЮТНЫЕ адреса;
+    #  * (ix+6) и (ix+7) читаются подряд, между ними только add a,a и запись по абсолютному адресу,
+    #    так что указатель в HL доживает.
+    # A на строках 1743/1744 портится (там кладётся 2): между 1744 и call check_sprite_overlap
+    # A никто не читает — нативный check_sprite_overlap (src/vec/overlap_hot.asm) на входе сразу
+    # грузит B и A из полей записей. Флаги: pop/ld (nn),hl/ld (hl),r их не трогают, поэтому CY,
+    # который функция возвращает из check_sprite_overlap, доживает до ret (строка 1751).
+    ('scripts.asm', 1728): ['ld hl,(z_ix)', 'push hl'],                   # push ix
+    ('scripts.asm', 1729): ['ld hl,(z_iy)', 'push hl'],                   # push iy
+    ('scripts.asm', 1730): ['ld hl,simulatedsprite', 'ld (z_iy),hl'],     # ld iy,simulatedsprite
+    ('scripts.asm', 1731): ['ld hl,(z_ix)'] + ['inc hl']*6 + ['ld a,(hl)'],   # ld a,(ix+6)
+    ('scripts.asm', 1736): ['ld (simulatedsprite+3),a'],                  # ld (iy+3),a
+    ('scripts.asm', 1737): ['inc hl', 'ld a,(hl)'],                       # ld a,(ix+7); HL = z_ix+6
+    ('scripts.asm', 1742): ['ld (simulatedsprite+4),a'],                  # ld (iy+4),a
+    ('scripts.asm', 1743): ['ld a,2', 'ld (simulatedsprite+5),a'],        # ld (iy+5),2
+    ('scripts.asm', 1744): ['ld (simulatedsprite+6),a'],                  # ld (iy+6),2
+    # снятый со стека указатель на сущность нужен тут же (строки 1746/1747), а z_ix всё равно
+    # перезаписывается строкой 1748 — промежуточное сохранение не нужно
+    ('scripts.asm', 1745): ['pop hl'],                                    # pop ix
+    ('scripts.asm', 1746): ['ld e,(hl)'],                                 # ld e,(ix+0)
+    ('scripts.asm', 1747): ['inc hl', 'ld d,(hl)'],                       # ld d,(ix+1)
+    ('scripts.asm', 1748): ['ld h,d', 'ld l,e', 'ld (z_ix),hl'],          # ld ixh,d / ld ixl,e
+    ('scripts.asm', 1749): [],
+    ('scripts.asm', 1751): ['pop hl', 'ld (z_ix),hl'],                    # pop ix (CY сохраняется)
+
     # drawsprite_src.asm, UpdateSprite (85..99) — вызывается на каждое движение любой сущности
     # (игрок + два врага + объекты), пять обращений к записи спрайта подряд. HL здесь занят новой
     # позицией в символах (строки 78/84), поэтому прячем его на стек, а запись адресуем одним
