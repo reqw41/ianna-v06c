@@ -59,6 +59,8 @@ vec_an_y:	db 0
 rit_cnt:	db 0		; RedrawInvTiles: счётчики обхода грязных прямоугольников
 rit_x0:		db 0
 rit_y:		db 0
+rit_mapl:	db 0		; RedrawInvTiles: младший байт текущего байта карты и маска бита (инкрементально по строке)
+rit_mask:	db 0
 rit_nx:		db 0
 rit_ny:		db 0
 rit_cx:		db 0

@@ -439,7 +439,7 @@ def build_menu_bins(lst):
             'vec_spr_dst', 'vec_b2_step', 'vec_stk_leave', 'rev256',
             'level_width', 'current_levelx', 'current_levely', 'z_ldir', 'vec_scrpal_addr',
             # для оверлея готовых тайлов (fgc_ovl.asm):
-            'drawTile', 'vec_pool_on', 'SPDATA', 'fg_tile_pairs', 'fg_lut_n', 'vec_budget', 'vec_blit_src',
+            'drawTile', 'drawTile_nosave', 'vec_pool_on', 'SPDATA', 'fg_tile_pairs', 'fg_lut_n', 'vec_budget', 'vec_blit_src',
             'vec_blit_ret', 'vec_blit128_vram']
     syms = {}
     for line in lst.split('\n'):

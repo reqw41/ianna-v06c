@@ -157,11 +157,11 @@ rit_clr:
 	inc l			; обе карты в одной странице (сторож build_vec)
 	dec b
 	jp nz,rit_clr
-	ld hl,DrawTile
+	ld hl,dt_rit		; вход с готовыми координатами (vec_vdp.asm)
 	ld a,RIT_MAP & $FF
 	jp rit_common
 RedrawInvTiles_FG:
-	ld hl,DrawFGTile
+	ld hl,dft_rit
 	ld a,RIT_MAPFG & $FF
 rit_common:
 	ld (rit_call+1),hl	; самомодификация: какой рисовальщик звать
@@ -188,15 +188,11 @@ rit_rect:
 rit_yl:
 	ld a,(rit_nx)
 	ld (rit_cx),a
-	ld a,(rit_x0)
-	ld b,a
-rit_xl:
+	; байт карты для (x0,y): RIT_MAP + y*2 + (x0>>3); маска 1<<(x0&7). Дальше по строке — инкрементально
 	ld a,(rit_y)
-	ld c,a
-	; бит (x,y) карты: байт RIT_MAP + y*2 + (x>>3), маска 1<<(x&7)
 	add a,a
 	ld l,a
-	ld a,b
+	ld a,(rit_x0)
 	rrca
 	rrca
 	rrca
@@ -204,9 +200,8 @@ rit_xl:
 	add a,l
 rit_mapp:
 	add a,0			; самомод: младший байт карты
-	ld l,a
-	ld h,RIT_MAP >> 8
-	ld a,b
+	ld (rit_mapl),a
+	ld a,(rit_x0)
 	and 7
 	inc a
 	ld e,a
@@ -215,19 +210,52 @@ rit_bit:
 	rlca
 	dec e
 	jp nz,rit_bit
+	ld (rit_mask),a
+	ld a,(rit_x0)
+	ld b,a
+rit_xl:
+	ld a,(rit_mapl)
+	ld l,a
+	ld h,RIT_MAP >> 8
+	ld a,(rit_mask)
 	ld e,a
 	and (hl)
 	jp nz,rit_skip		; уже нарисован в этом проходе
 	ld a,e
 	or (hl)
 	ld (hl),a
-	push bc			; B = x, C = y (оригинал: push bc; exx; pop bc; inc b; inc c; call; exx)
-	inc b
-	inc c
+	ld a,(rit_y)
+	ld c,a
+	push bc			; B = x, C = y (стайлы)
+	; вход dt_rit/dft_rit: HL = &CURRENT_SCREEN_MAP[y*16+x], B = X px, C = Y px
+	rlca
+	rlca
+	rlca
+	rlca
+	ld c,a			; y*16
+	add a,b
+	ld l,a
+	ld h,0
+	ld de,CURRENT_SCREEN_MAP
+	add hl,de
+	ld a,b
+	rlca
+	rlca
+	rlca
+	rlca
+	ld b,a			; x*16
 rit_call:
 	call 0
 	pop bc
 rit_skip:
+	ld a,(rit_mask)		; следующий x: маска влево, через бит 7 — следующий байт карты
+	rlca
+	ld (rit_mask),a
+	jp nc,rit_nx1
+	ld a,(rit_mapl)
+	inc a
+	ld (rit_mapl),a
+rit_nx1:
 	ld a,(rit_cx)
 	dec a
 	ld (rit_cx),a

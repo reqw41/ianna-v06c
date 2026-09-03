@@ -83,7 +83,7 @@ def in_h(p):
     return base_in(p)
 cpu.out_handler=out_h; cpu.in_handler=in_h
 FC=sym['FrameCounter']; AT=sym['animate_tile']; SC=sym['SaveCheckpoint']
-DSCR=sym.get('DrawScreen',-1); VBW=sym.get('vbg_wait',-1); bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
+DSCR=sym.get('DrawScreen',-1); VBW=sym.get('vbg_wait',-1); DTW=sym.get('dtd_wait',-2);   # ожидания кадра: общий vec_budget и вписанный в dt_direct bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
 delivered=0; lost=0; lost_at=collections.Counter(); next_irq=FRAME; started=False
 def run(nframes):
     global delivered,lost,next_irq,started
@@ -145,7 +145,7 @@ for seg in ROUTE.split(','):
             if FIXRAND: ntick[0]+=1; mem[sym['FrameCounter']]=ntick[0]&0xFF; mem[sym['FrameCounter']+1]=0
         if cpu.halted: idle+=next_irq-cyc[0]; cyc[0]=next_irq
         else:
-            if cpu.pc==VBW:
+            if cpu.pc==VBW or cpu.pc==DTW:
                 bh_n[0]+=1
                 if BHIST:
                     cost=cpu.l; phase=(cpu.a-cost)&0xFF

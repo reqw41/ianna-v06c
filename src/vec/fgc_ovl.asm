@@ -186,7 +186,7 @@ fgc_under:
 	pop hl
 fgc_plain:
 	ld a,(hl)
-	jp drawTile
+	jp drawTile_nosave	; вызывающие (обход rit, DrawScreen) регистры сохраняют сами
 fgc_plain2:
 	pop hl
 	jp fgc_plain

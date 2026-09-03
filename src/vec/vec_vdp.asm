@@ -499,12 +499,33 @@ vsp_cp:
 	ret
     endif
 ; ---------------------------------------------------------------------------
-; drawTile: A = тайл, B = X px, C = Y px
+; drawTile: A = тайл, B = X px, C = Y px. Обёртка с сохранением регистров — для панели инвентаря и
+; DrawTile из DrawScreen; горячий путь (обход RedrawInvTiles) идёт через dt_rit -> drawTile_nosave.
 drawTile:
 	push hl
 	push de
-	push bc		; push af / pop af между ними были мёртвой парой (24 такта): бюджет
-			; давно ушёл ниже, в dt_direct и в путь пула
+	push bc
+	call drawTile_nosave
+	pop bc
+	pop de
+	pop hl
+	ret
+; dt_rit / dft_rit — вход из обхода грязных прямоугольников (overlap_hot.asm): HL = &CURRENT_SCREEN_MAP[y*16+x],
+; B = X px, C = Y px; ряды >= 10 обход не даёт (InvalidateSTiles режет высоту). Регистры не сохраняются.
+dt_rit:
+	ld a,(fgc_on)		; готовые тайлы фон+FG (оверлей в наборе уровня, см. fgc_ovl.asm)
+	or a
+	jp nz,FGC_ENTRY
+	ld a,(hl)
+	jp drawTile_nosave
+dft_rit:
+	ld de,160		; CURRENT_SCREEN_MAP_FG = CURRENT_SCREEN_MAP + 160
+	add hl,de
+	ld a,(hl)
+	or a
+	ret z
+	jp drawFGTile
+drawTile_nosave:
     if DEMO
 	ld l,a
 	ld h,demo_tile_lut/256
@@ -566,9 +587,31 @@ dtb_loop:
 	jp dt_end
     endif
 dt_direct:
-	ld a,19 - C8*3		; бюджет DI: тайл прямо в VRAM. calib по ОКНУ DI (blitcalib): было 16.5 ед.
-				; при цене 22, после разворота блита 13.3 — цена 19 держит тот же запас 5.5
+	; бюджет DI: тайл прямо в VRAM, цена 19 (calib по ОКНУ DI, blitcalib: 13.3 ед. + запас 5.5).
+	; Проверка вписана сюда: call/ret и push/pop hl в vec_budget стоили 48 тактов на каждый стайл
+    if VI53
+	ld l,19 - C8*3
+dtd_bud:
+	xor a
+	out ($08),a		; латч счётчика 0 ВИ53
+	in a,($0B)
+	in a,($0B)
+	cpl
+	add a,a			; фаза в ед. 256 тактов
+	jp c,dtd_wait
+	add a,l
+	jp c,dtd_wait
+	cp VEC_BUDGET_LIMIT
+	jp c,dtd_ok
+dtd_wait:			; стенд (measure_vec) считает ожидания и по этой метке
+	halt
+	jp dtd_bud
+dtd_ok:
+	ld (vec_bud_used),a
+    else
+	ld a,19 - C8*3
 	call vec_budget
+    endif
 	ld a,b
 	rrca
 	rrca
@@ -598,9 +641,6 @@ dt_end:
 	ld hl,(vec_sp_save)
 	ld sp,hl
 	ei
-	pop bc
-	pop de
-	pop hl
 	ret
 
 ; ---------------------------------------------------------------------------
