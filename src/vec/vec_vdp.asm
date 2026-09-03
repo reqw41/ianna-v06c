@@ -154,15 +154,12 @@ vec_pool_addr:
 ; ---------------------------------------------------------------------------
 ; Общий стековый блит 128 Б «формат тайла» -> VRAM: SP уже установлен, порт выведен,
 ; D = H колонки 0 плоскости 0, E = L верхней строки. Возврат: jp (vec_blit_ret).
-vec_blit128_vram:		; C8: 96 Б (3 плоскости)
-	ld a,VEC_NPL
-	ld (vec_plane_cnt),a
-vb_plane:
-	ld h,d
-	ld l,e
-	ld a,2
-	ld (vec_col_cnt),a
-vb_col:
+; Развёрнут ПОЛНОСТЬЮ: счётчики колонки и плоскости жили в ПАМЯТИ и стоили 64 такта на колонку
+; (ld a,(nn) 16 + dec 8 + ld (nn),a 16 + jp 16) при 352 тактах полезной работы — 8 колонок тайла
+; платили 512 тактов ни за что. Регистры все заняты (BC — данные, HL — приёмник, E — верхняя
+; строка, SP — источник), поэтому счётчик убран вовсе: переходы колонки и плоскости — арифметика
+; над H. Цена: +264 байта ROM, -820 тактов на каждый блит 128 Б.
+VBCOL		macro		; колонка 16 Б: L = E .. E-15, на выходе H+1, L = E-15
 	pop bc
 	ld (hl),c
 	dec l
@@ -203,18 +200,35 @@ vb_col:
 	dec l
 	ld (hl),b
 	inc h
+	endm
+VBPLANE		macro		; после колонки 1 H = база+2, следующая плоскость = база+$20
+	ld a,h
+	add a,$1e
+	ld h,a
 	ld l,e
-	ld a,(vec_col_cnt)
-	dec a
-	ld (vec_col_cnt),a
-	jp nz,vb_col
-	ld a,d
-	add a,$20
-	ld d,a
-	ld a,(vec_plane_cnt)
-	dec a
-	ld (vec_plane_cnt),a
-	jp nz,vb_plane
+	endm
+
+vec_blit128_vram:		; C8: 96 Б (3 плоскости)
+	ld h,d
+	ld l,e
+vb_col:				; метка для профиля (tools/blit_model.py): всё развёрнутое тело
+	VBCOL			; плоскость 0, колонка 0
+	ld l,e
+	VBCOL			; плоскость 0, колонка 1 (тело кончается inc h)
+	VBPLANE			; H += $1E: следующая плоскость, колонка 0
+	VBCOL
+	ld l,e
+	VBCOL
+	VBPLANE
+	VBCOL
+	ld l,e
+	VBCOL
+    if !C8
+	VBPLANE
+	VBCOL
+	ld l,e
+	VBCOL
+    endif
 	ld hl,(vec_blit_ret)
 	jp (hl)
 
