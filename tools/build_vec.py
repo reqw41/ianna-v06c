@@ -141,25 +141,10 @@ def make_music():
     old2 = '\tld bc, 0\n\tcall atSfxPlay\n'; assert mu.count(old2) == 1, 'FX_Play: call atSfxPlay'
     mu = mu.replace(old2, '\tld bc, 0\n\tcall atSfxPlay\n\tpop af\t\t\t; ВЕКТОР: вернуть прежнюю страницу окна\n\tcall setROM2\n')
     (TR / 'music_src.asm').write_text(mu)
-    pl = (SRC / 'ArkosTrackerPlayer_CPC_MSX.asm').read_text(encoding='utf-8', errors='replace')
-    pl = pl.replace('org $DDCC', '; ВЕКТОР: org снят — плеер на месте в коде')
-    pl = pl.replace('out (#a0),a', 'out ($15),a\t; AY Вектора: выбор регистра').replace('out (#a1),a', 'out ($14),a\t; AY Вектора: данные')
-    assert 'out (#a' not in pl
-    # ВЕКТОР: горячая часть плеера (Play Sound по каналам + _atPlaySound) — нативный i8080 (src/vec/arkos_hot.asm)
-    hot = (VEC / 'arkos_hot.asm').read_text(encoding='utf-8')
-    hot1, hot2 = hot.split(';;;SPLIT;;;\n')
-    L = pl.split('\n')
-    def find(pred, start=0):
-        for i in range(start, len(L)):
-            if pred(L[i]): return i
-        raise SystemExit('arkos: маркер не найден')
-    a = find(lambda l: 'Play Sound on Track 3' in l)
-    b = find(lambda l: 'Update AY3 Registers (platform specific)' in l, a)
-    c = find(lambda l: l.startswith('_atPlaySound'), b)
-    d = find(lambda l: '; Read Track.' in l, c)
-    assert 'atCNF_SFX\tequ 1' in pl
-    pl = '\n'.join(L[:a] + hot1.split('\n') + L[b:c] + hot2.split('\n') + L[d:])
-    (TR / 'arkos_src.asm').write_text(pl)
+    # ВЕКТОР: плеер Arkos — НЕ перевод Z80-исходника, а нативный i8080 (src/vec/arkos_hot.asm),
+    # написанный по спецификации tools/arkos_model.py. Оригинал ref/msx2/src/ArkosTrackerPlayer_CPC_MSX.asm
+    # остался только эталоном: по нему сверяются гейты tests/music/check_all.py и сама модель.
+    (TR / 'arkos.asm').write_text((VEC / 'arkos_hot.asm').read_text(encoding='utf-8'))
 
 def make_vars():
     text = (SRC / 'vars.asm').read_text(encoding='utf-8', errors='replace')
@@ -352,7 +337,6 @@ def main():
     translate(TR / 'font_src.asm', TR / 'font.asm')
     if not DEMO:
         translate(TR / 'music_src.asm', TR / 'music.asm')
-        translate(TR / 'arkos_src.asm', TR / 'arkos.asm')
     translate(TR / 'vars_src.asm', TR / 'vars.asm')
     data = ROOT / ('build/demo_data.asm' if DEMO else 'build/gen_data.asm')
     if not DEMO and data.exists():
