@@ -910,7 +910,7 @@ dft_exit:
 ; Кадр 384 Б: for col 0..2: for row 31..0: [p0,p1,p2,p3]; маска на лету.
 drawSprite:
 	push af
-	ld a,10 + C8*2		; накладные DrawSpriteList/пролога спрайта: 16ц 9.8 / c8 11.8 ед. (calib)
+	ld a,13 + C8*2		; накладные DrawSpriteList/пролога спрайта: окно DI 11.7 медиана, 12.5 макс (blitcalib 2026-09-04; цена 10 была занижена и ела запас VEC_BUDGET_LIMIT)
 	call vec_budget
 	pop af
 	push af
