@@ -2,7 +2,7 @@
 import sys, re, bisect, collections, json
 sys.path.insert(0,'/Users/boris/projects/knightmare-v06c/tools')
 from emu8080 import I8080
-src=open('../../tools/profile_vec.py').read(); i=src.index('CYC=[4]*256'); j=src.index('keys = []'); exec(src[i:j])
+src=open('../../tools/profile_vec.py').read(); i=src.index('# Такты ВЕКТОРА'); j=src.index('keys = []'); exec(src[i:j])
 syms={}
 for line in open('i8080_drv.lst',encoding='utf-8',errors='replace'):
     m=re.match(r'([0-9A-F]{4}):\s.*?\s([A-Za-z_][A-Za-z_0-9.]*):',line)
