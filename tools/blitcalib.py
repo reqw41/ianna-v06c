@@ -32,23 +32,32 @@ keys.append('right')
 
 BUD = sym['vec_budget']; RS = sym['RunScripts']; FC = sym['FrameCounter']
 mem = cpu.mem; step = cpu.step; cyc = 0; ticks = 0
-prev = None                      # (цена, такты на входе)
+prev = None                      # (цена, такты на входе) — интервал до следующей проверки
+di = None                        # (цена, такты) — окно DI до ближайшего ei
 stat = collections.defaultdict(list)
+statdi = collections.defaultdict(list)
 while ticks < N:
     while not cpu.halted:
-        pc = cpu.pc
+        pc = cpu.pc; op = mem[pc] if pc < 0x8000 else cpu.rb(pc)
         if pc == BUD:
             if prev is not None: stat[prev[0]].append((cyc - prev[1]) / 256)
-            prev = (cpu.a, cyc)
+            prev = (cpu.a, cyc); di = (cpu.a, cyc)
+        elif op == 0xFB and di is not None:      # ei: DI-окно закрылось
+            statdi[di[0]].append((cyc - di[1]) / 256); di = None
         if pc == RS: ticks += 1; mem[FC] = ticks & 0xFF
-        cyc += CYC[mem[pc] if pc < 0x8000 else cpu.rb(pc)]
+        cyc += CYC[op]
         step()
     cpu.halted = False
     if cpu.ie: cpu.ie = False; cpu.push(cpu.pc); cpu.pc = 0x38
-print(f'сцена {ST}, {N} тиков. Цена -> реально потрачено до следующей проверки (ед. 256 тактов):')
-print(f'{"цена":>5s} {"вызовов":>8s} {"медиана":>8s} {"p90":>6s} {"макс":>6s}  вердикт')
-for c, v in sorted(stat.items()):
-    v.sort(); n = len(v)
-    med, p90, mx = v[n // 2], v[int(n * .9)], v[-1]
-    verdict = 'ЗАНИЖЕНА' if p90 > c else ('завышена' if p90 < c - 2 else 'в норме')
-    print(f'{c:5d} {n:8d} {med:8.1f} {p90:6.1f} {mx:6.1f}  {verdict}')
+print(f'сцена {ST}, {N} тиков (ед. 256 тактов).')
+print('«интервал» — до следующей проверки бюджета (так калибровали раньше; включает время с EI,')
+print('которое прерыванию не мешает); «окно DI» — от проверки до ближайшего ei, ИМЕННО ОНО и рискует')
+print('накрыть обратный ход. Цена обязана покрывать окно DI, а хвост с EI — только повод для halt.')
+print(f'{"цена":>5s} {"вызовов":>8s} | {"интервал: медиана":>17s} {"p90":>6s} {"макс":>7s} | '
+      f'{"окно DI: медиана":>16s} {"p90":>6s} {"макс":>6s}  вердикт')
+for c in sorted(set(stat) | set(statdi)):
+    v = sorted(stat.get(c, [0])); d = sorted(statdi.get(c, [0])); n = len(v); m = len(d)
+    p90d, mxd = d[int(m * .9)], d[-1]
+    verdict = 'ЗАНИЖЕНА' if mxd > c else ('завышена' if p90d < c - 3 else 'в норме')
+    print(f'{c:5d} {n:8d} | {v[n//2]:17.1f} {v[int(n*.9)]:6.1f} {v[-1]:7.1f} | '
+          f'{d[m//2]:16.1f} {p90d:6.1f} {mxd:6.1f}  {verdict}')

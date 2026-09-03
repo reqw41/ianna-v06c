@@ -201,6 +201,48 @@ VBCOL		macro		; колонка 16 Б: L = E .. E-15, на выходе H+1, L = 
 	ld (hl),b
 	inc h
 	endm
+DTB16		macro		; 16 Б в слот пула по возрастанию
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	pop bc
+	ld (hl),c
+	inc hl
+	ld (hl),b
+	inc hl
+	endm
 VBPLANE		macro		; после колонки 1 H = база+2, следующая плоскость = база+$20
 	ld a,h
 	add a,$1e
@@ -461,9 +503,8 @@ vsp_cp:
 drawTile:
 	push hl
 	push de
-	push bc
-	push af
-	pop af
+	push bc		; push af / pop af между ними были мёртвой парой (24 такта): бюджет
+			; давно ушёл ниже, в dt_direct и в путь пула
     if DEMO
 	ld l,a
 	ld h,demo_tile_lut/256
@@ -509,52 +550,17 @@ dt_a0:
 	ld a,KV_POOL_WIN|KV_STK_P0
 	out (KV_PORT),a
 	ex de,hl		; HL = dest
-	ld a,8 - C8*2		; C8: 96 Б = 6 итераций по 16
-	ld (vec_row_cnt),a
+	ld a,8 - C8*2		; C8: 96 Б = 6 порций по 16 Б; счётчик — в A
 dtb_loop:
-	pop bc
-	ld (hl),c
-	inc hl
-	ld (hl),b
-	inc hl
-	pop bc
-	ld (hl),c
-	inc hl
-	ld (hl),b
-	inc hl
-	pop bc
-	ld (hl),c
-	inc hl
-	ld (hl),b
-	inc hl
-	pop bc
-	ld (hl),c
-	inc hl
-	ld (hl),b
-	inc hl
-	pop bc
-	ld (hl),c
-	inc hl
-	ld (hl),b
-	inc hl
-	pop bc
-	ld (hl),c
-	inc hl
-	ld (hl),b
-	inc hl
-	pop bc
-	ld (hl),c
-	inc hl
-	ld (hl),b
-	inc hl
-	pop bc
-	ld (hl),c
-	inc hl
-	ld (hl),b
-	inc hl
-	ld a,(vec_row_cnt)
-	dec a
-	ld (vec_row_cnt),a
+	DTB16			; развёрнуто: счётчик в памяти стоил 56 тактов на 16 байт при 352 тактах
+	DTB16			; работы; A в теле не жив, счётчик переехал в него
+    if !C8
+	DTB16
+	DTB16
+	sub 4			; 8 порций по 16 Б = 2 прохода
+    else
+	sub 2			; C8: 96 Б = 6 порций = 3 прохода
+    endif
 	jp nz,dtb_loop
 	jp dt_end
     endif

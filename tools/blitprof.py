@@ -16,7 +16,9 @@ src=open('tools/profile_vec.py').read(); i=src.index('# Такты ВЕКТОР�
 rv.STEP_BUDGET=400000
 syms={}
 for line in open(LST,encoding='utf-8',errors='replace'):
-    m=re.match(r'([0-9A-F]{4}):\s.*?\s([A-Za-z_][A-Za-z_0-9.]*):',line)
+    # СТРОГО: метка идёт сразу за адресом (только пробелы). Свободная регулярка ловит слова с
+    # двоеточием из КОММЕНТАРИЕВ («SPR3CLR: плоскость 3 только чистим») и вешает на них чужие такты.
+    m=re.match(r'([0-9A-F]{4}):\s+([A-Za-z_][A-Za-z_0-9.]*):',line)
     if m: syms.setdefault(int(m.group(1),16),m.group(2))
 addrs=sorted(syms); names=[syms[a] for a in addrs]
 lab={a:syms[a] for a in addrs}
