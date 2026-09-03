@@ -363,8 +363,10 @@ def main():
             if 'vars наверху ОЗУ' in line: break
             mm = re.match(r'^([0-9A-F]{4}): ([0-9A-F]+)\s', line)     # байты в листинге без пробелов
             if mm: code_end = max(code_end, int(mm.group(1), 16) + len(mm.group(2)) // 2)
-        assert code_end <= VARS_ADDR, f'код до ${code_end:04X} НАЕХАЛ на переменные ${VARS_ADDR:04X}'
-        print(f'код до ${code_end-1:04X} включительно, переменные с ${VARS_ADDR:04X} (зазор {VARS_ADDR-code_end} Б)')
+        RIT_MAP = VARS_ADDR - 40      # карты «уже нарисован» RedrawInvTiles (overlap_hot.asm) — в зазоре перед переменными
+        assert RIT_MAP >> 8 == (VARS_ADDR - 1) >> 8, 'RIT_MAP пересекает границу страницы (обход inc l)'
+        assert code_end <= RIT_MAP, f'код до ${code_end:04X} НАЕХАЛ на карты RedrawInvTiles ${RIT_MAP:04X} (переменные ${VARS_ADDR:04X})'
+        print(f'код до ${code_end-1:04X} включительно, карты RIT с ${RIT_MAP:04X}, переменные с ${VARS_ADDR:04X} (зазор {RIT_MAP-code_end} Б)')
         m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'
         print(f'OK: build/{name}.rom {size} Б, конец = ${0x100+size:04X} (граница VRAM $8000, свободно {0x8000-0x100-size} Б)')

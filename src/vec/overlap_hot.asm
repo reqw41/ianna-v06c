@@ -142,13 +142,30 @@ an_check:			; AnimStile_CheckSprites(B = x0, C = y, D = 2*длина симво�
 
 ; RedrawInvTiles / RedrawInvTiles_FG — ВЕКТОР, нативно: обход грязных прямоугольников без exx
 ; (в переводе два z_exx ≈ 700 тактов на тайл). DrawTile/DrawFGTile — как в оригинале (B = x+1, C = y+1).
+; Дедупликация: грязные прямоугольники старого и нового положения спрайта перекрываются (на сцене
+; голема треть супертайлов рисовалась дважды за тик). Битовая карта 16x10 «уже нарисован» на проход:
+; RIT_MAP — фон, RIT_MAP+20 — передний слой; обе чистит фоновый проход (FG идёт следом по тому же
+; списку). Карты лежат в зазоре между кодом и переменными (сторож build_vec считает зазор до них).
+RIT_MAP	equ string_area-40
+RIT_MAPFG	equ RIT_MAP+20
 RedrawInvTiles:
+	ld hl,RIT_MAP
+	ld b,40
+	xor a
+rit_clr:
+	ld (hl),a
+	inc l			; обе карты в одной странице (сторож build_vec)
+	dec b
+	jp nz,rit_clr
 	ld hl,DrawTile
+	ld a,RIT_MAP & $FF
 	jp rit_common
 RedrawInvTiles_FG:
 	ld hl,DrawFGTile
+	ld a,RIT_MAPFG & $FF
 rit_common:
 	ld (rit_call+1),hl	; самомодификация: какой рисовальщик звать
+	ld (rit_mapp+1),a	; и какая карта
 	ld a,(ndirtyrects)
 	or a
 	ret z
@@ -176,12 +193,41 @@ rit_yl:
 rit_xl:
 	ld a,(rit_y)
 	ld c,a
+	; бит (x,y) карты: байт RIT_MAP + y*2 + (x>>3), маска 1<<(x&7)
+	add a,a
+	ld l,a
+	ld a,b
+	rrca
+	rrca
+	rrca
+	and 1
+	add a,l
+rit_mapp:
+	add a,0			; самомод: младший байт карты
+	ld l,a
+	ld h,RIT_MAP >> 8
+	ld a,b
+	and 7
+	inc a
+	ld e,a
+	ld a,$80
+rit_bit:
+	rlca
+	dec e
+	jp nz,rit_bit
+	ld e,a
+	and (hl)
+	jp nz,rit_skip		; уже нарисован в этом проходе
+	ld a,e
+	or (hl)
+	ld (hl),a
 	push bc			; B = x, C = y (оригинал: push bc; exx; pop bc; inc b; inc c; call; exx)
 	inc b
 	inc c
 rit_call:
 	call 0
 	pop bc
+rit_skip:
 	ld a,(rit_cx)
 	dec a
 	ld (rit_cx),a

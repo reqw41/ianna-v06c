@@ -20,6 +20,9 @@ OPTS=[a for a in sys.argv[1:] if a.startswith('--')]
 A=[a for a in sys.argv[1:] if not a.startswith('--')]
 ROM,LST,EDD,ST,N=A[0],A[1],A[2],A[3],int(A[4]); NORAND='--norand' in OPTS; FIXRAND='--fixrand' in OPTS
 os.environ['IANNA_EDD']=EDD
+if 'demo' in pathlib.Path(ROM).name:
+    sys.exit('ОТКАЗ: демо-ROM не применяет стартовый экран X,Y и не несёт врагов — все «сцены» на нём одна и та же '
+             'пустая сцена (найдено 2026-09-03). Сверять только build/ianna.rom + build/ianna_vec.lst + набор того же коммита.')
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 rv.STEP_BUDGET=400000
 sym=rv.load_syms(pathlib.Path(LST))
