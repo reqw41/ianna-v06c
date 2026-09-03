@@ -8,6 +8,16 @@
 vec_blit2:			; вход как у ds_direct: vec_spr_src, vec_spr_hcol, vec_spr_lbot, vec_spr_ny
 	ld a,38			; цена колонки: 107 ед. на три колонки по 32 строки (blitcost) + запас
 	ld (vec_spr_colcost),a
+	; Конец колонки по L, а не по счётчику в памяти: L растёт на строку, колонка кончается на
+	; lbot+NY (оба поля постоянны на весь спрайт, L не переполняется: lbot+NY = 224-y <= 224).
+	; Счётчик в памяти стоил 40 тактов на строку (ld a,(nn) 16 + dec 8 + ld (nn),a 16), свободных
+	; регистров в теле нет (BC/DE — данные двух строк, HL — приёмник, SP — источник), поэтому
+	; предел вшивается в сам `cp` — самомодификация, как в rit_call обхода грязных тайлов.
+	ld a,(vec_spr_lbot)
+	ld hl,vec_spr_ny
+	add a,(hl)
+	ld (b2_endA+1),a
+	ld (b2_endB+1),a
 	di
 	ld hl,0
 	add hl,sp
@@ -27,9 +37,7 @@ b2_col:
 	ld a,(vec_spr_hcol)
 	ld h,a
 	ld a,(vec_spr_lbot)
-	ld l,a
-	ld a,(vec_spr_ny)
-	ld (vec_row_cnt),a
+	ld l,a			; счётчик строк не нужен: колонка кончается по L (b2_endA/b2_endB)
 b2_row:
 	pop bc			; C = плоскость 0 строки A, B = её маска
 	pop de			; E = плоскость 1 строки A, D = плоскость 0 строки B
@@ -60,9 +68,9 @@ b2_row:
 	sub $60
 	ld h,a
 	inc l
-	ld a,(vec_row_cnt)
-	dec a
-	ld (vec_row_cnt),a
+	ld a,l
+b2_endA:
+	cp 0			; самомодификация: lbot + NY
 	jp z,b2_col_end
 	pop bc			; C = маска строки B, B = её плоскость 1
 	ld a,c
@@ -92,9 +100,9 @@ b2_row:
 	sub $60
 	ld h,a
 	inc l
-	ld a,(vec_row_cnt)
-	dec a
-	ld (vec_row_cnt),a
+	ld a,l
+b2_endB:
+	cp 0			; самомодификация: lbot + NY
 	jp nz,b2_row
 b2_col_end:
 	ld a,(vec_spr_skip2)	; хвост колонки: (32-NY)*3 байта

@@ -1009,6 +1009,15 @@ ds_dir4:
     endif
 	or a
 	jp nz,drawSprite_mirror
+	; Конец колонки — по L, а не по счётчику в памяти (40 тактов на строку): L растёт на строку,
+	; колонка кончается на lbot+NY (постоянно на весь спрайт, переполнения нет: = 224-y <= 224).
+	; Свободных регистров в теле нет, поэтому предел вшит в сам `cp` (самомодификация — как
+	; rit_call в обходе грязных тайлов). Он же даёт «осталось строк» для пропуска: end - L.
+	ld a,(vec_spr_lbot)
+	ld hl,vec_spr_ny
+	add a,(hl)
+	ld (ds_end+1),a
+	ld (ds_rem+1),a
 	di
 	ld hl,0
 	add hl,sp
@@ -1027,9 +1036,7 @@ ds_col_go:
 	ld a,(vec_spr_hcol)
 	ld h,a
 	ld a,(vec_spr_lbot)
-	ld l,a
-	ld a,(vec_spr_ny)
-	ld (vec_row_cnt),a
+	ld l,a			; счётчик строк не нужен: колонка кончается по L (ds_end)
 ds_row:
 	pop bc			; C = p0, B = маска (готовая)
 	pop de			; E = p1, D = p2
@@ -1072,15 +1079,16 @@ ds_row:
 	ld h,a
     endif
 	inc l
-	ld a,(vec_row_cnt)
-	dec a
-	ld (vec_row_cnt),a
+	ld a,l
+ds_end:
+	cp 0			; самомодификация: lbot + NY
 	jp z,ds_col_end
-	ld e,a			; осталось строк
 	ld a,d			; пропуск: k = min(пропуск, осталось-1)
 	or a
 	jp z,ds_row
-	ld a,e
+ds_rem:
+	ld a,0			; самомодификация: lbot + NY
+	sub l			; осталось строк
 	dec a
 	jp z,ds_row
 	cp d
@@ -1088,11 +1096,7 @@ ds_row:
 	ld a,d
 ds_k:
 	ld d,a
-	ld a,e
-	sub d
-	ld (vec_row_cnt),a
-	ld a,l
-	add a,d
+	add a,l
 	ld l,a			; k строк вверх
 	ld (vec_spr_p01),hl
 	ld a,d
@@ -1386,8 +1390,10 @@ dsp_seg:
 	jp nc,dsp_n_ok
 	ld b,a
 dsp_n_ok:
-	ld a,b
-	ld (vec_seg_cnt),a
+	ld a,l			; конец сегмента по L (в пуле строка = -1): счётчик строк в памяти
+	sub b			; стоил 40 тактов на строку, свободных регистров в теле нет — предел
+	ld (dsp_end+1),a	; вшит в сам `cp` (самомодификация, как rit_call в обходе тайлов)
+	ld (dsp_rem+1),a
 	ld a,(vec_rows_left)
 	sub b
 	ld (vec_rows_left),a
@@ -1446,16 +1452,16 @@ dsp_row:
 	ld a,l
 	sub 96+1		; назад на плоскость 0 и строкой выше
     endif
-	ld l,a
-	ld a,(vec_seg_cnt)
-	dec a
-	ld (vec_seg_cnt),a
+	ld l,a			; A уже равен новому L
+dsp_end:
+	cp 0			; самомодификация: L конца сегмента
 	jp z,dsp_seg_end
-	ld e,a			; осталось строк в сегменте
 	ld a,d
 	or a
 	jp z,dsp_row
-	ld a,e
+	ld a,l			; осталось строк = L - конец
+dsp_rem:
+	sub 0			; самомодификация: L конца сегмента
 	dec a
 	jp z,dsp_row
 	cp d
@@ -1463,9 +1469,6 @@ dsp_row:
 	ld a,d
 dsp_k:
 	ld d,a
-	ld a,e
-	sub d
-	ld (vec_seg_cnt),a
 	ld a,l
 	sub d
 	ld l,a			; k строк вверх (в пуле строка = -1)
@@ -1563,8 +1566,10 @@ dspm_seg:
 	jp nc,dspm_n_ok
 	ld b,a
 dspm_n_ok:
-	ld a,b
-	ld (vec_seg_cnt),a
+	ld a,e			; конец сегмента по L (в пуле строка = -1), см. dsp_n_ok.
+	sub b			; ВНИМАНИЕ: здесь адрес в DE (ex de,hl выше), а не в HL
+	ld (dspm_end+1),a
+	ld (dspm_rem+1),a
 	ld a,(vec_rows_left)
 	sub b
 	ld (vec_rows_left),a
@@ -1658,16 +1663,17 @@ dspm_row:
 	or e
 	ld (hl),a
 	dec l			; строкой выше
-	ex de,hl
-	ld a,(vec_seg_cnt)
-	dec a
-	ld (vec_seg_cnt),a
+	ex de,hl		; DE = адрес в пуле, E = новый L
+	ld a,e
+dspm_end:
+	cp 0			; самомодификация: L конца сегмента
 	jp z,dspm_seg_end
-	ld c,a
-	ld a,b
+	ld a,b			; пропуск
 	or a
 	jp z,dspm_row
-	ld a,c
+	ld a,e			; осталось строк = L - конец
+dspm_rem:
+	sub 0			; самомодификация: L конца сегмента
 	dec a
 	jp z,dspm_row
 	cp b
@@ -1675,9 +1681,6 @@ dspm_row:
 	ld a,b
 dspm_k:
 	ld b,a
-	ld a,c
-	sub b
-	ld (vec_seg_cnt),a
 	ld a,e
 	sub b
 	ld e,a			; k строк вверх
