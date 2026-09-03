@@ -1042,7 +1042,7 @@ ds_direct:
 	jp z,vec_blit2
 	ld a,150		; зеркальный: 146 ед. на 32 строки (blitcost), одной проверкой — бюджета по колонкам в нём нет
 	call vec_budget
-	jp vec_blit2m
+	jp ZP_BLIT2M		; зеркальный прямой блит — в нулевой странице (zp_blit2m.asm)
 ds_dir4:
 	ld a,(vec_spr_dir)
     if NOMIRROR

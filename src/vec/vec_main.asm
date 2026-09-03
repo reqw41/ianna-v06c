@@ -140,6 +140,10 @@ vec_load_leveltab:
 	ld de,vec_palette
 	ld bc,LEVELTAB_LEN
 	call z_ldir
+	ld hl,ZPSRC		; зеркальный двухплоскостной блит -> нулевая страница (zp_blit2m.asm)
+	ld de,ZP_BLIT2M
+	ld bc,ZP_LEN
+	call z_ldir
 	xor a
 	out (KV_PORT),a
 	ld (vec_kv_shadow),a

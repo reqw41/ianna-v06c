@@ -994,6 +994,11 @@ def build_kvaz(level_no=1, start=None):
             r = rom.read_bytes()
             off = 0x7E00 - 0x100               # ROM грузится с $0100
             pages[LEVELTAB_PAGE][FDDCOPY_ADDR:FDDCOPY_ADDR+512] = r[off:off+512]
+        zp = BUILD / 'zp.bin'                     # зеркальный двухплоскостной блит для нулевой страницы
+        if zp.exists():
+            zb = zp.read_bytes(); assert len(zb) <= 0x100 - 0x3B
+            assert all(v == 0 for v in pages[LEVELTAB_PAGE][BLIT2_ADDR:BLIT2_ADDR+len(zb)]), 'место под zp.bin занято'
+            pages[LEVELTAB_PAGE][BLIT2_ADDR:BLIT2_ADDR+len(zb)] = zb
     assert all(len(p) == 65536 for p in pages), [len(p) for p in pages]
     edd = b''.join(bytes(p) for p in pages)
     (BUILD / 'ianna.edd').write_bytes(edd)
@@ -1024,6 +1029,9 @@ def build_kvaz(level_no=1, start=None):
                   f'FDDCOPY\tequ ${FDDCOPY_ADDR:04X}\t; копия загрузчика уровня (512 Б) — возвращается на $7E00',
                   f'FGC_CODE\tequ ${FGC_CODE:04X}\t; оверлей готовых тайлов (fgc_ovl.asm) в хвосте string_area',
                   f'FGC_PTRS\tequ ${FGC_PTRS:04X}', f'FGC_TILES\tequ ${FGC_TILES[1]:04X}\t; стр.{FGC_TILES[0]}',
+                  f'ZP_BLIT2M\tequ $003B\t; зеркальный двухплоскостной блит в нулевой странице (zp_blit2m.asm)',
+                  f'ZPSRC\tequ ${BLIT2_ADDR:04X}\t; его копия в наборе, стр.2 (LEVELTAB_PORT)',
+                  'ZP_LEN\tequ $C5\t; копируем всю нулевую страницу от $3B: лишнее — нули',
                   '; адрес таблицы палитр экранов приходит из блока таблиц уровня (vec_scrpal_addr)',
                   f'LEVEL_W\tequ {info["w"]}\t; ширина уровня в экранах — для адреса в таблице палитр',
                   f'LEVELTAB_LEN\tequ {len(level_table_blob(level_palette(), banks, fg))}']
