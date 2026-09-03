@@ -1383,7 +1383,10 @@ drawSprite_pool:
 	or KV_POOL_WIN
 	ld (vec_spr_curport),a
 	out (KV_PORT),a
-dsp_col:			; бюджет DI — по сегментам (dsp_seg), не по колонкам
+dsp_col:			; бюджет DI — на колонку целиком (как у прямого пути ds_col), а не на сегмент:
+	ld hl,dsp_col_go	; окно DI то же (сегменты идут подряд), а проверка одна вместо двух и
+	ld (vec_blit_ret),hl	; адрес сегмента больше не надо прятать в память через vec_spr_dst
+	jp vec_spr_colbud
 dsp_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_rows_left),a
@@ -1441,22 +1444,7 @@ dsp_n_ok:
 	ld (vec_rows_left),a
 	ld a,(vec_spr_row)
 	sub b
-	ld (vec_spr_row),a
-	; бюджет DI на сегмент (calib по окну DI, blitcalib: 1.25 ед./строку + голова): n + n/4 + 4.
-	; HL — единственный живой регистр
-	ld (vec_spr_dst),hl
-	ld a,b
-	rrca
-	rrca
-	and $3f
-	add a,b
-	add a,4
-	ld (vec_spr_colcost),a
-	ld hl,dsp_seg_go
-	ld (vec_blit_ret),hl
-	jp vec_spr_colbud
-dsp_seg_go:
-	ld hl,(vec_spr_dst)
+	ld (vec_spr_row),a	; бюджет колонки взят в dsp_col (vec_spr_colcost = NY + NY/4 + 8 из drawSprite)
 dsp_row:
 	pop bc			; C = p0, B = маска
 	pop de			; E = p1, D = p2
@@ -1547,6 +1535,12 @@ dsp_seg_end:
 	jp nz,dsp_col
 	jp vec_stk_leave
 dsp_mirror:
+	; Цена колонки в пуле СВОЯ: зеркальная строка пула стоит 381 такт (было 490), окно DI на NY=32
+	; — медиана 53.3 / p90 58.7 ед. (blitcalib, сцена 4,5), а ds_cost дал бы 2*NY + NY/4 + 5 = 77.
+	ld a,(vec_spr_ny)
+	add a,a
+	add a,8			; 2*NY + 8 (запас 22 % над p90)
+	ld (vec_spr_colcost),a
 	ld a,(vec_spr_cx)
 	add a,2
 	ld (vec_spr_cx),a
@@ -1562,7 +1556,10 @@ dsp_mirror:
 	or KV_POOL_WIN
 	ld (vec_spr_curport),a
 	out (KV_PORT),a
-dspm_col:			; бюджет DI — по сегментам (dspm_seg)
+dspm_col:			; бюджет DI — на колонку целиком (см. dsp_col)
+	ld hl,dspm_col_go
+	ld (vec_blit_ret),hl
+	jp vec_spr_colbud
 dspm_col_go:
 	ld a,(vec_spr_ny)
 	ld (vec_rows_left),a
@@ -1618,28 +1615,7 @@ dspm_n_ok:
 	ld (vec_rows_left),a
 	ld a,(vec_spr_row)
 	sub b
-	ld (vec_spr_row),a
-	; бюджет DI на сегмент, зеркальный. 16ц: 2n + n/4 + 4 (calib по окну DI: 37.4 ед. при n=16);
-	; c8: 2n + 2 (медиана 18.6 при n~8, p90 33.8 при n=16). Живой регистр — HL (адрес в пуле)
-	ld (vec_spr_dst),hl
-	ld a,b
-    if C8+SPR3
-	add a,b
-	add a,2
-    else
-	rrca
-	rrca
-	and $3f
-	add a,b
-	add a,b
-	add a,4
-    endif
-	ld (vec_spr_colcost),a
-	ld hl,dspm_seg_go
-	ld (vec_blit_ret),hl
-	jp vec_spr_colbud
-dspm_seg_go:
-	ld hl,(vec_spr_dst)
+	ld (vec_spr_row),a	; бюджет колонки взят в dspm_col (vec_spr_colcost из ds_cost + 3)
 dspm_row:			; HL = адрес плоскости 0 текущей строки в пуле; таблица разворота — через DE
 	; Указатель НЕ прячется в память на время просмотра rev256 (было ld (vec_spr_dst),hl + ld hl,(nn)
 	; = 40 тактов на строку): rev256 выровнена на страницу, поэтому индекс кладём в E, страницу в D,
