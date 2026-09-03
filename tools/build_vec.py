@@ -222,6 +222,51 @@ def strip_dead(path, names):
         t = t[:m.start()] + t[m.end():]
     path.write_text(t)
 
+def per_offset_helpers(order):
+    """Хелперы (ix+d)/(iy+d) со ВШИТЫМ смещением — вместо общих z_i?_rda/_sta.
+
+    Общий хелпер получает d либо через A (тогда на площадке лишние 2 байта 'ld a,d'),
+    либо байтом за call (тогда внутри пляска ex (sp),hl / z_ret — 216 тактов). Со вшитым
+    смещением площадка — один call (3 байта), а тело сводится к
+        push hl / ld hl,(z_ix) / inc hl * d / ld a,(hl) | ld (hl),a / pop hl / ret,
+    то есть 92+8d тактов. Ни одна его команда не трогает A (кроме результата), BC, DE
+    и флаги, поэтому вшитый хелпер годится и там, где перевод звал вариант с флагами
+    (z_i?_rda), и там, где без них (_nf).
+
+    Смещение вшивается только если это окупается по БАЙТАМ: тело стоит 8+d байт, каждая
+    площадка чтения экономит 2 байта, записи — 1. Чтения с d>6 не трогаем: там inc-цепочка
+    уже дороже общего хелпера по тактам (92+8d против 124), а байты почти не выигрывают.
+    """
+    RD = re.compile(r'(?m)^\tld a,(\d+)\n\tcall z_(ix|iy)_rda(?:_nf)?\n')
+    ST = re.compile(r'(?m)^\tcall z_(ix|iy)_sta\n\tdb (\d+)\n')
+    files = [f for f in order if f.suffix == '.asm' and f.parent == TR]
+    texts = {f: f.read_text(encoding='utf-8', errors='replace') for f in files}
+    cnt = {}
+    for t in texts.values():
+        for d, reg in RD.findall(t):
+            if int(d) <= 6: cnt[(reg, 'rd', int(d))] = cnt.get((reg, 'rd', int(d)), 0) + 1
+        for reg, d in ST.findall(t):
+            cnt[(reg, 'st', int(d))] = cnt.get((reg, 'st', int(d)), 0) + 1
+    take = {k for k, n in cnt.items() if (2 * n if k[1] == 'rd' else n) > 8 + k[2]}
+    if not take: return ''
+    def rd_sub(m):
+        d, reg = int(m.group(1)), m.group(2)
+        return f'\tcall z_{reg}_rd{d}\n' if (reg, 'rd', d) in take else m.group(0)
+    def st_sub(m):
+        reg, d = m.group(1), int(m.group(2))
+        return f'\tcall z_{reg}_st{d}\n' if (reg, 'st', d) in take else m.group(0)
+    for f, t in texts.items():
+        t2 = ST.sub(st_sub, RD.sub(rd_sub, t))
+        if t2 != t: f.write_text(t2)
+    out = ['\n; --- хелперы (i?+d) со вшитым смещением (сгенерированы build_vec.py) ---\n']
+    for reg, kind, d in sorted(take):
+        n = cnt[(reg, kind, d)]
+        out.append(f'z_{reg}_{kind}{d}:\t; {"a := " if kind == "rd" else ""}({reg}+{d})'
+                   f'{"" if kind == "rd" else " := a"} — {n} площадок\n\tpush hl\n\tld hl,(z_{reg})\n')
+        out.append('\tinc hl\n' * d)
+        out.append(('\tld a,(hl)\n' if kind == 'rd' else '\tld (hl),a\n') + '\tpop hl\n\tret\n')
+    return ''.join(out)
+
 def main():
     TR.mkdir(parents=True, exist_ok=True)
     slice_ianna(); make_vars(); make_score_font(); make_music()
@@ -313,6 +358,7 @@ def main():
               VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm'] + ([VEC / 'vec_fdd.asm'] if C8 else []) + [VEC / 'vec_stubs.asm']
     if not DEMO:
         order.append(data)
+    gen_rt = per_offset_helpers(order)
     # z80rt: только используемые хелперы
     used = set()
     for f in order:
@@ -326,7 +372,7 @@ def main():
         parent = next((k for k in kept if name.startswith(k + '_')), None)   # подметка (z_ldir_l) идёт с родителем
         if name in used or parent:
             keep.append(b); kept.add(name)
-    (TR / 'z80rt_used.asm').write_text(''.join(keep))
+    (TR / 'z80rt_used.asm').write_text(''.join(keep) + gen_rt)
     order.append(TR / 'z80rt_used.asm')
     order.append(VEC / 'vec_mirr.asm')
     order.append(VEC / 'vec_blit2.asm')   # прямой блит двухплоскостных банков
