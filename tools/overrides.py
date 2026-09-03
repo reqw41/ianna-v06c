@@ -16,6 +16,14 @@ OVERRIDES = {
     # идиома «вызвать X с BC, сохранив BC/DE/HL основного набора». Перевод давал два z_exx на тайл
     # (~300 тактов, 5.9 % тактов на сценах с двумя орками). Альтернативный набор после цикла нигде не
     # читается, флаги следом ставит dec b / inc b, так что стек делает то же самое втрое дешевле.
+    # tiles_src.asm GetHardness: цикл `rrc e / dec a / jr nz` на 2, 4 или 6 сдвигов через z_a стоил
+    # 72 тактов на шаг (4.9 тыс. тактов на тик на уровне 1, 24 вызова). Сдвигов ровно три варианта —
+    # ветвимся по A (cp 4: CY -> 2, Z -> 4, иначе 6 = два rlca); gh_noshift ниже делает то же `and 3`.
+    ('tiles_src.asm', 614): ['cp 4', 'ld a,e', 'jp c,gh_s2', 'jp z,gh_s4', 'rlca', 'rlca', 'and 3', 'ret',
+                             'gh_s4:', 'rrca', 'rrca', 'gh_s2:', 'rrca', 'rrca', 'and 3', 'ret'],
+    ('tiles_src.asm', 615): [],
+    ('tiles_src.asm', 616): [],
+    ('tiles_src.asm', 617): [],
     ('tiles_src.asm', 34): ['push hl', 'push de', 'push bc'],      # drawsc_x_loop
     ('tiles_src.asm', 35): [],
     ('tiles_src.asm', 36): [],
