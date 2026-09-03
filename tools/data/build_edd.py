@@ -809,6 +809,7 @@ def build_fgc(level, sr5, pm_tiles, fg, pages, sa):
     return (gbase - sa, tail)
 
 def build_kvaz(level_no=1, start=None):
+    leveltab_mismatch = None
     global PERM, LEVEL_NOW, BANK_2PLANE
     LEVEL_NOW = level_no
     global BANK_2PLANE
@@ -976,8 +977,11 @@ def build_kvaz(level_no=1, start=None):
         lst = BUILD / 'ianna_vec.lst'
         if lst.exists():
             m = re.search(r'^LEVELTAB_LEN\s+=\s+\$([0-9A-F]+)', lst.read_text(errors='replace'), re.M)
-            assert not m or int(m.group(1), 16) == len(blob), \
-                f'ROM собран с LEVELTAB_LEN={int(m.group(1), 16)}, а таблица уровня теперь {len(blob)} Б — пересоберите ROM (build_vec) после build_edd'
+            if m and int(m.group(1), 16) != len(blob):
+                # Не падать сразу: gen_data.asm с новой длиной должен успеть записаться, иначе следующий
+                # build_vec соберёт ROM со старой константой и сторож зациклится (ловилось дважды при слияниях).
+                leveltab_mismatch = (f'ROM собран с LEVELTAB_LEN={int(m.group(1), 16)}, а таблица уровня теперь {len(blob)} Б — '
+                                     f'gen_data.asm обновлён, пересоберите ROM: python3 tools/build_vec.py (дважды), затем наборы')
         end = LEVELTAB_ADDR + len(blob)
         assert all(v == 0 for v in pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end]), 'область таблиц уровня занята'
         pages[LEVELTAB_PAGE][LEVELTAB_ADDR:end] = blob
@@ -1035,6 +1039,8 @@ def build_kvaz(level_no=1, start=None):
         lines += ['; карта «цвет кода 0..15 -> слот» для fillArea (шкалы панели); лежит сразу за fg_tile_lut (страница)',
                   'vec_color_map:', '\tdb ' + ', '.join(str(v) for v in pm_panel)]
     (BUILD / 'gen_data.asm').write_text('\n'.join(lines) + '\n')
+    if leveltab_mismatch:
+        sys.exit('ОТКАЗ: ' + leveltab_mismatch)
     print(f'ianna.edd:{" "+C8MODE if C8MODE else ""} уровень {level_no}{" старт "+str(start) if start else ""}; {len(edd)} Б; банки спрайтов: {[b for b,*_ in banks]} по {FRAME_BYTES} Б/кадр; FG-тайлов={len(fg)}; level {len(level2)} Б')
 
 def trim_scripts(block, nstrings, nscripts, keep):
