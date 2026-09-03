@@ -57,6 +57,20 @@ OVERRIDES = {
     ('entities.asm', 291): ['ld a,(hl)'],                                     # ld a,(ix+5); HL = z_ix+5
     ('entities.asm', 294): ['ld (hl),a'],                                     # ld (ix+5),a
 
+    # entities.asm, get_sprite_pointer_iy (453..457) и хвост get_sprite_pointer_ix (478..481) —
+    # обе читают (ix+0)/(ix+1) и кладут пару в IY/IX. Перевод делал это четырьмя блоками
+    # (два раза ld hl,(z_ix) с push/pop и два раза push af / ld (z_i?+n),a / pop af).
+    # HL бережём стеком (оригинал его не портит, у функций десятки вызывающих), A не трогаем
+    # вовсе (в get_sprite_pointer_ix он — результат строки 477), флаги ни одна команда не меняет.
+    ('entities.asm', 454): ['push hl', 'ld hl,(z_ix)', 'ld e,(hl)'],      # ld e,(ix+0)
+    ('entities.asm', 455): ['inc hl', 'ld d,(hl)'],                       # ld d,(ix+1)
+    ('entities.asm', 456): ['ld h,d', 'ld l,e', 'ld (z_iy),hl', 'pop hl'],  # ld iyh,d / ld iyl,e
+    ('entities.asm', 457): [],
+    ('entities.asm', 478): ['push hl', 'ld hl,(z_ix)', 'ld e,(hl)'],      # ld e,(ix+0)
+    ('entities.asm', 479): ['inc hl', 'ld d,(hl)'],                       # ld d,(ix+1)
+    ('entities.asm', 480): ['ld h,d', 'ld l,e', 'ld (z_ix),hl', 'pop hl'],  # ld ixh,d / ld ixl,e
+    ('entities.asm', 481): [],
+
     # scripts.asm, run_script (128..179) — вызывается для игрока, обоих врагов и пяти объектов
     # каждый тик. HL на входе не параметр (RunScripts его не передаёт) и до строки 136 не нужен,
     # поэтому указатель сущности живёт прямо в нём.
