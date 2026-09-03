@@ -538,7 +538,8 @@ dt_a0:
 	cp 80
 	jp nc,dt_direct		; $FE (грязный без слота) и $FF — прямо в VRAM
 	call vec_pool_addr
-	ld a,18 - C8*3		; бюджет DI: тайл в слот — 16ц медиана 17.5 / c8 14.1 (calib)
+	ld a,16 - C8*2		; бюджет DI: тайл в слот. calib по ОКНУ DI (blitcalib): было 14.0 ед. при
+				; цене 18, стало 12.4 — цена 16 держит тот же запас 3.6 ед.
 	call vec_budget
 	ex de,hl		; DE = слот в окне
 	di
@@ -565,7 +566,8 @@ dtb_loop:
 	jp dt_end
     endif
 dt_direct:
-	ld a,22 - C8*4		; бюджет DI: тайл прямо в VRAM — 16ц медиана 20.8 / c8 17.1 (calib; вкл. обход RedrawInvTiles)
+	ld a,19 - C8*3		; бюджет DI: тайл прямо в VRAM. calib по ОКНУ DI (blitcalib): было 16.5 ед.
+				; при цене 22, после разворота блита 13.3 — цена 19 держит тот же запас 5.5
 	call vec_budget
 	ld a,b
 	rrca

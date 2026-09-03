@@ -120,7 +120,7 @@ fgc_a0:
 	add a,FGC_TILES >> 8
 	ld h,a
 	ld (vec_blit_src),hl
-	ld a,22			; бюджет DI как у dt_direct
+	ld a,19			; бюджет DI как у dt_direct (окно DI 13.3 ед., blitcalib)
 	call vec_budget
 	ld a,b
 	rrca
