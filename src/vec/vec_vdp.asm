@@ -245,17 +245,20 @@ vbc_plane:
 	ld h,d
 	ld l,e
 vbc_col:
-	ld a,(vec_bl_pops)
-	ld (vec_row_cnt),a
+	ld a,(vec_bl_pops)	; счётчик строк — в A: в теле цикла A не жив (BC — данные, HL — приёмник),
+				; а в памяти он стоил 40 тактов на пару байт при 44 тактах работы
 vbc_row:
 	pop bc
 	ld (hl),c
 	dec l
 	ld (hl),b
 	dec l
-	ld a,(vec_row_cnt)
-	dec a
-	ld (vec_row_cnt),a
+	pop bc			; развёрнуто по ДВЕ пары: vec_bl_pops у всех клиентов чётное
+	ld (hl),c		; (панель 16, drawScoreOnOff 12, drawWeapon 8, drawChar 4)
+	dec l
+	ld (hl),b
+	dec l
+	sub 2
 	jp nz,vbc_row
 	inc h
 	ld l,e
@@ -2257,25 +2260,56 @@ vec_panel_blit3:
 	ld a,Y_TOP_L
 	sub c
 	ld e,a
+; Цена блита панели. РАНЬШЕ считалось cols*pops в ОДНОМ байте и умножалось на 3/4 «за четыре
+; плоскости» — у картинки панели (vec_load_panel: cols=32, pops=16, ОДНА плоскость за вызов)
+; произведение 512 переполняло байт в 0, и цена выходила 32 ед. вместо реальных ~146: DI-окно
+; блита накрывало обратный ход, и прерывание терялось (measure_vec: все потери на ур.6 и ур.3
+; приходились на vbc_row). Теперь произведение считается в HL и в него входит ЧИСЛО ПЛОСКОСТЕЙ,
+; а множитель 1/4 отвечает новой цене пары байт (68 тактов = 0.266 ед.).
 vec_panel_blit:
 	push bc
 	ld a,(vec_bl_cols)
+	ld c,a
+	ld a,(vec_bl_planes)
+	ld b,a
+	xor a
+vpn_ncol:
+	add a,c			; A = cols * планостей (<= 128)
+	dec b
+	jp nz,vpn_ncol
 	ld b,a
 	ld a,(vec_bl_pops)
 	ld c,a
-	xor a
+	ld hl,0
 vpn_cost:
-	add a,c			; cols * pops
+	ld a,l			; HL = pops * cols * плоскостей (до 512 — байта не хватает)
+	add a,c
+	ld l,a
+	jp nc,vpn_nc
+	inc h
+vpn_nc:
 	dec b
 	jp nz,vpn_cost
-	ld c,a			; cols*pops (pop-ов на плоскость); цена ~0.69 ед. на pop x 4 плоскости -> *3/4
-	rrca
-	and $7f
-	ld b,a			; /2
-	rrca
-	and $7f			; /4
-	add a,b
+	ld a,h			; HL / 4
+	or a
+	rra
+	ld h,a
+	ld a,l
+	rra
+	ld l,a
+	ld a,h
+	or a
+	rra
+	ld h,a
+	ld a,l
+	rra
 	add a,32		; + логика куска панели (draw_*_state, Div16_8) перед блитом — EI, но время кадра
+	jp c,vpn_cap
+	cp 190			; цена > предела бюджета = вечный halt: держим потолок
+	jp c,vpn_ok
+vpn_cap:
+	ld a,190
+vpn_ok:
 	call vec_budget
 	pop bc
 	di
