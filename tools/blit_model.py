@@ -73,7 +73,13 @@ INNER = {'vb_col': 'блит128', 'vb_plane': 'блит128', 'vbc_row': 'кол�
          'dftb_loop': 'FG->пул', 'ds_row': 'спр16 прямой', 'ds_k': 'спр16 прямой',
          'dsm_row': 'спр16 зерк', 'dsm_k': 'спр16 зерк', 'dsp_row': 'спр16 прямой пул',
          'dsp_k': 'спр16 прямой пул', 'dspm_row': 'спр16 зерк пул', 'dspm_k': 'спр16 зерк пул',
-         'b2_row': 'спр2пл прямой', 'b2m_row': 'спр2пл зерк'}
+         'b2_row': 'спр2пл прямой', 'b2m_row': 'спр2пл зерк',
+         # хвосты циклов после перевода счётчика строк на L (самомодифицируемый предел)
+         'b2_endA': 'спр2пл прямой', 'b2_endB': 'спр2пл прямой',
+         'ds_end': 'спр16 прямой', 'ds_rem': 'спр16 прямой',
+         'dsp_end': 'спр16 прямой пул', 'dsp_rem': 'спр16 прямой пул',
+         'dspm_end': 'спр16 зерк пул', 'dspm_rem': 'спр16 зерк пул',
+         'dsm_k': 'спр16 зерк'}
 BUDGET = {'vec_budget', 'vbg_again', 'vbg_wait', 'vbg_ok', 'vec_phase', 'vph_ok', 'vec_spr_colbud'}
 STK = {'vec_stk_enter', 'vec_stk_leave'}
 entry_pc = {sym[k]: v for k, v in ENTRY.items() if k in sym}
