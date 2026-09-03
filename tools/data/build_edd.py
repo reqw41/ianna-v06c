@@ -20,7 +20,7 @@ build_edd.py — данные для Ianna/Вектор.
   Плоскость p несёт бит (3-p) цвета: индекс палитры Вектора == цвет MSX.
 """
 import os
-import sys, re, pathlib
+import sys, re, pathlib, collections
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 # Режим цвета: None = 16 цветов (4 плоскости); 'c8' = 8 цветов, 3 плоскости (VRAM $A000/$C000/$E000,
 # плоскость 0 $8000-$9FFF свободна, бит 3 индекса всегда 0, палитра зеркалится pal[c|8]=pal[c]);
@@ -432,46 +432,68 @@ def color_perm(level=1):
 PERM = color_perm(1)
 
 # Готовые зеркальные копии кадров. Зеркальный блит разворачивает КАЖДЫЙ байт строки через таблицу
-# rev256 заново на каждом тике и стоит вшестеро дороже прямого (профиль экрана 4,5: dspm_row 20.9 %
-# тика против dsp_row 3.4 %). Кадр меняется почти каждый тик, но разных кадров в обороте 7..10 —
-# цикл анимации повторяется, поэтому копии выгодно приготовить заранее, а не разворачивать в игре.
+# rev256 заново на каждом тике: двухплоскостной кадр стоит 39 732 такта против 27 640 у прямого,
+# шестнадцатицветный 53 096 против 26 000 (blit_model, сцены 6,1 и 4,5 — обвязка 40 и 56 %).
+# Кадр меняется почти каждый тик, но разных кадров в обороте десяток — цикл анимации повторяется,
+# поэтому копии выгодно приготовить заранее, а не разворачивать в игре: движок (vec_mirr.asm)
+# подменяет источник готовой копией и дальше идёт ОБЫЧНЫЙ ПРЯМОЙ блит.
 # Формат копии тот же, что у прямого кадра: отражаем пиксели и гоним через тот же конвертер.
-# Место: хвост страницы 2 ($E000-$FFFF, 8 КБ) — 14 кадров по 576 Б, порт тот же, что у банка.
-# банк -> (адрес копий в ТОЙ ЖЕ странице, первый кадр, сколько кадров).
-# Зеркалим не с нулевого кадра, а те, что реально рисуются зеркально: у мумии ходьба влево идёт
-# кадрами 14..17 (замер frame_stats на экранах 4,5 и 0,6), нулевые кадры — ходьба вправо, они и так
-# прямые. Место: свободные хвосты страниц; стр.2 $E000-$EFFF занимать НЕЛЬЗЯ — туда меню сохраняет
-# песню уровня (menu_ram.mb_savelvl), и зеркала затирались в рантайме (спрайт рисовался мусором).
-# Четвёртый элемент — страница копий, если она не та же, что у банка (тогда движок подменяет и порт).
-# Готовые зеркальные копии задаются ПО УРОВНЯМ: на уровне 2 места под них нет (там семь банков),
-# да и голем зеркалится своим блитом, а не копиями.
-MIRRORS_BY_LEVEL = {
-    1: {9: (0xF000, 14, 7),        # мумия (стр.2 $0000): ходьба влево — кадры 14..17, копии в хвосте
-        8: (0xF000, 2, 7, 3),      # орк (стр.1 $A200): ходьба влево — кадры 2..7; копии в стр.3
-        2: (0xE900, 0, 10),        # варвар, банк 1 (стр.0 $8C00), копии за ним до конца страницы
-        3: (0x5D00, 0, 15, 1)},    # варвар, банк 2 (стр.3 $2800), копии в стр.1 перед картой
-    # Великаны: зеркальный двухплоскостной блит стоит 146 ед. кадра против 107 прямого (замер
-    # blitcost 2026-09-02) — разворот четырёх байт на строку через rev256. Ходовые кадры (у голема
-    # и минотавра 14..17, у огра 14..21, у демона 0..17) держим готовыми копиями в свободных
-    # хвостах страниц; движок тогда идёт прямым путём. Записей в vm_tab четыре — ровно два великана.
-    2: {14: (0x5D00, 14, 4, 1), 15: (0x6200, 14, 4, 1), 7: (0x6700, 2, 6, 1)},     # + скелет: ходьба 2..7
-    3: {16: (0x5D00, 14, 8, 1), 17: (0x6700, 14, 8, 1), 10: (0x7000, 14, 8, 1)},   # + тролль 14..21
-    4: {18: (0xD700, 14, 4, 1), 19: (0xDC00, 14, 4, 1), 20: (0xE100, 0, 18, 1), 21: (0xE900, 0, 18, 0),
-        7: (0xC000, 14, 4, 2), 9: (0xC500, 0, 18, 2)},         # скелет 14..17, мумия 0..17 (стр.2 $C000-$E000
-                                                              # на уровнях 2+ свободна: песни меню только в наборе 1)
-    5: {14: (0x5D00, 14, 4, 1), 15: (0x6200, 14, 4, 1), 7: (0x6700, 2, 6, 1)},     # скелет тут в 16 цветах
-    6: {18: (0xDC00, 14, 4, 1), 19: (0xE100, 14, 4, 1), 16: (0xE600, 14, 8, 1), 17: (0xEF00, 14, 8, 1),
-        13: (0xC000, 14, 4, 2), 10: (0xC500, 2, 16, 2)},   # рыцарь 14..17, тролль 2..17 (орк зеркалится редко)
-    7: {},
-    8: {14: (0xD600, 14, 4, 1), 15: (0xDB00, 14, 4, 1), 20: (0xE000, 0, 18, 1), 21: (0xE200, 0, 18, 0),
-        10: (0xC000, 2, 6, 2)},                               # тролль 2..7
-    9: {16: (0x2800, 14, 8, 3), 17: (0x3A00, 14, 8, 3), 10: (0x4C00, 14, 8, 3)},  # ур.9: огр и тролль в 16 цветах
-}
-MIRRORS = MIRRORS_BY_LEVEL[1]
+#
+# Что зеркалить — ЗАМЕР, а не догадка: tools/mirrframes.py считает (банк, кадр) зеркальных выводов
+# на гейт-сценах (60 тиков «вправо», как cmpbuild) и на 360 тиках «влево/вправо/стоя». Оттуда:
+#   герой (банки 2 и 3) зеркалится кадрами 0..12 (стойка, ходьба, удар) и 37..40 (падение) —
+#       на КАЖДОМ уровне, до 241 вывода из 343 на 360 тиков (уровень 6);
+#   враги — кадрами 14..21 (ходьба влево, самые частые: у мумии 131 вывод из 281, у минотавра
+#       139 из 215), затем 0..13 (стойка и удар), затем 22..31 (минотавр, мумия);
+#   дальние кадры (смерть, спецатаки) за прогон зеркалятся единицами и копий не заслуживают.
+# Порядок ДИАПАЗОНОВ и есть порядок ценности: места и слотов на всё не хватает ни на одном уровне,
+# и запрос, обрезанный по месту, теряет ХВОСТ. Поэтому ходовые кадры стоят первым эшелоном —
+# сплошной диапазон 0..21 при нехватке места оставил бы мумию с кадрами 0..9 и без ходьбы.
+# Запрос эшелона — список ВАРИАНТОВ (первый кадр, сколько): берётся первый, который влезает в
+# свободный кусок ЦЕЛИКОМ и одной записью. Не влез ни один — кладём хвостовой вариант, сколько
+# войдёт. Так на просторном уровне враг получает одну запись на кадры 0..21, а на тесном — только
+# ходьбу 14..21, но не огрызок 0..9 без ходьбы вовсе.
+MIRROR_RANGES_HERO = {2: [[(0, 13), (0, 8)], [(37, 4)], [(8, 5)]], 3: [[(0, 3)]]}
+MIRROR_RANGES_ENEMY = [[(0, 22), (14, 8)], [(22, 10)], [(0, 14)]]
+# Порядок ЗАПРОСОВ = и порядок раздачи места, и порядок записей в vm_tab (движок сканирует таблицу
+# сверху вниз и на попадании выходит). Сперва ходовые кадры врагов — на гейт-сценах именно они дают
+# основную массу зеркальных выводов, — потом ходовые кадры героя, потом хвосты.
+MIRROR_SLOTS = 12       # столько записей в таблице движка (vec_mirr.asm: ld b,N).
+                        # Запись — 4 Б (см. vec_mirr.asm), двенадцать записей = 48 Б; в vec_vars
+                        # под vm_tab всего 49 Б (дальше стек), тринадцатая запись уже не влезает.
+
+# Экраны, на которых встречается враг банка: чем их больше, тем ценнее копии. Порядок «по номеру
+# банка» был бы произволом — на уровне 1 он отдал всё место скелету и орку, а мумия (114 экранов
+# из 121 по этой мерке и 74 зеркальных вывода из 116 на гейт-сцене) осталась без копий вовсе.
+ENEMY_OF_BANK = {7: (20,), 8: (21,), 9: (22,), 10: (23,), 12: (24,), 13: (25,), 11: (26,),
+                 14: (27,), 15: (27,), 16: (28,), 17: (28,), 18: (29,), 19: (29,), 20: (30,), 21: (30,)}
+
+def bank_screen_count(level_no):
+    scr = screens_of(list((SRC / f'level{level_no}.map').read_bytes()))
+    cnt = collections.Counter()
+    for s in scr:
+        ob = s[360:403]
+        for t in (ob[2], ob[8] if ob[2] not in (27, 28, 29, 30) else 0):
+            for b, types in ENEMY_OF_BANK.items():
+                if t in types: cnt[b] += 1
+    for b in (2, 3): cnt[b] = len(scr)              # герой есть на каждом экране
+    return cnt
+
+def mirror_wants(level_no, banks):
+    """Два эшелона запросов (банк, первый кадр, сколько) — сперва ходовые кадры, потом хвосты.
+    Внутри эшелона банки идут по числу экранов, на которых встречаются."""
+    have = [b for b, *_ in banks]
+    cnt = bank_screen_count(level_no)
+    order = sorted(have, key=lambda b: (-cnt[b], b))
+    def rng(b, i):
+        r = MIRROR_RANGES_HERO.get(b, MIRROR_RANGES_ENEMY)
+        return [(b, r[i])] if i < len(r) else []
+    n = max(len(MIRROR_RANGES_ENEMY), max(len(v) for v in MIRROR_RANGES_HERO.values()))
+    return [[w for b in order for w in rng(b, i)] for i in range(n)]
+
+MIRRORS = []            # размещение зеркал текущего уровня, см. place_mirrors
 LEVEL_NOW = 1
-MIRROR_SLOTS = 6        # столько записей в таблице движка (vec_mirr.asm)
-if os.environ.get('IANNA_NOMIRRDATA') == '1':
-    MIRRORS = {}        # сборка без готовых зеркал — для сверки картинки
+NOMIRRDATA = os.environ.get('IANNA_NOMIRRDATA') == '1'   # сборка без готовых зеркал — для сверки картинки
 
 # Таблицы, зависящие от уровня: палитра, банки спрайтов, передние тайлы. Раньше они были константами
 # в ROM, из-за чего в игре можно было жить только на одном уровне — набор менялся, а таблицы оставались
@@ -513,7 +535,7 @@ def level_table_blob(pal, banks, fg, fgc=False):
         pairs += bytes([t, i])                 # пары (номер тайла, индекс)
     assert len(pairs) <= 60, len(pairs)
     out += pairs.ljust(60, b'\x00')            # фиксированная длина: за парами идёт таблица зеркал
-    out += mirror_table(banks)                 # 4 записи по 6 Б, см. vec_mirr.asm
+    out += mirror_table()                      # MIRROR_SLOTS записей по 6 Б, см. vec_mirr.asm
     out.append(1 if fgc else 0)                # fgc_on: готовые тайлы фон+FG в наборе
     return bytes(out)
 
@@ -547,26 +569,168 @@ def screen_palettes(screens, banks):
         out += bytes(pal[c] for c in trip) if trip else bytes(3)
     return bytes(out)
 
-def mirror_table(banks):
+def mirror_table():
     """Таблица готовых зеркальных копий для движка. Раньше лежала в ROM, но она ЗАВИСИТ ОТ УРОВНЯ
-    (на уровне 2 копий нет вовсе), а ROM теперь общий для всех уровней — значит её место в наборе."""
-    by = {b: (pg, base) for b, pg, base, _ in banks}
-    rows = []
-    for bank, spec in sorted(MIRRORS.items()):
-        if bank not in by: continue
-        pg, base = by[bank]
-        addr, first, nfr = spec[0], spec[1], spec[2]
-        cpage = spec[3] if len(spec) > 3 else pg
-        frames = parse_sprite_asm(SRC / f'{BANK_FILE[bank]}.asm')[first:first+nfr]
-        two = 1 if bank in BANK_2PLANE else 0        # бит 0 порта = две плоскости, у копий тот же формат
-        fb = FRAME_BYTES_2P if two else FRAME_BYTES
-        lo = base + first*fb
-        hi = lo + len(frames)*fb
-        rows.append(bytes([0x10 | (pg << 2) | two, lo >> 8, hi >> 8,
-                           (addr - lo) & 0xFF, ((addr - lo) >> 8) & 0xFF, 0x10 | (cpage << 2) | two]))
+    (набор банков и свободное место у каждого свои), а ROM теперь общий для всех — значит её место
+    в наборе. Записи идут в порядке размещения: движок сканирует таблицу сверху вниз."""
+    for m in MIRRORS:
+        assert m['delta'] & 0xFF == 0, m          # младший байт смещения движок не хранит
+    rows = [bytes([m['port'] | (m['cpage'] << 5), m['lo'] >> 8, m['hi'] >> 8,
+                   (m['delta'] >> 8) & 0xFF]) for m in MIRRORS]
     while len(rows) < MIRROR_SLOTS:
-        rows.append(bytes([0, 0xFF, 0, 0, 0, 0]))   # пустая запись: LO выше любого адреса
+        rows.append(bytes([0, 0xFF, 0, 0]))         # пустая запись: LO выше любого адреса
+    assert len(rows) <= MIRROR_SLOTS, len(rows)
     return b''.join(rows[:MIRROR_SLOTS])
+
+# --- Размещение зеркальных копий ------------------------------------------------------------
+# Раньше адреса копий стояли в таблице руками, по одной строке на банк. Их стало вдвое больше,
+# а раскладки банков у девяти уровней разные, поэтому место раздаётся автоматически: из образа
+# берутся куски, которые И заполнены нулями, И не попадают ни в один ОБЪЯВЛЕННЫЙ блок набора.
+# Одних нулей мало: пустой тайл, пустой кадр в хвосте банка и дыра внутри карты тоже нулевые,
+# а занимать их нельзя. Одних объявленных блоков тоже мало: они страхуют от опечатки в раскладке.
+def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
+    """Объявленная раскладка набора: (страница, начало, конец, имя). Всё, что не здесь и заполнено
+    нулями, считается свободным. Держать в согласии с build_kvaz и tools/kvaz_pack.fixed_blocks."""
+    r = [(0, BG_TILES_BASE, BG_TILES_BASE + 256*128, 'тайлы фона'),
+         (0, FG_TILES_BASE, FG_TILES_BASE + len(fg)*256, 'передние тайлы'),
+         (1, 0x8000, lvl_end, 'карта, скрипты и строки'),
+         (2, SCRPAL_BY_LEVEL[level_no], SCRPAL_BY_LEVEL[level_no] + 0x140, 'палитры экранов'),
+         (2, LEVELTAB_ADDR, BLIT2_ADDR + 0x100, 'таблицы уровня, копия загрузчика, вынесенный блит'),
+         (3, 0x0000, 0x2800, 'шрифт, панель, оружие'),
+         (3, 0x9000, 0x9600, 'оверлей паузы и загрузчик банков'),
+         (3, 0xC800, 0xE000, 'маркер набора, музыка уровня, эффекты')]
+    if level_no == 1:                 # фаза меню живёт только в наборе первого уровня
+        r += [(2, 0xC000, 0xE000, 'песни меню и интро'), (3, 0x8440, 0x9000, 'оверлей меню'),
+              (3, 0x9800, 0xA000, 'блок меню в ОЗУ'), (3, 0xE000, 0xF000, 'шрифт меню')]
+    if level_no in FGC_LEVELS and not C8MODE:
+        pg, base = FGC_TILES
+        r.append((pg, base, 0x10000, 'готовые тайлы фон+FG'))
+    for b, pg, base, limit in banks:
+        r.append((pg, base, limit, f'банк {b}'))
+    for i, (pg, a, e, nm) in enumerate(r):   # сторож: объявленные блоки не должны пересекаться
+        for pg2, a2, e2, nm2 in r[i+1:]:
+            assert pg != pg2 or a >= e2 or a2 >= e, \
+                f'пересекаются блоки набора: {nm} (стр.{pg} ${a:04X}-${e:04X}) и {nm2} (${a2:04X}-${e2:04X})'
+    # Области, которые в ОБРАЗЕ нулевые, но в ИГРЕ по ним пишут. Их не проверяем на пересечение с
+    # объявленными: на уровне 3 готовые тайлы фон+FG и так лежат поверх места под песню уровня.
+    r.append((2, 0xE000, 0xF000, 'песня уровня: сюда её сохраняет меню (menu_ram.mb_savelvl)'))
+    if pool_on:                       # буфер супертайлов
+        r.append((3, 0xA000, 0xC800, 'пул'))
+    return r
+
+def free_chunks(pages, layout, align=256):
+    """Свободные куски: вне объявленных блоков И нулевые в образе. Начало выравнено на align."""
+    out = []
+    for pg in range(4):
+        busy = sorted((a, e) for p, a, e, _ in layout if p == pg)
+        pos = 0
+        for a, e in busy + [(0x10000, 0x10000)]:
+            if a > pos: out.append([pg, pos, min(a, 0x10000)])
+            pos = max(pos, e)
+    res = []
+    for pg, a, e in out:                 # внутри куска берём только сплошные нули
+        s = None
+        for i in range(a, e + 1):
+            z = i < e and pages[pg][i] == 0
+            if z and s is None: s = i
+            elif not z and s is not None:
+                s2 = (s + align - 1) & ~(align - 1)
+                if i - s2 > 0: res.append([pg, s2, i])
+                s = None
+    res.sort(key=lambda c: c[2] - c[1])   # «самый тесный подходящий»: крупные куски не крошим
+    return res
+
+def place_mirrors(pages, banks, level_no, layout, bank_pmap):
+    """Разложить зеркальные копии по свободным кускам. Запросы идут в порядке ценности; тот, что
+    не влез одним куском, режется на части (каждая часть — своя запись vm_tab), пока есть слоты.
+    Возвращает список записей: банк, кадры, адрес и страница копий, границы для движка."""
+    if NOMIRRDATA: return []
+    by = {b: (pg, base, lim) for b, pg, base, lim in banks}
+    chunks = free_chunks(pages, layout)
+    placed, cache = [], {}
+    def mirrored(bank, k):
+        if (bank, k) not in cache:
+            fr = parse_sprite_asm(SRC / f'{BANK_FILE[bank]}.asm')[k]
+            two = BANK_2PLANE.get(bank)
+            flip = [row[::-1] for row in fr]
+            cache[(bank, k)] = sprite_frame_bytes_2p(flip, two) if two else \
+                sprite_frame_bytes(flip, bank_pmap(bank))
+        return cache[(bank, k)]
+    def fits(bank, k, last, c):
+        """Сколько кадров запроса влезет в кусок c, не оставив следующей части «плохого» начала."""
+        pg, base, lim = by[bank]
+        two = 1 if bank in BANK_2PLANE else 0
+        fb = FRAME_BYTES_2P if two else FRAME_BYTES
+        # Диапазон движок проверяет по СТАРШЕМУ БАЙТУ адреса кадра, поэтому начало части не должно
+        # делить 256-байтную страницу с предыдущим кадром: иначе и тот кадр попал бы в диапазон и
+        # подменился ЧУЖОЙ копией. Адрес кадра — база + k*fb + пропуск строк сверху (до (32-1)*6=186 Б
+        # у шестнадцати цветов, (32-1)*3=93 Б у двух плоскостей); база банка кратна 256.
+        skip = 93 if two else 186
+        addr = c[1] + (((base + k*fb) - c[1]) & 0xFF)   # копия сравнима с началом диапазона по mod 256
+        n = min(last - k + 1, (c[2] - addr) // fb)
+        while n and k + n <= last and (base + (k+n)*fb) % 256 >= fb - skip:
+            n -= 1
+        return max(n, 0)
+    def piece(bank, k, last):
+        """Отложить одну часть запроса: кадры с k, сколько влезет в подходящий кусок."""
+        pg, base, lim = by[bank]
+        two = 1 if bank in BANK_2PLANE else 0
+        fb = FRAME_BYTES_2P if two else FRAME_BYTES
+        skip = 93 if two else 186
+        assert k == 0 or (base + k*fb) % 256 < fb - skip, (bank, k)
+        whole = [c for c in chunks if fits(bank, k, last, c) == last - k + 1]
+        c = whole[0] if whole else max(chunks, key=lambda x: fits(bank, k, last, x), default=None)
+        if c is None or not fits(bank, k, last, c): return 0   # chunks отсортированы по длине
+        n = fits(bank, k, last, c); cpage = c[0]
+        addr = c[1] + (((base + k*fb) - c[1]) & 0xFF); end = addr + n*fb
+        assert all(v == 0 for v in pages[cpage][addr:end]), f'область зеркал банка {bank} занята'
+        for j in range(n):
+            pages[cpage][addr + j*fb: addr + (j+1)*fb] = mirrored(bank, k + j)
+        c[1] = end
+        if c[1] >= c[2]: chunks.remove(c)
+        chunks.sort(key=lambda x: x[2] - x[1])
+        lo = base + k*fb
+        # Часть, легшая ВПЛОТНУЮ за прежней (тот же банк, следующий кадр, следующий адрес), слота не
+        # тратит: диапазон и так задан парой границ, его достаточно расширить.
+        for m in placed:
+            if m['bank'] == bank and m['first'] + m['nfr'] == k and m['addr'] + m['nfr']*fb == addr \
+                    and m['cpage'] == cpage:
+                m['nfr'] += n; m['hi'] += n*fb
+                return n
+        placed.append({'bank': bank, 'first': k, 'nfr': n, 'addr': addr, 'page': pg, 'cpage': cpage,
+                       'lo': lo, 'hi': lo + n*fb, 'delta': (addr - lo) & 0xFFFF,
+                       'port': 0x10 | (pg << 2) | two, 'cport': 0x10 | (cpage << 2) | two})
+        return n
+    # Раздача волнами: в каждой волне каждый запрос получает по одной части. Иначе первый же запрос,
+    # порезанный на куски, съедал бы все слоты, а остальные банки остались без копий вовсе.
+    for ti, tier in enumerate(mirror_wants(level_no, banks)):
+        if ti:      # во втором и дальнейших эшелонах вперёд идут те, кому в первом досталось меньше;
+                    # герой всё равно первый — он единственный, кто есть на КАЖДОМ экране
+            got = {b: sum(m['nfr'] for m in placed if m['bank'] == b) for b, _ in tier}
+            tier = sorted(tier, key=lambda w: (w[0] not in MIRROR_RANGES_HERO, got[w[0]]))
+        todo = []
+        for bank, alts in tier:
+            if bank not in by: continue
+            pg, base, lim = by[bank]
+            fb = FRAME_BYTES_2P if bank in BANK_2PLANE else FRAME_BYTES
+            nmax = (lim - base)//fb                     # хвост банка бывает обрезан по месту
+            done = {k for m in placed if m['bank'] == bank for k in range(m['first'], m['first']+m['nfr'])}
+            var = [(f, min(n, nmax - f)) for f, n in alts if nmax - f > 0]
+            var = [v for v in var if not (set(range(v[0], v[0]+v[1])) & done)]
+            if var: todo.append([bank, var, None, None])
+        while todo and len(placed) < MIRROR_SLOTS:
+            for w in list(todo):
+                if len(placed) >= MIRROR_SLOTS: break
+                if w[2] is None:        # вариант выбираем В МОМЕНТ раздачи: к своей очереди запрос
+                    var = w[1]          # застаёт уже поредевшие куски, и выбор «по началу волны» врал
+                    pick = next((v for v in var if any(fits(w[0], v[0], v[0]+v[1]-1, c) == v[1]
+                                                       for c in chunks)), var[-1])
+                    w[2], w[3] = pick[0], pick[0] + pick[1] - 1
+                n = piece(w[0], w[2], w[3])
+                if not n: todo.remove(w); continue
+                w[2] += n
+                if w[2] > w[3]: todo.remove(w)
+    return placed
 
 def build_fgc(level, sr5, pm_tiles, fg, pages, sa):
     """Готовые тайлы фон+FG для уровня: тайлы в стр.2, таблицы и код (build/fgc.bin) — хвостом
@@ -604,7 +768,7 @@ def build_fgc(level, sr5, pm_tiles, fg, pages, sa):
     return (gbase - sa, tail)
 
 def build_kvaz(level_no=1, start=None):
-    global PERM, MIRRORS, LEVEL_NOW, BANK_2PLANE
+    global PERM, LEVEL_NOW, BANK_2PLANE
     LEVEL_NOW = level_no
     global BANK_2PLANE
     BANK_2PLANE = {b: m for b, m in BANK_2PLANE_ALL.items()
@@ -612,7 +776,6 @@ def build_kvaz(level_no=1, start=None):
     PERM = color_perm(level_no)
     global LIVE_COLORS
     LIVE_COLORS = live_colors(level_no, LEVEL_BANKS[level_no]) if not C8MODE else None
-    MIRRORS = MIRRORS_BY_LEVEL.get(level_no, {})
     pages = [bytearray(65536) for _ in range(4)]
     banks = LEVEL_BANKS[level_no]
     if C8MODE:
@@ -668,30 +831,8 @@ def build_kvaz(level_no=1, start=None):
     if not SKIP_BANKS:                     # с SKIP_BANKS набор идёт без банков: их кладёт
         for bank, page, base, limit in banks:   # загрузчик из библиотеки на дискете
             put_bank(page, base, BANK_FILE[bank], limit, bank_pmap(bank), bank)
-    # зеркальные копии кадров (см. MIRRORS выше): тот же формат, что у прямых, но пиксели отражены
-    mirr = []
-    if not C8MODE:
-        for bank, page, base, limit in banks:
-            if bank not in MIRRORS: continue
-            spec = MIRRORS[bank]
-            addr, first, nfr = spec[0], spec[1], spec[2]
-            cpage = spec[3] if len(spec) > 3 else page
-            frames = parse_sprite_asm(SRC / f'{BANK_FILE[bank]}.asm')[first:first+nfr]
-            two = BANK_2PLANE.get(bank)                 # великаны лежат в двух плоскостях: кадр 288 Б
-            fb = FRAME_BYTES_2P if two else FRAME_BYTES
-            end = addr + len(frames)*fb
-            assert end <= 65536, (BANK_FILE[bank], hex(end))
-            assert all(v == 0 for v in pages[cpage][addr:end]), f'область зеркал банка {bank} занята'
-            for k, fr in enumerate(frames):
-                flip = [row[::-1] for row in fr]
-                pages[cpage][addr + k*fb: addr + (k+1)*fb] = \
-                    sprite_frame_bytes_2p(flip, two) if two else sprite_frame_bytes(flip, bank_pmap(bank))
-            # для движка: страница, границы адреса кадра по старшему байту и смещение до копии
-            lo = base + first*fb
-            hi = lo + len(frames)*fb
-            mirr.append((page, lo >> 8, hi >> 8, (addr - lo) & 0xFFFF, bank, cpage))
-    while len(mirr) < MIRROR_SLOTS:
-        mirr.append((0, 0xFF, 0, 0, 0, 0))       # пустая запись: LO выше любого адреса
+    # Зеркальные копии кадров кладутся ПОСЛЕДНИМИ (см. place_mirrors ниже): им отдаётся всё, что
+    # осталось свободным в образе, а значит образ к этому моменту должен быть уже собран целиком.
     # страница 3: шрифт $0000 (64 символа x 32 Б), панель $1000 (256x32), оружие $2000 (4 x 192), вкл/выкл $2400 (2 x 288)
     font = sr5_rows(pletter_depack((SRC / 'font.SR5.plet1').read_bytes()), 16)
     for c in range(64):
@@ -772,6 +913,20 @@ def build_kvaz(level_no=1, start=None):
         for slot, mus in ((0xC000, 'music-menu.mus'), (0xD000, 'music-intro.mus')):
             mb = (SRC / mus).read_bytes(); assert len(mb) <= 0x1000
             pages[2][slot:slot+len(mb)] = mb
+    # --- зеркальные копии кадров: раздача остатков места. Строго ПОСЛЕ всех прочих блоков ---
+    mirr = []
+    if not C8MODE:
+        pool_on = not any(b in BANK_2PLANE for b, *_ in banks)   # с пулом стр.3 $A000-$C800 занята
+        layout = kvaz_layout(level_no, banks, fg, lvl_end, pool_on)
+        global MIRRORS
+        MIRRORS = place_mirrors(pages, banks, level_no, layout, bank_pmap)
+        mirr = [(m['page'], m['lo'] >> 8, m['hi'] >> 8, m['delta'], m['bank'], m['cpage']) for m in MIRRORS]
+        nb = sum(m['nfr'] * (FRAME_BYTES_2P if m['bank'] in BANK_2PLANE else FRAME_BYTES) for m in MIRRORS)
+        print(f'  зеркальные копии: {len(MIRRORS)} записей из {MIRROR_SLOTS}, {nb} Б — ' +
+              ', '.join(f'банк {m["bank"]} кадры {m["first"]}..{m["first"]+m["nfr"]-1} '
+                        f'-> стр.{m["cpage"]} ${m["addr"]:04X}' for m in MIRRORS))
+    while len(mirr) < MIRROR_SLOTS:
+        mirr.append((0, 0xFF, 0, 0, 0, 0))       # пустая запись: LO выше любого адреса
     if not C8MODE:
         blob = level_table_blob(level_palette(), banks, fg, level_no in FGC_LEVELS and not C8MODE)
         # Сторож: ROM копирует таблицу уровня в ОЗУ по константе LEVELTAB_LEN из gen_data.asm той

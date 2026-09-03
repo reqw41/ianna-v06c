@@ -32,21 +32,24 @@ a = sym['random']; rd = sym['randData']
 cpu.mem[a:a+9] = bytes((0x3A, rd & 0xFF, rd >> 8, 0xC6, 0x4D, 0x32, rd & 0xFF, rd >> 8, 0xC9))
 rv.START = tuple(int(v) for v in ST.split(',')); rv.start_game(cpu, keys, sym)
 
-VM = sym['vec_mirror_src']; SRC = sym['vec_spr_src']; DIR = sym['vec_spr_dir']; PORT = sym['vec_spr_port']
+VM = sym['vec_mirror_src']; HIT = sym['vm_hit']; SRC = sym['vec_spr_src']; DIR = sym['vec_spr_dir']
+PORT = sym['vec_spr_port']
 RS = sym['RunScripts']; FC = sym['FrameCounter']; mem = cpu.mem
 two = B.BANK_2PLANE_BY_LEVEL.get(L, set())
 banks = list(B.LEVEL_BANKS[L])
-MIRR = B.MIRRORS_BY_LEVEL.get(L, {})
 cnt = collections.Counter(); tot = collections.Counter(); mtot = collections.Counter()
+sub = collections.Counter()          # (банк, кадр) -> сколько раз подменён готовой копией
+last = [None]
 
 def hit():
     src = mem[SRC] | (mem[SRC+1] << 8); pg = (mem[PORT] >> 2) & 3; d = mem[DIR]
+    last[0] = None
     for b, bpg, base, lim in banks:
         if bpg == pg and base <= src < lim:
             fb = 288 if b in two else 576
             k = (src - base) // fb
             tot[b] += 1
-            if d: cnt[(b, k)] += 1; mtot[b] += 1
+            if d: cnt[(b, k)] += 1; mtot[b] += 1; last[0] = (b, k)
             return
 
 ticks = 0; step = cpu.step
@@ -59,6 +62,8 @@ while ticks < NT:
     if LR and ticks == 240: keys.clear()
     while not cpu.halted:
         if cpu.pc == VM: hit()
+        elif cpu.pc == HIT:
+            if last[0]: sub[last[0]] += 1      # подмена состоялась: дальше идёт ПРЯМОЙ блит
         elif cpu.pc == RS: ticks += 1; mem[FC] = ticks & 0xFF
         step()
     cpu.halted = False
@@ -70,11 +75,9 @@ print(f'ур.{L} сцена {ST}, {NT} тиков{" (влево/вправо/с�
 for b, bpg, base, lim in banks:
     if not tot[b]: continue
     fb = 288 if b in two else 576
-    spec = MIRR.get(b)
-    covered = set(range(spec[1], spec[1]+spec[2])) if spec else set()
-    got = [f'{k}x{n}' for (bb, k), n in sorted(cnt.items()) if bb == b and k in covered]
-    left = [f'{k}x{n}' for (bb, k), n in sorted(cnt.items()) if bb == b and k not in covered]
-    nleft = sum(n for (bb, k), n in cnt.items() if bb == b and k not in covered)
+    got = [f'{k}x{sub[(b,k)]}' for (bb, k), n in sorted(cnt.items()) if bb == b and sub[(b, k)]]
+    left = [f'{k}x{n-sub[(b,k)]}' for (bb, k), n in sorted(cnt.items()) if bb == b and n > sub[(b, k)]]
+    nleft = sum(n - sub[(b, k)] for (bb, k), n in cnt.items() if bb == b)
     tag = '2пл' if b in two else '16ц'
     print(f'  банк {b:2} {NAME[b]:22} {tag} стр.{bpg} ${base:04X}: выводов {tot[b]:5}, зеркальных {mtot[b]:5}'
           f' (копиями закрыто {mtot[b]-nleft}, на лету {nleft})')
