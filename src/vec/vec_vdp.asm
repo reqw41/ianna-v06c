@@ -1788,16 +1788,15 @@ vpb_y:
 	rlca
 	rlca
 	rlca
-	ld (vec_tmp_row16),a
+	ld e,a			; E = sy*16 (в ячейке держать незачем — регистр свободен)
 	ld a,(vec_tmp_nx)
 	ld b,a
 	ld a,(vec_tmp_sx)
 	ld c,a
 vpb_x:
-	ld a,(vec_tmp_row16)
+	ld a,e			; H уже стоит на таблице слотов (метка строки выше)
 	or c
 	ld l,a
-	ld h,vec_slot_tab/256
 	ld (hl),$fe		; грязный супертайл без слота: рисуется прямо в VRAM (и BG, и FG)
 vpb_x_next:
 	inc c
@@ -1899,11 +1898,18 @@ vpb_clr3:
 ; vpb_rect_assign: HL -> [x px, y px, nx, ny (символы по 8)]; грязным ($FE) супертайлам под ним — слоты.
 ; nx = 0 — пропуск. Переполнение слотов -> vec_tmp_ovf = 1.
 vpb_rect_assign:
+	; Регистры вместо ячеек: C = sx0, E = sx1, B = текущая строка (sy*16), D = L конца строки,
+	; HL = указатель в таблицу слотов (по строке идём inc l — sx0 <= sx1 <= 15, за строку не выходим).
+	; Ширина/высота умножаются сдвигом вместо цикла «прибавить 8 nx раз» (nx, ny — размер спрайта
+	; в символах, <= 31: сдвиг даёт то же по модулю 256, а перенос — то же условие обрезки).
 	inc hl
 	inc hl
 	ld a,(hl)		; nx
 	or a
 	ret z
+	add a,a
+	add a,a
+	add a,a			; nx*8
 	ld b,a
 	dec hl
 	dec hl
@@ -1913,14 +1919,11 @@ vpb_rect_assign:
 	rrca
 	rrca
 	and $0f
-	ld (vec_tmp_sx),a	; sx0
+	ld c,a			; C = sx0
 	ld a,(hl)
 	dec a
-vpb_sx1:
-	add a,8
+	add a,b			; x - 1 + nx*8
 	jp c,vpb_sx1_clip
-	dec b
-	jp nz,vpb_sx1		; x + nx*8 - 1
 	rrca
 	rrca
 	rrca
@@ -1930,24 +1933,22 @@ vpb_sx1:
 vpb_sx1_clip:
 	ld a,15
 vpb_sx1_ok:
-	ld (vec_tmp_sx1),a	; sx1
+	ld e,a			; E = sx1
 	inc hl
 	ld a,(hl)		; y px
 	cp 160
 	ret nc			; панель
+	ld d,a
 	and $f0
-	ld (vec_tmp_sy),a	; sy0*16
+	ld b,a			; B = sy0*16
 	inc hl
 	inc hl
-	ld b,(hl)		; ny
-	dec hl
-	dec hl
-	ld a,(hl)		; y
-	dec a
-vpb_sy1:
-	add a,8
-	dec b
-	jp nz,vpb_sy1		; y + ny*8 - 1
+	ld a,(hl)		; ny
+	add a,a
+	add a,a
+	add a,a			; ny*8
+	add a,d
+	dec a			; y - 1 + ny*8 (по модулю 256 — как старый цикл)
 	cp 160
 	jp c,vpb_sy_ok
 	ld a,159
@@ -1955,13 +1956,14 @@ vpb_sy_ok:
 	and $f0
 	ld (vec_tmp_ny),a	; sy1*16
 vpb_sy:
-	ld a,(vec_tmp_sx)
-vpb_sxl:
-	ld b,a
-	ld a,(vec_tmp_sy)
-	or b
+	ld a,b
+	or e
+	ld d,a			; D = L конца строки
+	ld a,b
+	or c
 	ld l,a
 	ld h,vec_slot_tab/256
+vpb_sxl:
 	ld a,(hl)
 	cp $fe
 	jp nz,vpb_sx_next	; не грязный (или уже со слотом)
@@ -1972,38 +1974,22 @@ vpb_sxl:
 	inc a
 	ld (vec_slot_next),a
 vpb_sx_next:
-	ld a,(vec_tmp_sx1)
-	cp b
+	ld a,l
+	cp d
 	jp z,vpb_sy_next
-	ld a,b
-	inc a
+	inc l
 	jp vpb_sxl
 vpb_sy_next:
-	ld a,(vec_tmp_sy)
-	ld b,a
 	ld a,(vec_tmp_ny)
 	cp b
 	ret z
 	ld a,b
 	add a,16
-	ld (vec_tmp_sy),a
+	ld b,a
 	jp vpb_sy
 vpb_ovf:
 	ld a,1
 	ld (vec_tmp_ovf),a
-	ret
-vpb_overflow:
-	pop bc
-	pop de
-	ld hl,vec_slot_tab
-	ld b,0
-vpb_clr2:
-	ld (hl),$ff
-	inc l
-	dec b
-	jp nz,vpb_clr2
-	xor a
-	ld (vec_pool_on),a
 	ret
 
 ; vec_pool_flush — вместо TransferDirtyTiles в RedrawScreen_part2: слоты -> VRAM,
