@@ -55,6 +55,9 @@ def map_len():
     return len(B.build_level(info, B.STRING_AREA_KVAZ))
 
 def fixed_blocks():
+    """Брони под служебные блоки — КРУГЛЫЕ, с запасом: этот перебор ищет раскладку банков, и
+    пара сотен байт погоды тут не делает. Зеркальные копии кадров сюда не входят: им отдаётся
+    то, что осталось, и считает это build_edd.kvaz_layout — уже по фактическим длинам блоков."""
     f = [(1, 0x8000, (map_len() + 255) & ~255, 'карта'),
          (0, 0 if (TILES_LOW or HERO_FIX) else ((0x10000 - NTILES*128) & ~0xFF if TILES_END else B.BG_TILES_BASE),
           NTILES * 128, 'тайлы'),
