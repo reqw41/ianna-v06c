@@ -118,6 +118,24 @@ OVERRIDES = {
     ('scripts.asm', 534): ['ld hl,(z_ix)', 'ld a,l', 'add a,10', 'ld l,a', 'jp nc,$+4', 'inc h',
                            'ld a,(hl)'],                                  # ld a,(ix+10)
 
+    # scripts.asm, action_patrol (184..234) — скрипт патрулирования обоих врагов каждый тик,
+    # восемь обращений к (ix+5)/(iy+d) на вызов. HL здесь — указатель на скрипт (строка 185
+    # ex de,hl), но живёт он только до строки 191: строка 199 кладёт в HL ENTITY_PLAYER_POINTER,
+    # а после строки 202 HL больше нигде в функции не читается — ниже он свободен под указатель.
+    ('scripts.asm', 187): ['push hl', 'ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)', 'pop hl'],
+    ('scripts.asm', 195): ['ld hl,(z_ix)', 'ld e,(hl)'],                  # ld e,(ix+0)
+    ('scripts.asm', 196): ['inc hl', 'ld d,(hl)'],                        # ld d,(ix+1)
+    ('scripts.asm', 197): ['ld h,d', 'ld l,e', 'ld (z_iy),hl'],           # ld iyh,d / ld iyl,e
+    ('scripts.asm', 198): [],
+    ('scripts.asm', 208): ['ld hl,(z_iy)'] + ['inc hl']*4 + ['cp (hl)'],  # cp (iy+4)
+    # 212 и 216 читают одно и то же поле подряд: between них только and/cp/jp — HL доживает
+    ('scripts.asm', 212): ['ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)'],   # ld a,(ix+5)
+    ('scripts.asm', 216): ['ld a,(hl)'],                                     # ld a,(ix+5)
+    ('scripts.asm', 221): ['ld hl,(z_iy)', 'inc hl', 'inc hl', 'inc hl', 'sub (hl)'],  # sub (iy+3)
+    ('scripts.asm', 231): ['ld hl,(z_iy)', 'inc hl', 'inc hl', 'inc hl', 'sub (hl)'],  # sub (iy+3)
+    # в action_patrol_noplayer приходят с тремя разными HL (z_iy+4, z_iy+3, z_ix+5) — берём заново
+    ('scripts.asm', 234): ['ld hl,(z_ix)'] + ['inc hl']*5 + ['ld a,(hl)'],   # ld a,(ix+5)
+
     # scripts.asm, check_stile_entity_overlap (1727..1751) — зовётся из десятка скриптов объектов
     # каждый тик, десять обращений к (ix+d)/(iy+d) на вызов. Три наблюдения:
     #  * HL функция и так не бережёт: внутри стоит call check_sprite_overlap, который его портит,
