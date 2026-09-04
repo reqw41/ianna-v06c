@@ -86,9 +86,20 @@ def make_cpu(keys):
         off = ((st['trk'] * 2 + st['side']) * 5 + (st['sec'] - 1)) * 1024
         st['buf'] = fdd[off:off + 1024] if fdd and off + 1024 <= len(fdd) else b'\x00' * 1024
         st['pos'] = 0; st['busy'] = True
+    # ВИ53 счётчик 0 — секундомер фазы кадра (vec_phase/vec_budget/сброс пула ждут луч по нему). Без
+    # модели порт отдавал константу, и любое ожидание «пока луч пройдёт» крутилось вечно (2026-09-04).
+    # Время здесь — счётчик инструкций: ~8 тактов Вектора на инструкцию = 4 тика ВИ53 (1.5 МГц).
+    pit = {'reload': 0, 'latched': None, 'wr': 0, 'rd': 0}
+    def pit_val():
+        return (0xFFFF - (((cpu.icount - pit['reload']) * 4) & 0xFFFF)) & 0xFFFF
     def out_handler(port, val):
         if port == 0x03: cur[0] = val
         elif port == 0x10: cpu.kv_out(port, val)
+        elif port == 0x08:
+            if val == 0: pit['latched'] = pit_val(); pit['rd'] = 0
+        elif port == 0x0B:
+            if pit['wr'] == 0: pit['wr'] = 1
+            else: pit['wr'] = 0; pit['reload'] = cpu.icount
         elif port == 0x1C: st['side'] = 0 if (val & 4) else 1   # бит 2 инвертирован (проверено сверкой с образом)
         elif port == 0x1A: st['trk'] = val
         elif port == 0x19: st['sec'] = val
@@ -97,6 +108,10 @@ def make_cpu(keys):
             elif val == 0x58: st['trk'] += 1; st['busy'] = False       # STEP-IN с обновлением трека
             elif val == 0x80: fdd_seek_read()                           # READ SECTOR
     def in_handler(port):
+        if port == 0x0B:
+            v = pit['latched'] if pit['latched'] is not None else pit_val()
+            if pit['rd'] == 0: pit['rd'] = 1; return v & 0xFF
+            pit['rd'] = 0; pit['latched'] = None; return v >> 8
         if port == 0x1B:                    # статус: бит0 BUSY, бит1 DRQ
             return (0x03 if st['busy'] and st['pos'] < len(st['buf']) else 0x00)
         if port == 0x18:                    # данные
