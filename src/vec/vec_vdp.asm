@@ -2016,15 +2016,43 @@ vpb_y:
 	ld a,(vec_tmp_sy)
 	cp 10
 	jp nc,vpb_rect_done	; панель — без слотов
-	; Метка «в строке супертайлов есть грязные»: сброс пула иначе перечитывает ВСЕ прямоугольники
-	; на каждой из 10 строк (на сцене ур.1 4,5 занято 4 строки из 10). Метки лежат в хвосте таблицы
-	; слотов ($A0..$A9): индексов >= 160 у неё нет (vec_slot_for_bc режет y >= 160).
-	; Полная очистка таблицы ($FF) метки только взводит — это безопасно.
+	; ПОЛОСА ГРЯЗНОГО В СТРОКЕ: vec_slot_tab[160+y] = xmin+1 (0 = строка чиста),
+	; vec_slot_tab[176+y] = xmax+1. По ней идут оба прохода RedrawInvTiles и сброс пула: без неё
+	; сброс перечитывал ВСЕ прямоугольники на каждой из 10 строк, а проходы перебирали все 16
+	; колонок строки. Хвост таблицы слотов свободен: индексов >= 160 у неё нет (vec_slot_for_bc
+	; режет y >= 160), метки снимает сам сброс.
 	ld e,a
 	add a,160
 	ld l,a
 	ld h,vec_slot_tab/256
-	ld (hl),1
+	ld a,(vec_tmp_sx)
+	inc a
+	ld c,a			; C = xmin+1 этого прямоугольника
+	ld a,(hl)
+	or a
+	jp z,vpb_mn_set		; строка была чиста
+	cp c
+	jp c,vpb_mn_keep	; старый xmin меньше
+vpb_mn_set:
+	ld (hl),c
+vpb_mn_keep:
+	ld a,(vec_tmp_sx)
+	ld b,a
+	ld a,(vec_tmp_nx)
+	add a,b			; sx+nx = xmax+1
+	cp 17
+	jp c,vpb_mx_ok
+	ld a,16
+vpb_mx_ok:
+	ld c,a
+	ld a,l
+	add a,16
+	ld l,a
+	ld a,(hl)
+	cp c
+	jp nc,vpb_mx_keep
+	ld (hl),c
+vpb_mx_keep:
 	ld a,e
 	rlca
 	rlca
@@ -2315,57 +2343,40 @@ vpf_go:
 	dec a
 	ld (vec_hr_phase),a	; $FF: первый же слот — «новый круг»: герой вперёд, если влезает (или луч уже ниже)
 vpf_yloop:
-	ld a,(vec_tmp_sy)	; строка без грязных супертайлов — не перебирать прямоугольники (см. vpb_y)
-	ld b,a
-	add a,160
+	ld a,(vec_tmp_sy)	; полоса грязного в строке: [xmin..xmax] из vec_slot_tab[160+y]/[176+y]
+	add a,160		; (vpb_y). Строка без грязного (xmin+1 = 0) целиком пропускается.
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
 	or a
 	jp z,vpf_ynext
 	ld (hl),0
-	ld a,b			; sy*16 — один раз на строку, а не на каждую колонку
-	rlca
-	rlca
-	rlca
-	rlca
-	ld (vec_tmp_row16),a
-	ld a,(ndirtyrects)
-	ld (vec_tmp_rc),a
-	ld hl,tiles_dirty
-	ld (vec_tmp_rp),hl
-vpf_rect:
-	ld hl,(vec_tmp_rp)
-	ld a,(hl)		; xs
-	ld (vec_tmp_sx),a
-	inc hl
-	ld b,(hl)		; ys
-	inc hl
-	ld a,(hl)		; nx
-	ld (vec_tmp_nx),a
-	inc hl
-	ld a,(hl)		; ny
-	inc hl
-	ld (vec_tmp_rp),hl
-	add a,b
-	ld c,a			; ys+ny
+	ld c,a			; C = xmin+1
+	ld a,l
+	add a,16
+	ld l,a
+	ld a,(hl)		; xmax+1
+	ld (hl),0
+	sub c
+	inc a
+	ld (vec_tmp_bx),a	; колонок в полосе
 	ld a,(vec_tmp_sy)
-	cp b
-	jp c,vpf_next		; y < ys
-	cp c
-	jp nc,vpf_next		; y >= ys+ny
-	ld a,(vec_tmp_nx)
-	ld (vec_tmp_bx),a	; счётчик колонок
-	ld a,(vec_tmp_sx)
-	ld (vec_tmp_cx),a	; текущая колонка
+	rlca
+	rlca
+	rlca
+	rlca
+	add a,c
+	dec a
+	ld (vec_tmp_cx),a	; индекс карты = y*16 + xmin
 vpf_x:
-	ld a,(vec_tmp_row16)
-	ld b,a			; sy*16
 	ld a,(vec_tmp_cx)
-	ld c,a			; колонка — в регистр: vpf_slot берёт её оттуда
-	or b
 	ld l,a
 	ld h,vec_slot_tab/256
+	and $f0
+	ld b,a			; B = y*16
+	ld a,l
+	and $0f
+	ld c,a			; C = колонка — vpf_slot берёт её оттуда
 	ld a,(hl)
 	cp 80
 	jp c,vpf_slot_chk
@@ -2436,11 +2447,6 @@ vpf_x_adv:
 	dec a
 	ld (vec_tmp_bx),a
 	jp nz,vpf_x
-vpf_next:
-	ld a,(vec_tmp_rc)
-	dec a
-	ld (vec_tmp_rc),a
-	jp nz,vpf_rect
 vpf_ynext:
 	ld a,(vec_tmp_sy)
 	inc a

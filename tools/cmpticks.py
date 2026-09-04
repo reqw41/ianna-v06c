@@ -10,13 +10,20 @@
   python3 tools/cmpticks.py <romA> <lstA> <eddA> <romB> <lstB> <eddB> X,Y [тиков=60] [прогрев=30]
   python3 tools/cmpticks.py --dirs <каталогA> <каталогB> [тиков=60] [прогрев=30]
 Второй вид проходит те же шесть сцен, что gates.sh (каталоги из gates.sh snap).
-Печатает первый разошедшийся тик и смещения в ENTITY_DATA/SPDATA либо «совпало».
+Ключ --phase добавляет третий прогон: сборка A с лучом на 4 % дальше (IANNA_PITSCALE=104, код тот
+же). Тики, на которых VRAM отличается уже от этого, помечены как ФАЗОВЫЙ ШУМ и из сверки исключены:
+сброс пула сам решает, что вывести сейчас, а что позади луча, и содержимое кадра на таких тиках
+законно зависит от фазы (проверено 2026-09-04: одна и та же сборка, ур.1 4,5, тики 47..64 — те же
+21 байт, что и между сборками). ENTITY_DATA/SPDATA обязаны совпадать ВСЕГДА.
+Сверяются ENTITY_DATA, SPDATA и хэш ВСЕЙ VRAM на КАЖДОМ тике. Печатает первый разошедшийся
+тик и смещения либо «совпало».
 ГПСЧ подменяется как в cmpbuild --norand (A := randData += $4D).
 """
 import sys, os, pathlib, hashlib
 
-def run(rom, lst, edd, start, nticks, settle):
+def run(rom, lst, edd, start, nticks, settle, pitscale=100):
     os.environ['IANNA_EDD'] = edd
+    os.environ['IANNA_PITSCALE'] = str(pitscale)
     for m in ('run_vec',):
         sys.modules.pop(m, None)
     argv = sys.argv; sys.argv = [argv[0]]
@@ -54,7 +61,8 @@ def run(rom, lst, edd, start, nticks, settle):
                 ticks += 1; cpu.mem[FC] = ticks & 0xFF
                 if ticks == settle: keys.append('right')   # бег вправо — с фиксированного тика
                 if ticks > settle:
-                    out.append((ticks, bytes(cpu.mem[E:E + 96]), bytes(cpu.mem[SP:SP + 128])))
+                    out.append((ticks, bytes(cpu.mem[E:E + 96]), bytes(cpu.mem[SP:SP + 128]),
+                                hashlib.md5(bytes(cpu.mem[0x8000:0x10000])).digest()))
             cpu.step()
         cpu.halted = False
         if cpu.ie: cpu.ie = False; cpu.push(cpu.pc); cpu.pc = 0x38
@@ -65,6 +73,7 @@ SCENES = ((1, '4,5'), (2, '4,6'), (3, '1,0'), (3, '1,2'), (4, '6,2'), (6, '6,1')
 def main():
     A = [x for x in sys.argv[1:] if not x.startswith('--')]
     if '--dirs' in sys.argv:
+        argv0 = list(sys.argv)
         da, db = A[0], A[1]
         n = int(A[2]) if len(A) > 2 else 60
         settle = int(A[3]) if len(A) > 3 else 30
@@ -72,6 +81,7 @@ def main():
         for lv, xy in SCENES:
             sys.argv = [sys.argv[0], f'{da}/l{lv}.rom', f'{da}/l{lv}.lst', f'{da}/l{lv}.edd',
                         f'{db}/l{lv}.rom', f'{db}/l{lv}.lst', f'{db}/l{lv}.edd', xy, str(n), str(settle)]
+            if '--phase' in argv0: sys.argv.append('--phase')
             print(f'  ур.{lv} {xy:<4}', end=' ')
             bad += main()
         return 1 if bad else 0
@@ -80,17 +90,23 @@ def main():
     settle = int(A[8]) if len(A) > 8 else 30
     ra, va = run(A[0], A[1], A[2], st, n, settle)
     rb, vb = run(A[3], A[4], A[5], st, n, settle)
-    for (t, e1, s1), (_, e2, s2) in zip(ra, rb):
-        if e1 != e2 or s1 != s2:
+    noisy = set()
+    if '--phase' in sys.argv:
+        rp, _ = run(A[0], A[1], A[2], st, n, settle, pitscale=104)
+        noisy = {t for (t, _e, _s, v1), (_, _e2, _s2, v2) in zip(ra, rp) if v1 != v2}
+    for (t, e1, s1, v1), (_, e2, s2, v2) in zip(ra, rb):
+        if e1 != e2 or s1 != s2 or (v1 != v2 and t not in noisy):
             print(f'РАЗОШЛОСЬ на тике {t}:', end='')
+            if v1 != v2: print(' VRAM', end='')
             for nm, x, y in (('ENTITY', e1, e2), ('SPDATA', s1, s2)):
                 d = [i for i in range(len(x)) if x[i] != y[i]]
                 if d: print(f' {nm} смещения {d[:10]} {[(x[i], y[i]) for i in d[:6]]}', end='')
             print()
             return 1
-    ok = 'VRAM совпал' if va == vb else 'VRAM РАЗОШЁЛСЯ'
-    print(f'совпало тик-в-тик на {len(ra)} тиках (прогрев {settle}), {ok}, '
-          f'md5 {hashlib.md5(va).hexdigest()[:8]}')
+    vd = sum(1 for (t, _e, _s, v1), (_, _e2, _s2, v2) in zip(ra, rb) if v1 != v2)
+    note = f', фазовый шум: {len(noisy)} тиков, из них расходятся {vd}' if noisy else ''
+    print(f'совпало тик-в-тик на {len(ra)} тиках (прогрев {settle}), VRAM каждого тика совпал'
+          f'{note}, md5 {hashlib.md5(va).hexdigest()[:8]}')
     return 0
 
 if __name__ == '__main__':

@@ -57,9 +57,7 @@ vec_tmp_sx1:	db 0
 vec_tmp_sy:	db 0
 vec_tmp_nx:	db 0
 vec_tmp_ny:	db 0
-vec_tmp_row16:	db 0
-vec_tmp_rc:	db 0		; сброс пула без стека: счётчик прямоугольников, указатель, счётчик и текущая колонка
-vec_tmp_rp:	dw 0
+vec_tmp_rp:	dw 0		; раздача слотов: бегунок по vec_spr_prev
 vec_tmp_bx:	db 0
 vec_tmp_cx:	db 0
 vec_tmp_ovf:	db 0		; раздача слотов: переполнение
