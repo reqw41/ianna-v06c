@@ -2073,6 +2073,13 @@ vpb_rect_done:
 	; появляется лишь при сбросе — на кадр герой пропадает/режется). Остальное — в VRAM одним проходом.
 	xor a
 	ld (vec_tmp_ovf),a
+	ld a,(vec_slot_next)	; слоты героя — с этого номера (он первый в списке) до конца его раздачи
+	ld (vec_hr_s0),a
+	ld (vec_hr_s1),a
+	ld a,1
+	ld (vec_hr_want),a
+	ld hl,vec_hr_list
+	ld (vec_hr_lp),hl
 	ld de,SPDATA
 	ld c,MAX_SPRITES
 	ld hl,vec_spr_prev
@@ -2099,6 +2106,14 @@ vpb_spr:
 	call vpb_rect_assign	; прошлый
 	pop bc
 	pop de
+	ld a,(vec_hr_want)	; первый перерисованный спрайт (герой) закрывает диапазон [s0,s1)
+	or a
+	jp z,vpb_spr_copy
+	xor a
+	ld (vec_hr_want),a
+	ld a,(vec_slot_next)
+	ld (vec_hr_s1),a
+	call vpb_hr_calc	; цена и дедлайны луча для слотов героя (arkos_hot.asm, зазор)
 vpb_spr_copy:
 	ld hl,3			; prev := текущий (x,y,nx,ny)
 	add hl,de
@@ -2182,6 +2197,9 @@ vpb_sx1_clip:
 	ld a,15
 vpb_sx1_ok:
 	ld e,a			; E = sx1
+	ld a,(vec_hr_want)	; герой: ±2 колонки под росчерк меча (arkos_hot.asm, зазор)
+	or a
+	call nz,vpb_hr_widen
 	inc hl
 	ld a,(hl)		; y px
 	cp 160
@@ -2221,6 +2239,16 @@ vpb_sxl:
 	ld (hl),a
 	inc a
 	ld (vec_slot_next),a
+	ld a,(vec_hr_want)	; слот героя — в список (сброс выводит их отдельно, позади луча)
+	or a
+	jp z,vpb_sx_next
+	push hl
+	ld a,l
+	ld hl,(vec_hr_lp)
+	ld (hl),a
+	inc hl
+	ld (vec_hr_lp),hl
+	pop hl
 vpb_sx_next:
 	ld a,l
 	cp d
@@ -2269,8 +2297,12 @@ vpf_go:
 	ei
 	ld hl,vpf_x_next	; адрес возврата блита на весь сброс один — не на каждый слот
 	ld (vec_blit_ret),hl
+	ld sp,POOL_BASE+80*128+$180	; $C980 (страница 3, под музыкой, выше маркера $C800): стек для
+				; call/ISR в сбросе — настоящий стек в стековом режиме портил бы квазидиск
 	xor a
 	ld (vec_tmp_sy),a	; текущая строка
+	dec a
+	ld (vec_hr_phase),a	; $FF: первый же слот — «новый круг»: герой вперёд, если влезает (или луч уже ниже)
 vpf_yloop:
 	ld a,(vec_tmp_sy)	; строка без грязных супертайлов — не перебирать прямоугольники (см. vpb_y)
 	ld b,a
@@ -2325,9 +2357,27 @@ vpf_x:
 	ld h,vec_slot_tab/256
 	ld a,(hl)
 	cp 80
-	jp c,vpf_slot
+	jp c,vpf_slot_chk
 	ld (hl),$ff		; прямой ($FE) или уже выведен — вернуть «пусто» (таблица не чистится)
 	jp vpf_x_next
+vpf_slot_chk:
+	; ГЕРОЙ — ПОЗАДИ ЛУЧА. Сброс дольше кадра, луч обгоняет его раз за круг и показывал героя
+	; половиной старой позы («середина меча», tools/beam_vec.py 2026-09-04). Слоты героя [s0,s1)
+	; в общем обходе пропускаются и выводятся списком (vpf_hero), когда луч прошёл его нижнюю
+	; полосу либо они успевают до его прихода: кадр показывает героя целиком старым или новым.
+	ld d,a
+	ld a,(vec_hr_s0)	; выведенные слоты героя уже $FF — сюда не доходят
+	cp d
+	jp z,vpf_ge0
+	jp nc,vpf_slot_go	; slot < s0
+vpf_ge0:
+	ld a,(vec_hr_s1)
+	cp d
+	jp z,vpf_slot_go	; slot >= s1
+	jp c,vpf_slot_go
+	jp vpf_x_next		; слот героя — позже
+vpf_slot_go:
+	ld a,d
 vpf_slot:
 	ld (hl),$ff		; слот выведен — больше не выводить (пересечения прямоугольников)
 	ld l,a			; адрес слота: $A000 + slot*128 (inline vec_pool_addr)
@@ -2358,6 +2408,16 @@ vpf_bud_ok:
     endif			; ВИ53: фаза всегда реальная, самоучёт сброса не нужен
 	jp vec_blit128_vram
 vpf_x_next:
+	ld a,(vec_hr_lp)	; герой не выведен: новый круг луча — герой вперёд, пока влезает, потом обратно сюда
+	cp vec_hr_list & $ff
+	jp z,vpf_x_adv
+	call vec_hr_lap
+	or a
+	jp z,vpf_x_adv
+	ld hl,vpf_x_adv
+	ld (vec_hr_ret),hl
+	jp vpf_hero
+vpf_x_adv:
 	ld a,(vec_tmp_cx)
 	inc a
 	ld (vec_tmp_cx),a
@@ -2376,6 +2436,18 @@ vpf_ynext:
 	ld (vec_tmp_sy),a
 	cp 10
 	jp nz,vpf_yloop
+vpf_hr_wait:			; чужие кончились, герой ждёт луча: позади него, либо впереди, если влезает
+	ld a,(vec_hr_lp)	; список пуст — герой выведен (или его не было)
+	cp vec_hr_list & $ff
+	jp z,vpf_fin
+	call vec_phase
+	call vec_hr_fits
+	or a
+	jp z,vpf_hr_wait
+	ld hl,vpf_fin
+	ld (vec_hr_ret),hl
+	jp vpf_hero
+vpf_fin:
 	ld hl,(vec_sp_save)
 	ld sp,hl		; настоящий SP
 	; Порт — ДО call/halt. Раньше стековый режим держался до vpf_done, и call vec_phase вместе с ISR
