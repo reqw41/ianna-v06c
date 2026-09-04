@@ -310,6 +310,8 @@ def screens_of(level):
     addrs = [level[22+2*i] | (level[23+2*i] << 8) for i in range(n)]
     return [aplib_depack(level, a - 0x8000)[0] for a in addrs]
 
+FG_OPAQUE = []                  # по индексу: передний тайл непрозрачен (см. build_kvaz)
+
 def fg_lut_lines(fg):
     """Передние тайлы: пары (номер тайла, индекс). Раньше здесь лежала таблица на 256 байт с прямым
     доступом по номеру тайла, но занято в ней всего 12 записей — а 256 байт в ROM, где свободных
@@ -320,7 +322,8 @@ def fg_lut_lines(fg):
              '; пары (номер тайла, индекс); адрес тайла = FG_TILES_BASE + индекс*256',
              'fg_tile_pairs:']
     for i, t in enumerate(fg):
-        lines.append(f'\tdb {t}, {i}')
+        o = 0x80 if (i < len(FG_OPAQUE) and FG_OPAQUE[i]) else 0     # бит 7 = тайл непрозрачен
+        lines.append(f'\tdb {t}, {i | o}')
     return lines
 
 def bank_tab_lines(banks):
@@ -556,7 +559,7 @@ def level_table_blob(pal, banks, fg, fgc=False):
     out += bytes([a & 0xFF, a >> 8])
     pairs = bytearray()
     for i, t in enumerate(fg):
-        pairs += bytes([t, i])                 # пары (номер тайла, индекс)
+        pairs += bytes([t, i | (0x80 if FG_OPAQUE[i] else 0)])   # пары (номер тайла, индекс; бит 7 = непрозрачен)
     assert len(pairs) <= 60, len(pairs)
     out += pairs.ljust(60, b'\x00')            # фиксированная длина: за парами идёт таблица зеркал
     out += mirror_table()                      # MIRROR_SLOTS записей по 6 Б, см. vec_mirr.asm
@@ -904,9 +907,19 @@ def build_kvaz(level_no=1, start=None):
     pages[3][0xD980:0xD980+len(sfx)] = sfx
     level = (SRC / f'level{level_no}.map').read_bytes()
     fg = sorted(set().union(*(set(s[160:320]) for s in screens_of(level))) - {0})
+    # НЕПРОЗРАЧНЫЙ передний тайл (маска нулевая во всех строках — вода уровней 2/4/8, 29 тайлов из
+    # 117 по всем уровням) кладётся в набор в формате ФОНОВОГО: 128 Б данных без маски. Движку он
+    # достаётся обычным блитом тайла (128 Б стеком) вместо 256 Б «прочитать-и-или», и бюджет DI ему
+    # нужен тайловый. Признак — бит 7 индекса в парах (номер тайла, индекс).
+    global FG_OPAQUE
+    FG_OPAQUE = []
     for i, t in enumerate(fg):
         addr = FG_TILES_BASE + i*256
-        b = fg_tile_bytes(tile_pixels(sr5, t), pm_tiles)   # c8: 192 Б, шаг 256
+        px = tile_pixels(sr5, t)
+        b = fg_tile_bytes(px, pm_tiles)                    # c8: 192 Б, шаг 256
+        opq = all(b[k*2+1] == 0 for k in range(len(b)//2))
+        if opq: b = bg_tile_bytes(px, pm_tiles)            # 128 Б, формат фонового тайла
+        FG_OPAQUE.append(opq)
         pages[0][addr:addr+len(b)] = b
     assert BG_TILES_BASE + 256*128 <= FG_TILES_BASE and FG_TILES_BASE + len(fg)*256 <= 0x10000
     info = parse_level(level)

@@ -89,7 +89,8 @@ fgc_fl:
 	jp fgc_plain2
 fgc_ff:
 	pop bc
-	ld a,(hl)		; индекс 0..31
+	ld a,(hl)		; индекс 0..31 (бит 7 = непрозрачный тайл, здесь не нужен)
+	and $7f
 	add a,a
 	add a,FGC_PTRS & $FF
 	ld l,a
