@@ -540,6 +540,22 @@ dt_a0:
 	add hl,de
     else
 	ld d,a
+	; ЧЁРНЫЙ фоновый тайл (все плоскости нули): в слот пула его кладут 64 push нуля — 1.2 тыс.
+	; тактов против 2.9 тыс. на блит 128 Б из квазидиска. Таких тайлов у уровня один-три, а
+	; занимают они треть карты: на сцене голема 14 из 21 стайла за тик. Номера приходят из набора
+	; уровня (build_edd), частый — первым, поэтому список короткий и проверяется сверху вниз.
+	; cp l/cp h флаги ставят, A не портят — номер тайла доживает до dt_norm.
+	ld hl,(vec_blk_tab)
+	cp l
+	jp z,dt_black
+	cp h
+	jp z,dt_black
+	ld hl,(vec_blk_tab+2)
+	cp l
+	jp z,dt_black
+	cp h
+	jp z,dt_black
+dt_norm:
 	rrca
 	and $7f
 	add a,BG_TILES_BASE/256
@@ -574,16 +590,10 @@ dt_blit:				; вход с готовым vec_blit_src (drawFGTile: непроз�
 	ex de,hl		; HL = dest
 	ld a,8 - C8*2		; C8: 96 Б = 6 порций по 16 Б; счётчик — в A
 dtb_loop:
-	DTB16			; развёрнуто: счётчик в памяти стоил 56 тактов на 16 байт при 352 тактах
-	DTB16			; работы; A в теле не жив, счётчик переехал в него
-    if !C8
-	DTB16
-	DTB16
-	sub 4			; 8 порций по 16 Б = 2 прохода
-    else
-	sub 2			; C8: 96 Б = 6 порций = 3 прохода
-    endif
-	jp nz,dtb_loop
+	DTB16			; развёрнуто вдвое: счётчик в памяти стоил 56 тактов на 16 байт при 352
+	DTB16			; тактах работы; A в теле не жив, счётчик переехал в него. Четыре копии
+	sub 2			; стоили ещё 80 Б ROM ради 40 тактов на тайл — они ушли под заливку
+	jp nz,dtb_loop		; чёрного тайла (dt_black), которая экономит 1.7 тыс. на стайл
 	jp dt_end
     endif
 dt_direct:
@@ -642,6 +652,55 @@ dt_end:
 	ld sp,hl
 	ei
 	ret
+    if !DEMO
+; Чёрный тайл в слот пула: 64 push нуля в СТРАНИЦУ 3 (пул лежит в ней по $A000). Прямой путь и
+; стайлы без слота идут обычной дорогой — в VRAM push не попадает (стековый режим адресует
+; страницу квазидиска, а не экран). D = номер тайла, B/C = координаты стайла.
+dt_black:
+	ld a,(vec_pool_on)
+	or a
+	jp z,dt_blk_plain
+	call vec_slot_for_bc
+	cp 80
+	jp c,dt_blk_go
+dt_blk_plain:
+	ld a,d
+	jp dt_norm
+dt_blk_go:
+	call vec_pool_addr	; HL = POOL_BASE + слот*128
+	ld de,128
+	add hl,de		; push идёт вниз — начинаем с конца слота
+	ex de,hl
+	ld a,6			; бюджет DI: окно 64 push + пролог ≈ 1.2 тыс. тактов = 4.7 ед.
+	call vec_budget
+	di
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ex de,hl
+	ld sp,hl
+	ld a,KV_STK_P3
+	out (KV_PORT),a
+	ld bc,0
+	ld a,8
+dt_blk_l:
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	dec a
+	jp nz,dt_blk_l
+	xor a
+	out (KV_PORT),a
+	ld hl,(vec_sp_save)
+	ld sp,hl
+	ei
+	ret
+    endif
 
 ; ---------------------------------------------------------------------------
 ; drawFGTile: A = тайл (≠0), B, C. Передний тайл [p][col][row]:[data,mask], 256 Б

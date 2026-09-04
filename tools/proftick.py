@@ -68,7 +68,7 @@ while ticks < SETTLE+NT:
     cpu.halted=False; nf+=1
     if cpu.ie: cpu.ie=False; cpu.push(cpu.pc); cpu.pc=0x38
 print(f'ИТОГО {tot} тактов на {NT} тиков ({nf} кадров), тактов на тик {tot/NT:.0f}, кадров на тик {nf/NT:.2f}')
-GROUPS=[('фон в слот dtb', ('dtb_loop','drawTile_nosave','dt_a0','dt_rit','drawTile','fgc_')),
+GROUPS=[('фон в слот dtb', ('dtb_loop','drawTile_nosave','dt_a0','dt_rit','drawTile','fgc_','dt_norm','dt_black','dt_blk')),
         ('FG в слот dftb', ('dftb_loop','dft_find','dft_found','dft_rit','drawFGTile','dft_exit')),
         ('прямой в VRAM dt/dft_direct', ('dt_direct','dtd_','dt_end','dft_direct','dft_plane','dft_col','dft_end')),
         ('сброс слотов vb_col/vpf', ('vb_col','vec_blit','vbc_','vpf_')),

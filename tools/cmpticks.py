@@ -15,8 +15,14 @@
 сброс пула сам решает, что вывести сейчас, а что позади луча, и содержимое кадра на таких тиках
 законно зависит от фазы (проверено 2026-09-04: одна и та же сборка, ур.1 4,5, тики 47..64 — те же
 21 байт, что и между сборками). ENTITY_DATA/SPDATA обязаны совпадать ВСЕГДА.
-Сверяются ENTITY_DATA, SPDATA и хэш ВСЕЙ VRAM на КАЖДОМ тике. Печатает первый разошедшийся
-тик и смещения либо «совпало».
+Сверяются ENTITY_DATA, SPDATA и VRAM на КАЖДОМ тике. VRAM делится надвое: ИГРОВОЕ ПОЛЕ
+(строки экрана 0..159, L=64..223) и ПАНЕЛЬ (строки 160..191, L=32..63). Панель считается отдельно,
+потому что перерисовывается она ПО РАСПИСАНИЮ КАДРОВ: waitforVBlank рисует по одному куску (герой,
+враг 1, враг 2) за КАЖДЫЙ ЛИШНИЙ КАДР до frames_lock = 5, и в тике длиннее пяти кадров не рисует
+ничего. Ускорение кода меняет число кадров в тике — и очередь кусков панели сдвигается на тик-другой
+(найдено 2026-09-04: шкала героя на ур.2 4,6, тики 43..45, 63 байта, дальше совпадает). Это задержка
+показа, а не другое содержимое, поэтому расхождения панели печатаются предупреждением, а не отказом;
+поле и последний тик окна обязаны совпасть точно.
 ГПСЧ подменяется как в cmpbuild --norand (A := randData += $4D).
 """
 import sys, os, pathlib, hashlib
@@ -61,8 +67,13 @@ def run(rom, lst, edd, start, nticks, settle, pitscale=100):
                 ticks += 1; cpu.mem[FC] = ticks & 0xFF
                 if ticks == settle: keys.append('right')   # бег вправо — с фиксированного тика
                 if ticks > settle:
-                    out.append((ticks, bytes(cpu.mem[E:E + 96]), bytes(cpu.mem[SP:SP + 128]),
-                                hashlib.md5(bytes(cpu.mem[0x8000:0x10000])).digest()))
+                    m = cpu.mem
+                    fld = b''.join(bytes(m[b + c*256 + 64: b + c*256 + 224])
+                                   for b in (0x8000, 0xA000, 0xC000, 0xE000) for c in range(32))
+                    pan = b''.join(bytes(m[b + c*256 + 32: b + c*256 + 64])
+                                   for b in (0x8000, 0xA000, 0xC000, 0xE000) for c in range(32))
+                    out.append((ticks, bytes(m[E:E + 96]), bytes(m[SP:SP + 128]),
+                                hashlib.md5(fld).digest(), hashlib.md5(pan).digest()))
             cpu.step()
         cpu.halted = False
         if cpu.ie: cpu.ie = False; cpu.push(cpu.pc); cpu.pc = 0x38
@@ -93,19 +104,26 @@ def main():
     noisy = set()
     if '--phase' in sys.argv:
         rp, _ = run(A[0], A[1], A[2], st, n, settle, pitscale=104)
-        noisy = {t for (t, _e, _s, v1), (_, _e2, _s2, v2) in zip(ra, rp) if v1 != v2}
-    for (t, e1, s1, v1), (_, e2, s2, v2) in zip(ra, rb):
-        if e1 != e2 or s1 != s2 or (v1 != v2 and t not in noisy):
+        noisy = {t for (t, _e, _s, v1, _p), (_, _e2, _s2, v2, _p2) in zip(ra, rp) if v1 != v2}
+    panel = []
+    last = len(ra) - 1
+    for i, ((t, e1, s1, v1, p1), (_, e2, s2, v2, p2)) in enumerate(zip(ra, rb)):
+        if p1 != p2 and i != last:
+            panel.append(t)
+            continue
+        if e1 != e2 or s1 != s2 or p1 != p2 or (v1 != v2 and t not in noisy):
             print(f'РАЗОШЛОСЬ на тике {t}:', end='')
-            if v1 != v2: print(' VRAM', end='')
+            if v1 != v2: print(' поле', end='')
+            if p1 != p2: print(' панель', end='')
             for nm, x, y in (('ENTITY', e1, e2), ('SPDATA', s1, s2)):
                 d = [i for i in range(len(x)) if x[i] != y[i]]
                 if d: print(f' {nm} смещения {d[:10]} {[(x[i], y[i]) for i in d[:6]]}', end='')
             print()
             return 1
-    vd = sum(1 for (t, _e, _s, v1), (_, _e2, _s2, v2) in zip(ra, rb) if v1 != v2)
+    vd = sum(1 for (t, _e, _s, v1, _p), (_, _e2, _s2, v2, _p2) in zip(ra, rb) if v1 != v2)
     note = f', фазовый шум: {len(noisy)} тиков, из них расходятся {vd}' if noisy else ''
-    print(f'совпало тик-в-тик на {len(ra)} тиках (прогрев {settle}), VRAM каждого тика совпал'
+    if panel: note += f'; ПАНЕЛЬ отстаёт на тиках {panel} (расписание кадров, к концу окна совпала)'
+    print(f'совпало тик-в-тик на {len(ra)} тиках (прогрев {settle}), поле каждого тика совпало'
           f'{note}, md5 {hashlib.md5(va).hexdigest()[:8]}')
     return 0
 

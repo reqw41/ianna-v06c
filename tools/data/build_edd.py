@@ -311,6 +311,7 @@ def screens_of(level):
     return [aplib_depack(level, a - 0x8000)[0] for a in addrs]
 
 FG_OPAQUE = []                  # по индексу: передний тайл непрозрачен (см. build_kvaz)
+BG_BLACK = [0, 0, 0, 0]         # номера ЧЁРНЫХ фоновых тайлов уровня, частый первым (см. build_kvaz)
 
 def fg_lut_lines(fg):
     """Передние тайлы: пары (номер тайла, индекс). Раньше здесь лежала таблица на 256 байт с прямым
@@ -564,6 +565,7 @@ def level_table_blob(pal, banks, fg, fgc=False):
     out += pairs.ljust(60, b'\x00')            # фиксированная длина: за парами идёт таблица зеркал
     out += mirror_table()                      # MIRROR_SLOTS записей по 6 Б, см. vec_mirr.asm
     out.append(1 if fgc else 0)                # fgc_on: готовые тайлы фон+FG в наборе
+    out += bytes(BG_BLACK)                     # четыре номера ЧЁРНЫХ фоновых тайлов (частый первым)
     return bytes(out)
 
 def screen_palettes(screens, banks):
@@ -840,9 +842,23 @@ def build_kvaz(level_no=1, start=None):
     #   стр.1: банк 7 скелет $0000-$5C40, карта $8000 (8.6К), банк 3 варвар $A200-$E340
     #   стр.2: банк 8 орк $0000, банк 9 мумия $6000
     #   стр.3: банк 12 камень $2800; шрифт/панель/оружие $0000-$27FF, пул $A000, музыка $C980, эффекты $D980
+    black = []
     for n in range(256):
         b = bg_tile_bytes(tile_pixels(sr5, n), pm_tiles)   # c8: 96 Б, шаг 128 (хвост нули)
         pages[0][BG_TILES_BASE + n*128: BG_TILES_BASE + n*128 + len(b)] = b
+        if not any(b): black.append(n)
+    # ЧЁРНЫЕ фоновые тайлы (все плоскости нули): их движок кладёт в слот пула не блитом из
+    # квазидиска, а 64 push нуля. Таких тайлов у уровня один-три, но занимают они треть карты
+    # (ур.2: 34 % стайлов, на сцене голема 14 из 21 стайла за тик). Порядок — по убыванию частоты
+    # в карте уровня: проверка в drawTile_nosave идёт списком сверху вниз.
+    global BG_BLACK
+    use = collections.Counter(v for s in screens_of((SRC / f'level{level_no}.map').read_bytes()) for v in s[0:160])
+    blk = sorted((n for n in black if use.get(n)), key=lambda n: -use[n])[:4]
+    # Заглушка для незанятых мест списка: повтор первого чёрного, а если чёрных на уровне нет —
+    # номер тайла, которого нет в карте (иначе проверка объявила бы чёрным обычный тайл).
+    pad = blk[0] if blk else next(n for n in range(256) if n not in use)
+    if os.environ.get('BLACK_OFF'): blk = []; pad = next(n for n in range(256) if n not in use)
+    BG_BLACK = (blk + [pad]*4)[:4]
     def bank_blob(bank, page, base, limit):
         """Содержимое банка одним куском — для библиотеки на дискете: один и тот же тролль стоял
         в пяти наборах пять раз, потому что в каждом лежал по своему адресу."""
