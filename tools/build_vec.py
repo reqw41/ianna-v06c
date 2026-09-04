@@ -408,10 +408,8 @@ def main():
             if 'vars наверху ОЗУ' in line: break
             mm = re.match(r'^([0-9A-F]{4}): ([0-9A-F]+)\s', line)     # байты в листинге без пробелов
             if mm: code_end = max(code_end, int(mm.group(1), 16) + len(mm.group(2)) // 2)
-        RIT_MAP = VARS_ADDR - 40      # карты «уже нарисован» RedrawInvTiles (overlap_hot.asm) — в зазоре перед переменными
-        assert RIT_MAP >> 8 == (VARS_ADDR - 1) >> 8, 'RIT_MAP пересекает границу страницы (обход inc l)'
-        assert code_end <= RIT_MAP, f'код до ${code_end:04X} НАЕХАЛ на карты RedrawInvTiles ${RIT_MAP:04X} (переменные ${VARS_ADDR:04X})'
-        print(f'код до ${code_end-1:04X} включительно, карты RIT с ${RIT_MAP:04X}, переменные с ${VARS_ADDR:04X} (зазор {RIT_MAP-code_end} Б)')
+        assert code_end <= VARS_ADDR, f'код до ${code_end:04X} НАЕХАЛ на переменные ${VARS_ADDR:04X}'
+        print(f'код до ${code_end-1:04X} включительно, переменные с ${VARS_ADDR:04X} (зазор {VARS_ADDR-code_end} Б)')
         m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'
         print(f'OK: build/{name}.rom {size} Б, конец = ${0x100+size:04X} (граница VRAM $8000, свободно {0x8000-0x100-size} Б)')
@@ -436,7 +434,7 @@ def build_menu_bins(lst):
             'level_width', 'current_levelx', 'current_levely', 'z_ldir', 'vec_sp_save', 'rev256',
             # для оверлея готовых тайлов (fgc_ovl.asm):
             'drawTile', 'drawTile_nosave', 'vec_pool_on', 'SPDATA', 'fg_tile_pairs', 'fg_lut_n', 'vec_budget', 'vec_blit_src',
-            'vec_blit_ret', 'vec_blit128_vram',
+            'vec_blit_ret', 'vec_blit128_vram', 'vec_slot_tab',
             # для зеркального двухплоскостного блита в нулевой странице (zp_blit2m.asm):
             'vec_spr_hcol', 'vec_spr_dst', 'vec_col_cnt', 'vec_row_cnt', 'vec_spr_src', 'vec_spr_skip2',
             'vec_spr_port', 'vec_spr_ny', 'vec_spr_lbot', 'vec_spr_curport', 'vec_stk_leave']

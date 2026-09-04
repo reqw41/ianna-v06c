@@ -1963,25 +1963,35 @@ b2pm_cont:
 ; ---------------------------------------------------------------------------
 ; vec_pool_begin — вызывается в начале RedrawScreen_part1 / RedrawScreen:
 ; раздать слоты пула dirty-супертайлам (строки 0..9). Переполнение (>128) -> прямой режим.
-; vec_slot_init: таблица слотов = $FF (единожды при старте; дальше её чистит сам сброс пула)
+; vec_slot_init: карта грязных стайлов = $FF (чисто), метки строк ($A0..$A9 и выше) = 0.
+; Зовётся при старте и из сброса, когда пул был выключен (переполнение / стендовый прямой режим).
 vec_slot_init:
 	ld hl,vec_slot_tab
-	ld b,0
+	ld b,160
+	ld a,$ff
 vpb_clr:
-	ld (hl),$ff
+	ld (hl),a
 	inc l
 	dec b
 	jp nz,vpb_clr
+	xor a
+vpb_clr2:
+	ld (hl),a
+	inc l
+	jp nz,vpb_clr2
 	ret
 vec_pool_begin:
 	; таблицу слотов НЕ чистим (256 байт = 40 ед. каждый тик): все помеченные $FE/слот записи
-	; проходит сброс пула и возвращает $FF; при переполнении чистится целиком
+	; проходит сброс пула и возвращает $FF
 	xor a
-	ld (vec_slot_next),a
 	ld (vec_pool_on),a
 	ld a,(vec_pool_ban)	; стендовый прямой режим (build_edd POOL_OFF=1) — для сравнения
-	or a			; «пул против прямого»; проверка в самом начале: ниже идёт запись
-	ret nz			; в таблицу слотов
+	or a			; «пул против прямого». Карту грязных стайлов строим и в нём (по ней
+	ld a,0			; идёт RedrawInvTiles), а слотов не раздаём: vec_slot_next = 80 сразу,
+	jp z,vpb_ban_no		; каждому стайлу достаётся $FE
+	ld a,80
+vpb_ban_no:
+	ld (vec_slot_next),a
 	ld a,(ndirtyrects)
 	or a
 	ret z
@@ -2154,7 +2164,8 @@ vpb_spr_adv:
 	ld (vec_pool_on),a
 	ret
 vpb_overflow2:
-	call vec_slot_init	; та же очистка таблицы ($FF), что при старте — второй копии не держим
+	ld a,1			; чистить карту грязных стайлов сейчас НЕЛЬЗЯ: по ней идёт RedrawInvTiles
+	ld (vec_pool_clr),a	; (раньше карта была отдельной битовой) — снимет сброс, в самом конце тика
 	xor a
 	ld (vec_pool_on),a
 	ret
@@ -2467,7 +2478,11 @@ vpf_done:
 	xor a
 	ld (ndirtyrects),a
 	ld (vec_pool_on),a
-	ret
+	ld hl,vec_pool_clr	; пул был выключен — записи $FE/слот в карте никто не снял
+	or (hl)			; A = 0 (xor a выше)
+	ret z
+	ld (hl),0
+	jp vec_slot_init
     endif
 
 ; ---------------------------------------------------------------------------

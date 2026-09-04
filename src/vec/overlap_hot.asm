@@ -140,141 +140,74 @@ an_check:			; AnimStile_CheckSprites(B = x0, C = y, D = 2*длина симво�
 	ld (vec_an_run),a
 	jp AnimStile_CheckSprites
 
-; RedrawInvTiles / RedrawInvTiles_FG — ВЕКТОР, нативно: обход грязных прямоугольников без exx
-; (в переводе два z_exx ≈ 700 тактов на тайл). DrawTile/DrawFGTile — как в оригинале (B = x+1, C = y+1).
-; Дедупликация: грязные прямоугольники старого и нового положения спрайта перекрываются (на сцене
-; голема треть супертайлов рисовалась дважды за тик). Битовая карта 16x10 «уже нарисован» на проход:
-; RIT_MAP — фон, RIT_MAP+20 — передний слой; обе чистит фоновый проход (FG идёт следом по тому же
-; списку). Карты лежат в зазоре между кодом и переменными (сторож build_vec считает зазор до них).
-RIT_MAP	equ string_area-40
-RIT_MAPFG	equ RIT_MAP+20
+; RedrawInvTiles / RedrawInvTiles_FG — ВЕКТОР, нативно: обход НЕ прямоугольников, а КАРТЫ грязных
+; стайлов. Карта — та же таблица слотов пула (vec_slot_tab: $FF чист, $FE грязный без слота,
+; 0..79 номер слота), её строит vec_pool_begin из тех же прямоугольников и в том же порядке.
+; Прямоугольники старого и нового положения спрайта перекрываются (на сцене голема треть стайлов
+; попадала в обход дважды), и раньше дедупликацию держали две битовые карты 16x10: на каждый визит
+; тайла уходило ~200 тактов на пересчёт байта и маски, а сами визиты были втрое чаще самих тайлов.
+; Теперь дедупликация достаётся даром — стайл в карте ровно один. Строки без грязного помечены
+; нулём в vec_slot_tab[160+y] (ставит vpb_y, снимает сброс пула) и не перебираются.
 RedrawInvTiles:
-	ld hl,RIT_MAP
-	ld b,40
-	xor a
-rit_clr:
-	ld (hl),a
-	inc l			; обе карты в одной странице (сторож build_vec)
-	dec b
-	jp nz,rit_clr
 	ld hl,dt_rit		; вход с готовыми координатами (vec_vdp.asm)
-	ld a,RIT_MAP & $FF
 	jp rit_common
 RedrawInvTiles_FG:
 	ld hl,dft_rit
-	ld a,RIT_MAPFG & $FF
 rit_common:
 	ld (rit_call+1),hl	; самомодификация: какой рисовальщик звать
-	ld (rit_mapp+1),a	; и какая карта
 	ld a,(ndirtyrects)
 	or a
 	ret z
-	ld (rit_cnt),a
-	ld hl,tiles_dirty
-rit_rect:
-	ld a,(hl)		; Xmin
-	inc hl
-	ld (rit_x0),a
-	ld a,(hl)		; Ymin
-	inc hl
+	xor a
+rit_row:
 	ld (rit_y),a
-	ld a,(hl)		; Xcount
-	inc hl
-	ld (rit_nx),a
-	ld a,(hl)		; Ycount
-	inc hl
-	ld (rit_ny),a
-	ld (rit_ptr),hl
-rit_yl:
-	ld a,(rit_nx)
-	ld (rit_cx),a
-	; байт карты для (x0,y): RIT_MAP + y*2 + (x0>>3); маска 1<<(x0&7). Дальше по строке — инкрементально
-	ld a,(rit_y)
-	add a,a
+	add a,160
 	ld l,a
-	ld a,(rit_x0)
-	rrca
-	rrca
-	rrca
-	and 1
-	add a,l
-rit_mapp:
-	add a,0			; самомод: младший байт карты
-	ld (rit_mapl),a
-	ld a,(rit_x0)
-	and 7
+	ld h,vec_slot_tab/256
+	ld a,(hl)		; метка строки (ld a,nn флагов не трогает — or a ниже уже сработал)
+	or a
+	ld a,(rit_y)
+	jp z,rit_rownext
+	rlca
+	rlca
+	rlca
+	rlca
+	ld l,a			; L = y*16, H уже на таблице слотов
+	ld b,16
+rit_x:
+	ld a,(hl)
 	inc a
-	ld e,a
-	ld a,$80
-rit_bit:
-	rlca
-	dec e
-	jp nz,rit_bit
-	ld (rit_mask),a
-	ld a,(rit_x0)
-	ld b,a
-rit_xl:
-	ld a,(rit_mapl)
-	ld l,a
-	ld h,RIT_MAP >> 8
-	ld a,(rit_mask)
-	ld e,a
-	and (hl)
-	jp nz,rit_skip		; уже нарисован в этом проходе
-	ld a,e
-	or (hl)
-	ld (hl),a
-	ld a,(rit_y)
-	ld c,a
-	push bc			; B = x, C = y (стайлы)
-	; вход dt_rit/dft_rit: HL = &CURRENT_SCREEN_MAP[y*16+x], B = X px, C = Y px
+	jp z,rit_xnext		; $FF — стайл не грязный
+	ld (rit_ptr),hl
+	ld a,b
+	ld (rit_cx),a
+	ld a,l
+	and $f0
+	ld c,a			; C = Y px (стайл 16x16: y = (idx>>4)*16 = idx & $F0)
+	ld a,l
 	rlca
 	rlca
 	rlca
 	rlca
-	ld c,a			; y*16
-	add a,b
-	ld l,a
-	ld h,0
+	and $f0
+	ld b,a			; B = X px
+	ld h,0			; HL = &CURRENT_SCREEN_MAP[idx] (L = idx уже стоит)
 	ld de,CURRENT_SCREEN_MAP
 	add hl,de
-	ld a,b
-	rlca
-	rlca
-	rlca
-	rlca
-	ld b,a			; x*16
 rit_call:
 	call 0
-	pop bc
-rit_skip:
-	ld a,(rit_mask)		; следующий x: маска влево, через бит 7 — следующий байт карты
-	rlca
-	ld (rit_mask),a
-	jp nc,rit_nx1
-	ld a,(rit_mapl)
-	inc a
-	ld (rit_mapl),a
-rit_nx1:
-	ld a,(rit_cx)
-	dec a
-	ld (rit_cx),a
-	jp z,rit_ynext
-	inc b
-	jp rit_xl
-rit_ynext:
-	ld a,(rit_y)
-	inc a
-	ld (rit_y),a
-	ld a,(rit_ny)
-	dec a
-	ld (rit_ny),a
-	jp nz,rit_yl
 	ld hl,(rit_ptr)
-	ld a,(rit_cnt)
-	dec a
-	ld (rit_cnt),a
-	jp nz,rit_rect
+	ld a,(rit_cx)
+	ld b,a
+rit_xnext:
+	inc l
+	dec b
+	jp nz,rit_x
+	ld a,(rit_y)
+rit_rownext:
+	inc a
+	cp 10
+	jp nz,rit_row
 	ret
 
 ;;;SPLIT;;;

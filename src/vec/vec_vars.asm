@@ -67,15 +67,11 @@ vec_an_cnt:	db 0		; AnimateSTiles: счётчик, длина/начало се�
 vec_an_run:	db 0
 vec_an_x:	db 0
 vec_an_y:	db 0
-rit_cnt:	db 0		; RedrawInvTiles: счётчики обхода грязных прямоугольников
-rit_x0:		db 0
-rit_y:		db 0
-rit_mapl:	db 0		; RedrawInvTiles: младший байт текущего байта карты и маска бита (инкрементально по строке)
-rit_mask:	db 0
-rit_nx:		db 0
-rit_ny:		db 0
-rit_cx:		db 0
+rit_y:		db 0		; RedrawInvTiles: строка карты грязных стайлов, счётчик колонок и
+rit_cx:		db 0		; указатель в неё — спасаются на время вызова рисовальщика
 rit_ptr:	dw 0
+vec_pool_clr:	db 0		; 1 = карту грязных стайлов чистит сброс пула (переполнение слотов /
+				; стендовый прямой режим: обход по ней ещё идёт, чистить сразу нельзя)
 vec_spr_prev:	ds 64		; прошлые прямоугольники спрайтов (x,y,nx,ny) x16 — слоты и под старым местом
 vec_fill_color:	db 0
 vec_fill_xr:	db 0
