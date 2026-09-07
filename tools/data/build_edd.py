@@ -965,7 +965,9 @@ def build_kvaz(level_no=1, start=None):
     fgc_tail = None
     if level_no in FGC_LEVELS and not C8MODE:
         fgc_tail = build_fgc(level, sr5, pm_tiles, fg, pages, sa)
-    level2 = build_level(info, sa, tail=fgc_tail)         # строки/скрипты (+ оверлей готовых тайлов) -> string_area
+    # РУССКОЕ ИЗДАНИЕ: один язык — один блок строк в наборе (langs=('es',)); английский не пакуется,
+    # оба адреса в заголовке уровня ведут на русский блок. Экономия 473..1312 Б на уровень.
+    level2 = build_level(info, sa, tail=fgc_tail, langs=('es',))   # строки/скрипты (+ оверлей готовых тайлов) -> string_area
     lvl_end = 0x8000 + len(level2)
     for bank, page, base, limit in banks:                  # карта не должна лечь на банк страницы 1
         assert page != 1 or lvl_end <= base or base >= lvl_end or limit <= 0x8000, (bank, hex(lvl_end))

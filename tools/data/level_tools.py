@@ -57,9 +57,11 @@ def parse_level(level):
 
 def build_level(info, string_base, level_base=0x8000, screen_map=None, langs=('en', 'es'), tail=None):
     """Собрать карту заново. screen_map: список индексов исходных экранов для каждой
-    ячейки (None = как было). langs: какие блоки строк включать ('es' указывает на 'en', если нет).
+    ячейки (None = как было).
+    langs: какие блоки строк включать; отсутствующий язык указывает на langs[0] (одноязычный набор —
+    langs=('es',): пакуется только русский блок, оба адреса заголовка ведут на него).
     tail: (смещение, байты) — данные, которые распакуются в string_area вместе со строками по фиксированному
-    смещению (оверлей готовых тайлов); строки обоих языков обязаны кончаться раньше."""
+    смещению (оверлей готовых тайлов); строки обязаны кончаться раньше."""
     n = info['n']
     idx = screen_map if screen_map is not None else list(range(n))
     assert len(idx) == n
@@ -76,8 +78,9 @@ def build_level(info, string_base, level_base=0x8000, screen_map=None, langs=('e
             body += info['screens'][k]
         addrs.append(level_base + placed[k])
     str_addr = {}
-    for lang in ('en', 'es'):
-        src = lang if lang in langs else 'en'
+    fallback = langs[0]          # РУССКОЕ ИЗДАНИЕ: langs=('es',) — в набор идёт ОДИН блок (русский),
+    for lang in ('en', 'es'):    # оба адреса заголовка (hdr[8..9] и hdr[10..11]) указывают на него
+        src = lang if lang in langs else fallback
         if src not in str_addr:
             rel = relocate_strings(info['strings'][src], info['nstrings'], info['nscripts'], string_base)
             if tail:
