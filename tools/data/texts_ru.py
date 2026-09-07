@@ -77,6 +77,56 @@ INTRO = [
     "ТУКАРАМ ПРИНЕС МИР В НАШИ ЗЕМЛИ, И ЕГО РОД БЫЛ БЛАГОСЛОВЛЕН КАК СЛУГИ БОГИНИ.",
 ]
 
+# Концовка: три экрана слайд-шоу (end_string01..03 оригинала) — перевод по смыслу английских строк.
+ENDING = [
+    "ВЛАДЫКА ХАОСА ПОВЕРЖЕН, И БОГИНЯ ИАННА ДОВОЛЬНА.",
+    "ВЕРНИСЬ К СВОЕМУ НАРОДУ, ВЕРНЫЙ ВОИН, И ЖИВИ СПОКОЙНО. МЕЧ Я СБЕРЕГУ САМА, ИБО ЗЛО НЕ ДРЕМЛЕТ.",
+    "ВОЗВРАЩЕНИЕ ДОМОЙ - ВЫСШАЯ НАГРАДА, А МИР - САМОЕ ДРАГОЦЕННОЕ БЛАГО.",
+]
+
+# Титры: ровно как в оригинале (intro.asm credits01..credits37), латиница, по 15 знаков в строке.
+CREDITS = [
+    'RETROWORKS 2017',
+    '               ',
+    'CODE:          ',
+    '        UTOPIAN',
+    '               ',
+    'GFX, LEVELS:   ',
+    '    PAGANTIPACO',
+    '               ',
+    'MUSIC AND SFX: ',
+    '         MCALBY',
+    '               ',
+    'MSX SUPPORT:   ',
+    '       GUILLIAN',
+    '               ',
+    'OPTIMIZATIONS: ',
+    '     METALBRAIN',
+    '               ',
+    'PROOFREADING:  ',
+    '  FELIX CLOWDER',
+    '               ',
+    'TESTING:       ',
+    '         METR81',
+    '         IVANZX',
+    'RETROWORKS TEAM',
+    '               ',
+    'WE WANT TO SAY ',
+    '  THANK YOU TO:',
+    '               ',
+    'FRIENDWARE AND ',
+    '   REBEL ACT   ',
+    '  STUDIOS, FOR ',
+    '    CREATING   ',
+    'BLADE: THE EDGE',
+    '  OF DARKNESS  ',
+    '               ',
+    '  YOU, PLAYER, ',
+    '  FOR PLAYING  ',
+]
+THE_END_EN = '    THE END    '
+THE_END_RU = '     КОНЕЦ     '
+
 def build_block(en_block, nstrings, nscripts, strings):
     """Блок строк уровня с новыми строками: [ptr][ptr][таблица строк][строки][таблица скриптов][скрипты];
     скрипты копируются как есть, их таблица сдвигается. Указатели абсолютные от $C000 (как в MSX)."""

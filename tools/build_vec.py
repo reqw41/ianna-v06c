@@ -26,6 +26,7 @@ VI53 = '--softbudget' not in sys.argv  # бюджет по счётчику 0 В
 sys.path.insert(0, str(ROOT / 'tools/data'))
 from build_edd import STRING_AREA_KVAZ, STRING_AREA_DEMO, STRING_AREA_C8
 VARS_ADDR = STRING_AREA_DEMO if DEMO else (STRING_AREA_C8 if C8 else STRING_AREA_KVAZ)
+from build_edd import CREDITS_ADDR       # блоб титров в странице 3 квазидиска (см. build_edd)
 
 def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
@@ -427,6 +428,7 @@ def build_menu_bins(lst):
             'force_inv_redraw', 'draw_weapon', 'RedrawScreen', 'InvalidateTiles', 'RedrawAllSprites',
             'FX_Play', 'get_entity_max_energy', 'remove_object_from_inventory', 'player_dead',
             'ENTITY_PLAYER_POINTER', 'z_iy', 'vec_palette', 'vec_pc_reset', 'vec_key', 'vec_key_hook',
+            'vec_end_flag',
             'level_width', 'current_levelx', 'current_levely', 'z_ldir', 'vec_sp_save', 'rev256',
             # для оверлея готовых тайлов (fgc_ovl.asm):
             'drawTile', 'drawTile_nosave', 'vec_pool_on', 'SPDATA', 'fg_tile_pairs', 'fg_lut_n', 'vec_budget', 'vec_blit_src',
@@ -449,16 +451,27 @@ def build_menu_bins(lst):
         out.append(f'{n}\tequ ${v:04X}')
     out += [f'FB_ORG\tequ ${syms["string_area"] + 1216:04X}'   # загрузчик банков: за буфером сектора,
             ,                                                   # таблицей длин и рецептом
-            f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 3', 'MB_SEC_MENU\tequ 3', 'MB_TRK_SLIDES\tequ 73']
+            f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 3', 'MB_SEC_MENU\tequ 3', 'MB_TRK_SLIDES\tequ 73',
+            f'MB_CREDITS\tequ ${CREDITS_ADDR:04X}']
     (ROOT / 'build/menu_syms.asm').write_text('\n'.join(out) + '\n')
     sys.path.insert(0, str(ROOT / 'tools/data'))
-    from texts_ru import encode, MENU, INTRO
+    from texts_ru import encode, MENU, INTRO, ENDING, CREDITS, THE_END_RU
     def db(label, text): return f"{label}:\tdb " + ','.join(str(b) for b in encode(text)) + ',0'
     ru = ['; сгенерировано build_vec из tools/data/texts_ru.py (кодировка шрифта: кириллица 96..127)',
           db('o_play_es', MENU['play']), db('o_pass_es', MENU['pass']), db('o_esp', MENU['lang']), db('o_mus_es', MENU['music']),
           db('t1s', INTRO[0]), db('t2s', INTRO[1]), db('t3s', INTRO[2]),
+          db('e1s', ENDING[0]), db('e2s', ENDING[1]), db('e3s', ENDING[2]), db('oe_end_es', THE_END_RU),
           db('p_ask_es', MENU['pass_ask']), db('p_ok_es', MENU['pass_ok']), db('p_bad_es', MENU['pass_bad'])]
     (ROOT / 'build/menu_ru.asm').write_text('\n'.join(ru) + '\n')
+    # Титры (37 строк по 15 знаков) — отдельным блобом в квазидиске по MB_CREDITS: в окне оверлея
+    # ($8440-$9000) на них нет места, а $9400 в странице 3 свободна (за загрузчиком банков).
+    # Шаг записи 16 Б (15 знаков + 0), чтобы адрес строки считался сдвигом.
+    cred = bytearray()
+    for line in CREDITS:
+        assert len(line) == 15, line
+        cred += encode(line) + b'\0'
+    assert len(cred) == 37*16
+    (ROOT / 'build/credits.bin').write_bytes(bytes(cred))
     # строки меню паузы: рамочные коды как в оригинале (ianna.asm), текст EN/RU одной длины (17 знаков)
     from texts_ru import encode as _enc
     def pstr(pre, text, post):
@@ -499,7 +512,7 @@ def build_menu_bins(lst):
     for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x800),
                                 (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9000 - 0x8440),
                                 (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x9000),
-                                (VEC / 'fdd_banks.asm', 'fdd_banks.bin', 0x9600 - 0x9280),
+                                (VEC / 'fdd_banks.asm', 'fdd_banks.bin', CREDITS_ADDR - 0x9280),
                                 (VEC / 'zp_blit2m.asm', 'zp.bin', 0x100 - 0x3B)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())

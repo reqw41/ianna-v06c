@@ -12,8 +12,8 @@ KV_STK_P3	equ $1C		; стековый режим, страница 3 (чтени
 ; --- таблица входов (фиксированные адреса для оверлея) ---
 mb_call:	jp mb_call_i	; HL = процедура движка: закрыть окно, вызвать, открыть
 mb_screen:	jp mb_screen_w	; экран меню с дискеты -> VRAM (24К, дорожка MB_TRK_MENU)
-mb_slide:	jp mb_slide_w	; A = 0..4: слайд с дискеты -> VRAM; NZ = дисковода нет
-mb_song:	jp mb_song_w	; A = 0 меню / 1 интро / 2 вернуть уровень: песня -> $C980 (стр.3)
+mb_slide:	jp mb_slide_w	; A = 0..6: слайд с дискеты -> VRAM; NZ = дисковода нет
+mb_song:	jp mb_song_w	; A = 0 меню / 1 интро / 2 уровень / 3 концовка / 4 титры -> $C980 (стр.3)
 mb_savelvl:	jp mb_savelvl_w	; песню уровня из $C980 -> страница 2 $E000 (перед меню)
 mb_key:		jp mb_key_i	; ISR-хук: ASCII нажатой клавиши -> vec_key (0 = ничего)
 mb_chr:		jp mb_chr_w	; A = код, B = колонка, C = строка: ПРОЗРАЧНАЯ печать (фон просвечивает)
@@ -22,6 +22,7 @@ mb_vrest:	jp mb_vrest_w	; те же параметры: квазидиск -> VR
 mb_mchr:	jp mb_mchr_w	; A = код, B = кол., C = строка, D = 1 -> двойная высота: шрифт МЕНЮ
 mb_wave:	jp mb_wave_w	; B = первая строка (px), C = сколько строк, A = фаза: волна на воде
 mb_stripes:	jp mb_stripes_w	; B = колонка, D = колонок, C = строка, E = строк, HL = таблица полос
+mb_scroll:	jp mb_scroll_w	; окно титров (колонки 10..24, строки экрана 120..239) вверх на 1 точку
 
 ; обёртки: после работы ВЕРНУТЬ окно оверлея (возврат идёт в код, живущий в окне!)
 mb_chr_w:
@@ -29,6 +30,9 @@ mb_chr_w:
 	jp mb_reopen
 mb_stripes_w:
 	call mb_stripes_i
+	jp mb_reopen
+mb_scroll_w:
+	call mb_scroll_i
 	jp mb_reopen
 mb_wave_w:
 	call mb_wave_i
@@ -139,22 +143,24 @@ mbs_l:
 	ei
 	ret
 
-; --- песня в $C980: A=0 меню (стр.2 $C000), 1 интро (стр.2 $D000), 2 уровень (стр.1 $E000) ---
+; --- песня в $C980 по номеру A (таблица mb_songtab: порт окна + адрес источника) ---
+; 0 меню, 1 интро, 2 песня уровня (сохранённая mb_savelvl), 3 концовка, 4 титры.
+; Адреса песен фазы меню держит build_edd (SONG_SLOTS) — обе таблицы менять вместе.
 mb_song_i:
-	or a
-	jp nz,mbg_1
-	ld a,$22
-	ld hl,$C000
-	jp mbg_go
-mbg_1:
-	dec a
-	jp nz,mbg_2
-	ld a,$22
-	ld hl,$D000
-	jp mbg_go
-mbg_2:
-	ld a,$82		; окно $E000-$FFFF -> страница 2 (сохранённая песня уровня)
-	ld hl,$E000
+	ld l,a
+	ld h,0
+	add hl,hl
+	ld e,a
+	ld d,0
+	add hl,de		; A*3
+	ld de,mb_songtab
+	add hl,de
+	ld a,(hl)		; порт окна источника
+	inc hl
+	ld e,(hl)
+	inc hl
+	ld d,(hl)
+	ex de,hl		; HL = адрес песни
 mbg_go:
 	; источник -> отскок VRAM $E000 (при окне источника; если источник сам в $E000 (порт $81) —
 	; отскок в VRAM невозможен, копируем стеком: чтение POP из стр.1)
@@ -437,6 +443,18 @@ mb_kv_off:
 	ei
 	xor a
 	ret
+
+mb_songtab:			; порт окна, адрес (порядок = SONG_SLOTS в build_edd)
+	db $22
+	dw $C000		; 0 меню
+	db $22
+	dw $C900		; 1 интро
+	db $82			; 2 песня уровня: окно $E000-$FFFF -> стр.2, только через стек
+	dw $E000
+	db $22
+	dw $D400		; 3 концовка
+	db $22
+	dw $DD00		; 4 титры
 
 mb_target:	dw 0
 mb_spsave:	dw 0
@@ -1042,3 +1060,78 @@ mbs_row:
 mb_stab:	dw 0
 mb_sbuf:	ds 128
 mb_sval:	db 0
+
+; ================= окно титров вверх на одну точку (credits_scrollup оригинала) =================
+; Оригинал: vdpCopy (80,89)-(199,208) -> (80,88), то есть окно x=80..199, y=88..207 едет вверх.
+; У нас картинка лежит со строки экрана 32, значит L = 223 - y: окно — колонки 10..24,
+; L = 16..135. Вверх на точку = dst[L] = src[L-1], идём по L СВЕРХУ ВНИЗ (135 -> 16), тогда
+; байт-источник читается раньше, чем его затрёт запись. Внутри плоскости и колонки адреса
+; отличаются только младшим байтом, поэтому счётчики — dcr l/dcr e.
+; Окно квазидиска закрываем: VRAM $8000-$9FFF (плоскость 0) иначе спрятана оверлеем.
+mb_scroll_i:
+	di
+	xor a
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	ei			; дальше порт не трогаем — прерывания (плеер) не задерживаем
+	ld a,$80+10		; плоскость 0, колонка 10
+	ld (mb_sch),a
+	ld c,4			; плоскостей
+msr_pl:
+	ld b,15			; колонок (x=80..199)
+msr_col:
+	ld a,(mb_sch)
+	ld h,a
+	ld d,a
+	ld l,135		; приёмник: верхняя строка окна
+	ld e,134		; источник: строка под ней
+	push bc
+	ld b,15			; 15 x 8 = 120 байт
+msr_row:
+	ld a,(de)
+	ld (hl),a
+	dec l
+	dec e
+	ld a,(de)
+	ld (hl),a
+	dec l
+	dec e
+	ld a,(de)
+	ld (hl),a
+	dec l
+	dec e
+	ld a,(de)
+	ld (hl),a
+	dec l
+	dec e
+	ld a,(de)
+	ld (hl),a
+	dec l
+	dec e
+	ld a,(de)
+	ld (hl),a
+	dec l
+	dec e
+	ld a,(de)
+	ld (hl),a
+	dec l
+	dec e
+	ld a,(de)
+	ld (hl),a
+	dec l
+	dec e
+	dec b
+	jp nz,msr_row
+	pop bc
+	ld a,(mb_sch)
+	inc a
+	ld (mb_sch),a
+	dec b
+	jp nz,msr_col
+	ld a,(mb_sch)
+	add a,$20-15		; следующая плоскость, назад к колонке 10
+	ld (mb_sch),a
+	dec c
+	jp nz,msr_pl
+	ret
+mb_sch:		db 0

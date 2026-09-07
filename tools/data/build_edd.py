@@ -560,6 +560,14 @@ BLIT2_ADDR = 0xBF00     # раньше здесь лежал вынесенны�
 # Адрес таблицы палитр экранов свой у каждого уровня: она обязана лежать В ОКНЕ $A000-$DFFF
 # (ниже окно не отображается), а свободное место там у уровней разное.
 SCRPAL_BY_LEVEL = {n: 0xBB00 for n in range(1, 10)}   # хвост стр.2 перед таблицами уровня
+# Титры концовки: 37 строк по 16 Б. Лежат в наборе уровня 1, в странице 3 за загрузчиком банков,
+# то есть ПРЯМО В ОКНЕ оверлея ($8000-$9FFF, порт $43) — оверлей читает их как обычную память.
+# В самом оверлее ($8440-$9000) 592 Б под них нет.
+CREDITS_ADDR = 0x9500
+# Песни фазы меню в странице 2 (окно $A000-$DFFF): mb_song переносит нужную в $C980 страницы 3.
+# Концовке нужны ещё две (music-end 2052 Б и music-credits 462 Б), поэтому интро съехало с $D000.
+SONG_SLOTS = ((0xC000, 'music-menu.mus'), (0xC900, 'music-intro.mus'),
+              (0xD400, 'music-end.mus'), (0xDD00, 'music-credits.mus'))
 
 def level_table_blob(pal, banks, fg, fgc=False):
     by = {b: (pg, base) for b, pg, base, _ in banks}
@@ -659,9 +667,9 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
           (3, 0xD980, 0xD980 + upto(flen('iannafx.mus', SRC)), 'эффекты')]
     assert flen('pause_ovl.bin') <= 0x280, 'оверлей паузы перерос $9000-$9280'
     if level_no == 1:                 # фаза меню живёт только в наборе первого уровня
-        r += [(2, 0xC000, 0xC000 + upto(flen('music-menu.mus', SRC)), 'песня меню'),
-              (2, 0xD000, 0xD000 + upto(flen('music-intro.mus', SRC)), 'песня интро'),
-              (3, 0x8440, 0x8440 + upto(flen('menu_ovl.bin')), 'оверлей меню'),
+        r += [(2, a, a + upto(flen(m, SRC)), f'песня {m}') for a, m in SONG_SLOTS]
+        r += [(3, 0x8440, 0x8440 + upto(flen('menu_ovl.bin')), 'оверлей меню'),
+              (3, CREDITS_ADDR, CREDITS_ADDR + upto(flen('credits.bin')), 'титры'),
               (3, 0x9800, 0x9800 + upto(flen('menu_ram.bin')), 'блок меню в ОЗУ'),
               (3, 0xE000, 0xF000, 'шрифт меню')]
     if level_no in FGC_LEVELS and not C8MODE:
@@ -992,13 +1000,17 @@ def build_kvaz(level_no=1, start=None):
         # загрузчик банков: ROM-загрузчик копирует его отсюда в ОЗУ и зовёт (см. fdd_banks.asm)
         fb = BUILD / 'fdd_banks.bin'
         if fb.exists():
-            b = fb.read_bytes(); assert len(b) <= 0x9600 - 0x9280, len(b)
+            b = fb.read_bytes(); assert len(b) <= CREDITS_ADDR - 0x9280, len(b)   # дальше блоб титров
             pages[3][0x9280:0x9280+len(b)] = b
     if ovl.exists() and blob.exists() and not C8MODE and level_no == 1:
         b = ovl.read_bytes(); pages[3][0x8440:0x8440+len(b)] = b
         b = blob.read_bytes(); pages[3][0x9800:0x9800+len(b)] = b
-        for slot, mus in ((0xC000, 'music-menu.mus'), (0xD000, 'music-intro.mus')):
-            mb = (SRC / mus).read_bytes(); assert len(mb) <= 0x1000
+        cr = BUILD / 'credits.bin'
+        if cr.exists():
+            b = cr.read_bytes(); assert CREDITS_ADDR + len(b) <= 0x9800, len(b)
+            pages[3][CREDITS_ADDR:CREDITS_ADDR+len(b)] = b
+        for slot, mus in SONG_SLOTS:
+            mb = (SRC / mus).read_bytes(); assert slot + len(mb) <= 0xE000, (mus, hex(slot), len(mb))
             pages[2][slot:slot+len(mb)] = mb
     # --- зеркальные копии кадров: раздача остатков места. Строго ПОСЛЕ всех прочих блоков ---
     mirr = []
