@@ -55,6 +55,16 @@ def slice_ianna():
     out += ['; ---- ENCODE / HEX_TO_TEXT (893-970) ----'] + rng(893, 970)
     out += ['; ---- таблицы (1006-1079) ----'] + rng(1006, 1079)
     text = '\n'.join(out) + '\n'
+    # РУССКОЕ ИЗДАНИЕ: язык один, второй ветки в LoadLevel нет. Число строк сохраняем —
+    # ключи overrides для ianna_main_src.asm заданы номерами строк, а правки лежат выше них.
+    old = ('\tld a, (ix+8)\n\tld l, a\n\tld a, (ix+9)\n\tld h, a\t\n\tld (level_string_en_addr), hl\n')
+    assert old in text, 'LoadLevel: чтение ix+8/ix+9'
+    text = text.replace(old, '; РУССКОЕ ИЗДАНИЕ: hdr[8..9] (адрес английского блока) не читается —\n'
+                             '; build_edd кладёт в набор один блок строк, и hdr[10..11] ведут на него.\n;\n;\n;\n')
+    old = ('\tld a, (language)\n\tand a\n\tjr nz, load_strings_en\n\tld hl, (level_string_addr)\n'
+           '\tjr load_strings_common\nload_strings_en:\n\tld hl, (level_string_en_addr)\nload_strings_common:\n')
+    assert old in text, 'LoadLevel: ветка по language'
+    text = text.replace(old, '\tld hl, (level_string_addr)\t; РУССКОЕ ИЗДАНИЕ: язык один\n;\n;\n;\n;\n;\n;\nload_strings_common:\n')
     # ВЕКТОР: порядок тика — раздача слотов пула (EI) -> ждём кадр -> вывод. Вывод стартует сразу после
     # прерывания (известная фаза кадра), программный бюджет DI (vec_budget) считает от цены ISR.
     old = '\tcall RedrawScreen_part1\n\tcall waitforVBlank\n\tcall RedrawScreen_part2\n'
@@ -106,6 +116,19 @@ def make_score_font():
     if DEMO:
         # в демо панели нет: все процедуры score остаются, но рисуют в пустоту (drawChar и пр. — ret)
         pass
+    # РУССКОЕ ИЗДАНИЕ: английской строки «PRESS FIRE» и ветки по language нет; строка-исходник
+    # пароля мертва (её читает ianna.asm:81, а этот кусок в срез не попал). Число строк сохраняем:
+    # ключ overrides ('score_src.asm', 391) — это строка score_gameover_string сразу под ними.
+    old = ('score_password_string_rom: db "PASSWORD:1234567890",0\n'
+           'score_gameover_string_en: db "    PRESS FIRE",0\n')
+    assert old in sc, 'score.asm: строки пароля/gameover'
+    sc = sc.replace(old, '; ВЕКТОР: score_password_string_rom не используется (ianna.asm:81 вне среза)\n'
+                         '; РУССКОЕ ИЗДАНИЕ: английской строки «PRESS FIRE» нет\n')
+    old = ('draw_gameover_string:\n        ld a, (language)\n        and a\n'
+           '        jr z, draw_gameover_spanish\n    \tld iy, score_gameover_string_en\n'
+           '        jr draw_password_common\ndraw_gameover_spanish:\n')
+    assert old in sc, 'score.asm: ветка draw_gameover_string'
+    sc = sc.replace(old, 'draw_gameover_string:\n; РУССКОЕ ИЗДАНИЕ: ветки по language нет\n;\n;\n;\n;\n;\n')
     (TR / 'score_src.asm').write_text(sc)
     ft = (SRC / 'font.asm').read_text(encoding='utf-8', errors='replace')
     (TR / 'font_src.asm').write_text(ft)
@@ -162,6 +185,7 @@ def make_vars():
     old = 'score_password_string: db "PASSWORD:1234567890",0'
     assert old in text, 'vars.asm: score_password_string'
     text = text.replace(old, 'score_password_string: db 32,32,111,96,112,110,107,124,58,"1234567890",0\t; «  ПАРОЛЬ:»\n')
+    text = text.replace('level_string_en_addr: dw 0\n', '; РУССКОЕ ИЗДАНИЕ: level_string_en_addr не нужен\n')
     text = re.sub(r'string_list: dw string_1, string_2, string_3, string_4_1', 'string_list: dw 0,0,0,0', text)
     text = re.sub(r'string_list_es: dw string_1, string_2, string_3_es, string_4_1', 'string_list_es: dw 0,0,0,0', text)
     text = f'\torg ${VARS_ADDR:04X}\t; vars наверху ОЗУ; string_area = ${VARS_ADDR:04X} (указатели скриптов уровня перенесены сюда)\n' + text
