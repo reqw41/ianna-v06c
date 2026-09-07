@@ -38,8 +38,9 @@ isr_pal:
 	cp 16
 	jp nz,isr_pal
 isr_nopal:
-	ld a,1
-	out ($02),a		; бордюр = цвет 1 (чёрный, как backdrop MSX2)
+	xor a			; бордюр = слот 0: он в наборе всегда чёрный («только прозрачный»,
+	out ($02),a		; build_edd), а слоты 1..3 vec_scrpal меняет НА КАЖДОМ ЭКРАНЕ под
+				; четырёхцветный спрайт — бордюр от этого перекрашивался (2026-09-08)
 	; --- клавиатура -> joystick_state (биты: 0 up,1 down,2 left,3 right,4 fire,5 fire2) ---
 	call get_joystick
 	ld (joystick_state),a
