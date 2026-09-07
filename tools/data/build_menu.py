@@ -8,10 +8,19 @@
 (credits.SR5 целиком, без рамки; полоса под картинкой залита цветом 1 — как fillArea $11 в end_credits)."""
 import sys, pathlib, zlib, struct
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from build_edd import SRC, sr5_rows
+from build_edd import SRC, sr5_rows, color_perm
 from pletter import depack as pletter_depack
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BUILD = ROOT / 'build'
+
+# Цвет MSX -> слот палитры Вектора. Слоты 1..3 отданы четырёхцветному спрайту экрана, поэтому
+# фон живёт в 0 и 4..15, а vec_palette (LEVELTAB) хранит цвет MSX i в слоте PERM[i]. Тайлы, спрайты
+# и шрифт build_edd кладёт уже переставленными; картинки меню клались СЫРЫМИ, и на экране Вектора
+# выходили чужие цвета (жёлтая рамка интро вместо красной). Перестановка одна для всех уровней.
+PERM = color_perm(1)
+PINV = {}                     # слот -> цвет MSX (для превью: показать, что увидит Вектор)
+for i, s in enumerate(PERM):
+    PINV.setdefault(s, i)
 
 def img_of(name, lines):
     return sr5_rows(pletter_depack((SRC / f'{name}.SR5.plet1').read_bytes()), lines)
@@ -30,12 +39,14 @@ def vram_dump(pix, top=VTOP, band1=False):
             for p in range(4):
                 b = 0
                 for k in range(8):
-                    if (row[col*8+k] >> (3-p)) & 1: b |= 0x80 >> k
+                    if (PERM[row[col*8+k]] >> (3-p)) & 1: b |= 0x80 >> k
                 out[p*0x2000 + col*256 + L] = b
-    if band1:                      # цвет 1 = только младший бит индекса, а он лежит в плоскости 3
+    if band1:
+        v = PERM[1]
         for col in range(32):
             for L in range(0, 256 - 192 - VTOP):
-                out[3*0x2000 + col*256 + L] = 0xFF
+                for p in range(4):
+                    if (v >> (3-p)) & 1: out[p*0x2000 + col*256 + L] = 0xFF
     return bytes(out)
 
 def compose_slide(slide):
@@ -79,7 +90,7 @@ def main():
         gy, gx = divmod(idx, 3)
         for y in range(192):
             for x in range(256):
-                grid[gy*192+y][gx*256+x] = to255(sh[y][x])
+                grid[gy*192+y][gx*256+x] = to255(PINV[PERM[sh[y][x]]])   # что увидит Вектор
     raw = bytearray()
     for row in grid:
         raw.append(0)

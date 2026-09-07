@@ -503,7 +503,8 @@ def build_menu_bins(lst):
     _menu = _sr5(_pd((SRC / 'menu_screen.SR5.plet1').read_bytes()), 192)
     _rows = []
     for y in range(144, 176):
-        c = _menu[y][120]   # середина валика: края попадают на декор
+        from build_menu import PERM as _PERM   # цвета картинок переставлены под слоты Вектора
+        c = _PERM[_menu[y][120]]   # середина валика: края попадают на декор
         _rows.append([0xFF if (c >> (3 - p)) & 1 else 0x00 for p in range(4)])
     st = ['; сгенерировано build_vec: полосы валика (32 строки x 4 плоскости)', 'ovl_stripes:']
     for p in range(4):

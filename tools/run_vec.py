@@ -127,6 +127,10 @@ def make_cpu(keys):
                 return v
             return 0
         if port == 0x1A: return st['trk']
+        if port == 0x19: return st['sec']   # эхо регистра сектора: по нему mb_fdc_ok (menu_ram)
+                                            # проверяет, есть ли дисковод. Без эха фаза меню и все
+                                            # слайды (интро, концовка, титры) headless не шли вовсе —
+                                            # оверлей считал, что дисковода нет, и уходил сразу в игру
         if port == 0x02:
             v = 0xFF
             if cur[0] == 0xFE:
