@@ -23,8 +23,11 @@ current_level до LoadLevel — герой у обоих в initial_coordx/y у
 инъекцией ChangeScreen; герой при инъекции остаётся на прежнем месте, поэтому для сцен «войти
 на экран сбоку» задаётся --hero=x,y (равный тому, что показал порт на тике 0).
 
-Клавиши. keys[k] выставляются на границе тика k-1 и держатся весь тик k — одинаково на обеих
-сторонах, поэтому задержка защёлкивания joystick_state в ISR у сторон одна и та же.
+Клавиши. Набор keys[k] выставляется на границе тика k и держится весь тик. Снимок тика k — это
+состояние НА ВХОДЕ в RunScripts тика k, то есть результат тика k-1; joystick_state защёлкивается
+в ISR ещё на тик раньше, поэтому нажатие, поставленное на тике k, видно в снимке тика k+2.
+Смещение меток одинаково на обеих сторонах (проверено на ур.1: 100 тиков совпали байт в байт),
+и на сверку не влияет.
 Сообщение («нажми огонь», в том числе после смерти) снимается автоматически: увидев
 wait_till_read, обе стороны держат fire до следующего тика — иначе тики просто не идут.
 """
@@ -68,19 +71,26 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
         cpu.mem[sym['SPDATA'] + 3] = hero[0]; cpu.mem[sym['SPDATA'] + 4] = hero[1]
 
     RS = sym['RunScripts']; WTL = sym['wait_till_read_loop']
+
     SP = sym['SPDATA']; EN = sym['ENTITY_DATA']
     cpu.mem[rd] = 0; cpu.mem[rd + 1] = 0        # точка синхронизации
     dismissed = []
     state = {'t': -1}
 
     def tick(scen):
-        """Догнать следующий вход в RunScripts. Сообщение снимаем огнём, как оракул."""
+        """Догнать точку снимка — вход в RunScripts (та же точка, что крючок оракула).
+
+        Сообщение («нажми огонь», в том числе после смерти) снимаем огнём: пока игра стоит в
+        wait_till_read, RunScripts не зовётся и тик не придёт. То же делает оракул и rv.Warmup."""
         budget = 0
         while budget < 40_000_000:
             while not cpu.halted:
                 pc = cpu.pc
                 if pc == RS:
-                    cpu.step(); return True
+                    cpu.step()                            # снимок берём тут же, до тела RunScripts
+                    if 'fire' in keys and 'fire' not in scen:
+                        keys.clear(); keys.extend(scen)   # сообщение снято, вернуть сценарные клавиши
+                    return True
                 if pc == WTL and 'fire' not in keys:
                     dismissed.append(state['t'] + 1)
                     keys.append('fire')
@@ -88,9 +98,6 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
             cpu.halted = False
             if cpu.ie:
                 cpu.ie = False; cpu.push(cpu.pc); cpu.pc = 0x38
-            if 'fire' in keys and 'fire' not in scen:
-                # сообщение снято прерыванием-другим: вернуть сценарные клавиши на следующем кадре
-                pass
         return False
 
     def snap(t, k):
