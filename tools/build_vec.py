@@ -485,7 +485,7 @@ def build_menu_bins(lst):
     from texts_ru import encode, MENU, INTRO
     def db(label, text): return f"{label}:\tdb " + ','.join(str(b) for b in encode(text)) + ',0'
     ru = ['; сгенерировано build_vec из tools/data/texts_ru.py (кодировка шрифта: кириллица 96..127)',
-          db('o_play_es', MENU['play']), db('o_pass_es', MENU['pass']), db('o_esp', MENU['lang']), db('o_mus_es', MENU['music']),
+          db('o_play_es', MENU['play']), db('o_pass_es', MENU['pass']), db('o_mus_es', MENU['music']),  # пункта языка нет
           db('t1s', INTRO[0]), db('t2s', INTRO[1]), db('t3s', INTRO[2]),
           db('p_ask_es', MENU['pass_ask']), db('p_ok_es', MENU['pass_ok']), db('p_bad_es', MENU['pass_bad'])]
     (ROOT / 'build/menu_ru.asm').write_text('\n'.join(ru) + '\n')

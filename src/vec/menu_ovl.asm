@@ -80,34 +80,37 @@ ovl_input:
 	jp ovl_loop
 ovl_up:
 	ld a,(ovl_opt)
-	dec a
-	and 3
+	call ovl_prev3
 	jp ovl_setopt
 ovl_down:
 	ld a,(ovl_opt)
-	inc a
-	and 3
+	call ovl_next3
 ovl_setopt:
 	ld (ovl_opt),a
 	call ovl_options
 	call ovl_wrel
 	jp ovl_loop
+; РУССКОЕ ИЗДАНИЕ: пунктов три (ИГРАТЬ, ПАРОЛЬ, МУЗ./ЭФФ) — пункт выбора языка снят,
+; поэтому кольцо обходится по модулю ТРИ, а не `and 3`.
+ovl_next3:
+	inc a
+	cp 3
+	ret c
+	xor a
+	ret
+ovl_prev3:
+	dec a
+	ret p
+	ld a,2
+	ret
 ovl_fire:
 	call ovl_wrel
 	ld a,(ovl_opt)
 	or a
-	jp z,ovl_start		; PLAY
+	jp z,ovl_start		; ИГРАТЬ
 	cp 2
-	jp z,ovl_lang		; LANGUAGE
-	cp 3
-	jp z,ovl_music		; MUSIC/FX
-	jp ovl_pass		; PASSWORD
-ovl_lang:
-	ld a,(language)
-	xor 1
-	ld (language),a
-	call ovl_options
-	jp ovl_loop
+	jp z,ovl_music		; МУЗ./ЭФФ
+	jp ovl_pass		; ПАРОЛЬ
 ovl_music:
 	ld a,(music_playing)
 	xor 1
@@ -175,8 +178,7 @@ ovl_options:
 ovl_opts_only:			; только пункты (для экрана пароля: строку 19 занимает приглашение)
 	; как в оригинале: предыдущий пункт сверху, текущий двойной высоты, следующий снизу
 	ld a,(ovl_opt)
-	add a,3
-	and 3
+	call ovl_prev3
 	ld c,18
 	ld e,0
 	call ovl_opt_print
@@ -185,8 +187,7 @@ ovl_opts_only:			; только пункты (для экрана пароля: 
 	ld e,1			; текущий — двойная высота (строки 15-16)
 	call ovl_opt_print
 	ld a,(ovl_opt)
-	inc a
-	and 3
+	call ovl_next3
 	ld c,21
 	ld e,0
 	call ovl_opt_print
@@ -426,11 +427,10 @@ ovl_cred:	db 0
 ovl_ct:		db 0
 ovl_slide:	db 0
 
-ovl_opts_en:	dw o_play,o_pass,o_eng,o_mus
-ovl_opts_es:	dw o_play_es,o_pass_es,o_esp,o_mus_es	; language=0: русский (menu_ru.asm)
+ovl_opts_en:	dw o_play,o_pass,o_mus			; РУССКОЕ ИЗДАНИЕ: пункта языка нет
+ovl_opts_es:	dw o_play_es,o_pass_es,o_mus_es		; language всегда 0: русский (menu_ru.asm)
 o_play:		db "  PLAY  ",0
 o_pass:		db "PASSWORD",0
-o_eng:		db "ENGLISH ",0
 o_mus:		db "MUSIC/FX",0
 ovl_credtab:	dw c_code,c_art,c_snd
 c_code:		db "  CODE: UTOPIAN ",0
