@@ -2649,7 +2649,9 @@ drawWeapon:
 	push hl
 	push de
 	push bc
-	call vec_pc_inv3	; картинка ложится на ячейки символов — их кэш сбросить
+	push af			; vec_pc_inv3 портит A, а в нём номер оружия*32 (иначе панель
+	call vec_pc_inv3	; рисует чужой слот: выбранное оружие в HUD не менялось, 2026-09-08)
+	pop af
 	rrca
 	rrca
 	rrca
