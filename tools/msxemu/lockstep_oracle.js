@@ -99,15 +99,18 @@ e.loadCartridge(makeRom());
 // mainloop, из которого её зовут, запускается много позже — после меню, вступления и LoadLevel.
 function installSnap() {
   const lo = a => a & 0xFF, hi = a => a >> 8;
+  // TICKC инкрементируется ПОСЛЕ копирования. Если наоборот — кадр WebMSX может кончиться
+  // посреди ldir: JS увидит «тик пришёл», а хвост буфера будет ещё от прошлого тика. Ловилось
+  // как дрожание байта 6 (animation position) сущности игрока на ур.3 — 13 тиков из 100.
   const code = [
     0xF5, 0xE5, 0xD5, 0xC5,                                   // push af,hl,de,bc
-    0x21, lo(A.TICKC), hi(A.TICKC), 0x34,                     // ld hl,TICKC : inc (hl)
     0x21, lo(A.SPDATA), hi(A.SPDATA),                         // ld hl,SPDATA
     0x11, lo(A.SNAP), hi(A.SNAP),                             // ld de,SNAP
     0x01, 224, 0, 0xED, 0xB0,                                 // ld bc,224 : ldir
     0x21, lo(A.VARS), hi(A.VARS),                             // ld hl,joystick_state
     0x11, lo(A.SNAP + 224), hi(A.SNAP + 224),                 // ld de,SNAP+224
     0x01, A.VARSLEN, 0, 0xED, 0xB0,                           // ld bc,VARSLEN : ldir
+    0x21, lo(A.TICKC), hi(A.TICKC), 0x34,                     // ld hl,TICKC : inc (hl)
     0xC1, 0xD1, 0xE1, 0xF1,                                   // pop bc,de,hl,af
     0xC3, lo(A.RunScripts), hi(A.RunScripts),                 // jp RunScripts
   ];
