@@ -12,3 +12,7 @@ tools/data/__pycache__/
 __pycache__/
 tests/*.bin
 .claude/
+ref/msx2
+ref/msx2_rom
+tools/apultra
+tools/pasmo-src
