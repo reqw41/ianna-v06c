@@ -47,10 +47,6 @@ U56 = ['##.##',
 L_STEM_W, L_FOOT_W, L_H = 2, 4, 6
 
 
-def _bg(rows, y, x):
-    return rows[y][x]
-
-
 def find_L(rows, h, bg=1):
     """Все вхождения «L» счётчика уровня: (x, y, цвет столбика, цвет подошвы).
 
