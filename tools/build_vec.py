@@ -449,7 +449,7 @@ def build_menu_bins(lst):
         out.append(f'{n}\tequ ${v:04X}')
     out += [f'FB_ORG\tequ ${syms["string_area"] + 1216:04X}'   # загрузчик банков: за буфером сектора,
             ,                                                   # таблицей длин и рецептом
-            f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 3', 'MB_SEC_MENU\tequ 3', 'MB_TRK_SLIDES\tequ 75']
+            f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 3', 'MB_SEC_MENU\tequ 3', 'MB_TRK_SLIDES\tequ 73']
     (ROOT / 'build/menu_syms.asm').write_text('\n'.join(out) + '\n')
     sys.path.insert(0, str(ROOT / 'tools/data'))
     from texts_ru import encode, MENU, INTRO

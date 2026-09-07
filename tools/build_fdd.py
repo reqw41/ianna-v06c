@@ -5,11 +5,10 @@
 Геометрия 80x2x5x1024 = 800 КБ; дорожка = 10 КБ.
 
 Раскладка дорожек:
-   0..3   ROM (32 КБ)
-   4..73  сжатые наборы уровней (build/levels/level{N}.pak) — 700 КБ, девять уровней
-   74     экран меню (сжатый, см. ниже)
-   75..79 слайды интро/концовки (по одной дорожке на слайд)
-Картинки (экран меню и пять слайдов) лежат СЖАТЫМИ и по одной на дорожку: дамп VRAM — это 32 КБ,
+   0..3   ROM (32 КБ) + экран меню в хвосте дорожки 3
+   4..72  сжатые наборы уровней (build/levels/level{N}.pak) и библиотека банков
+   73..79 семь слайдов интро/концовки (по одной дорожке на слайд)
+Картинки (экран меню и семь слайдов) лежат СЖАТЫМИ и по одной на дорожку: дамп VRAM — это 32 КБ,
 и вшестером они занимали 24 дорожки из 80, из-за чего девять наборов уровней (660 КБ) на дискету
 не помещались. Каждая плоскость жмётся отдельно (aPLib, 1-2.6 КБ), в начале дорожки — заголовок
 из четырёх смещений по два байта. Читает и распаковывает mb_slide_i (menu_ram.asm).
@@ -21,9 +20,9 @@ import pathlib, re, sys, json, hashlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SEC = 1024
 TRACK = 10 * SEC
-LEVEL_TRACKS = list(range(4, 75))   # один непрерывный блок: наборы уровней по 5-9 дорожек каждый
+LEVEL_TRACKS = list(range(4, 73))   # один непрерывный блок: наборы уровней по 5-9 дорожек каждый
 MENU_TRACK, MENU_SEC = 3, 3         # экран меню — в хвосте дорожек ROM (образ кончается на 32-м секторе)
-PIC_TRACK = 75                      # пять слайдов — по дорожке на каждый
+PIC_TRACK = 73                      # семь слайдов — по дорожке на каждый (73..79)
 
 rom = bytearray((ROOT / 'build/ianna.rom').read_bytes())
 assert len(rom) <= 32 * 1024 - 0x80
@@ -98,23 +97,26 @@ for start, data in level_data:
 # Один и тот же тролль нужен пяти уровням; раньше он лежал в каждом наборе, потому что банк в наборе
 # стоит по своему для этого уровня адресу. Теперь наборы идут без банков (см. build_levels), а куда
 # какой банк положить в квазидиске, сказано в рецепте — дорожку и сектор проставляем здесь.
+# Банк читается одним заходом и дорожку не пересекает, то есть это раскладка по корзинам по 10
+# секторов. Кладём БОЛЬШИЕ ВПЕРЁД в первую подходящую дорожку (first-fit-decreasing): 25 банков
+# укладываются в 18 дорожек вместо 20 у последовательной раскладки, а лишние две дорожки нужны
+# под слайды концовки. Порядок в рецептах от этого не зависит — позиция каждого банка своя.
 import json
 lib_at = {}
-sec_free = [(tr, s) for tr in free for s in range(1, 11)]
-cursor = 0
-for pak in sorted((ROOT / 'build/levels').glob('bank*.pak')):
+track_free = {tr: 10 for tr in free}     # свободных секторов в дорожке (счёт с сектора 1)
+paks = sorted((ROOT / 'build/levels').glob('bank*.pak'), key=lambda p: -p.stat().st_size)
+for pak in paks:
     data = pak.read_bytes()
     nsec = (len(data) + SEC - 1) // SEC
-    while cursor + nsec <= len(sec_free) and sec_free[cursor][0] != sec_free[cursor + nsec - 1][0] \
-            and sec_free[cursor][1] != 1:
-        cursor += 1                      # начинать банк с начала дорожки, если не помещается в остаток
-    if cursor + nsec > len(sec_free):
-        sys.exit(f'!! библиотека не влезла: {pak.name}')
-    tr, sc = sec_free[cursor]
+    assert nsec <= 10, f'банк {pak.name} больше дорожки: {len(data)} Б'
+    tr = next((t for t in free if track_free[t] >= nsec), None)
+    if tr is None:
+        sys.exit(f'!! библиотека не влезла: {pak.name} ({nsec} сект.), свободно {sum(track_free.values())} сект.')
+    sc = 10 - track_free[tr] + 1
     at = tr*TRACK + (sc - 1)*SEC
     img[at:at + len(data)] = data
     lib_at[pak.stem[4:]] = (tr, sc)      # bank{key}.pak -> ключ
-    cursor += nsec
+    track_free[tr] -= nsec
 print(f'библиотека банков: {len(lib_at)} банков, '
       f'{sum((ROOT / "build/levels" / f"bank{k}.pak").stat().st_size for k in lib_at)/1024:.0f} КБ')
 
@@ -153,7 +155,7 @@ if menu.exists():
     assert at >= 0x80 + len(rom), 'экран меню наехал на ROM'
     img[at:at + len(blob)] = blob
     placed_pics.append((0, MENU_TRACK, len(blob)))
-    for i in range(5):
+    for i in range(7):
         blob = pack_picture((ROOT / f'build/slide{i}.vrm').read_bytes())
         img[(PIC_TRACK + i)*TRACK:(PIC_TRACK + i)*TRACK + len(blob)] = blob
         placed_pics.append((i + 1, PIC_TRACK + i, len(blob)))
