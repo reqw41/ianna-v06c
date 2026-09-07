@@ -111,6 +111,7 @@ vec_keys:	db 0		; маска клавиш H/J/X, снятая в ISR (бит0 H,
 vec_key:	db 0		; ASCII нажатой клавиши (0 = ничего)
 vec_ovl_tgt:	dw 0		; адрес функции движка для vec_ovl_call (оверлей паузы)
 vec_in_game:	db 0		; 1 = идёт game (ISR разрешает выход по СТОП)
+vec_end_flag:	db 0		; 1 = игра пройдена: оверлей меню сперва играет концовку (end_game)
 vec_pal_dirty:	db 1		; палитра: записать в ISR (старт / смена)
 vec_zsave:	ds 8		; z_ix..z_ret на время плеера в ISR		; сохранение z_ix..z_hl2 на время плеера в ISR
 ply_sd_cnt:	db 0		; Arkos: сдвиг частоты (4k) вместо самомодификации jr

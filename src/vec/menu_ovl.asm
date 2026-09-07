@@ -14,6 +14,7 @@ MB_VREST	equ MB_ORG+24
 MB_MCHR		equ MB_ORG+27
 MB_WAVE		equ MB_ORG+30
 MB_STRIPES	equ MB_ORG+33
+MB_SCROLL	equ MB_ORG+36
 	org $8440
 
 ovl_entry:
@@ -31,12 +32,19 @@ ovl_cp:
 	or c
 	jp nz,ovl_cp
 	call MB_SAVELVL		; песню уровня — в сторонку
+	ld a,(vec_end_flag)	; игра пройдена -> сперва концовка (end_game оригинала), потом меню
+	or a
+	jp z,ovl_noend
+	xor a
+	ld (vec_end_flag),a
+	call ovl_ending
+ovl_noend:
+	call ovl_dark		; погасить: и отскок песни через VRAM, и загрузка картинки мусорят в экране
 	xor a
 	call MB_SONG		; песня меню -> $C980
 	ld a,13			; music_menu
 	ld hl,MUSIC_Load
 	call MB_CALL
-	call ovl_dark		; погасить: загрузка идёт прямо в VRAM
 	call MB_SCREEN		; экран меню с дискеты
 	push af
 	call ovl_light
@@ -420,6 +428,138 @@ ovl_wrel:
 	and $13
 	jp nz,ovl_wrel
 	ret
+
+; ================= концовка: ending + end_credits оригинала =================
+; ending: три экрана (слайды 3..5 = обе половинки final01 и первая final02) с тремя строками
+; end_string01..03 и музыкой 14, после последнего — пауза 90 кадров.
+; end_credits: экран титров (слайд 6) с музыкой 15, поверх — 37 строк credits01.. по 15 знаков:
+; строка печатается в полосе под картинкой (строка 24) и восемью шагами по точке уезжает вверх.
+; Титры лежат блобом в квазидиске по MB_CREDITS (в окне оверлея), шаг 16 Б.
+ovl_ending:
+	call ovl_dark		; гасим до конца загрузки: отскок песни через VRAM мусорит в плоскости 3
+	ld a,3
+	call MB_SONG		; песня концовки -> $C980
+	ld a,14			; music_end
+	ld hl,MUSIC_Load
+	call MB_CALL
+	ld a,3
+	ld (ovl_slide),a
+ovl_esl:
+	ld a,(ovl_slide)
+	call MB_SLIDE
+	push af			; ovl_light портит флаги — результат загрузки сохраняем
+	call ovl_light
+	pop af
+	ret nz			; дисковода нет — без концовки
+	ld a,(ovl_slide)
+	sub 3
+	ld hl,ovl_etxt_en
+	push af
+	ld a,(language)
+	or a
+	jp nz,ovl_es1
+	pop af
+	ld hl,ovl_etxt_es
+	push af
+ovl_es1:
+	pop af
+	call ovl_tab3
+	call ovl_wrap		; печать с переносами со строки 18
+	call ovl_waitfire
+	ld a,(ovl_slide)
+	inc a
+	ld (ovl_slide),a
+	cp 6
+	jp z,ovl_ecr
+	call ovl_dark
+	jp ovl_esl
+ovl_ecr:
+	ld b,90			; end_wait оригинала
+ovl_ew:
+	ei
+	halt
+	dec b
+	jp nz,ovl_ew
+	ld hl,MUSIC_Stop
+	call MB_CALL
+	; --- титры ---
+	call ovl_dark
+	ld a,4
+	call MB_SONG		; песня титров -> $C980
+	ld a,6
+	call MB_SLIDE		; экран титров
+	push af
+	call ovl_light
+	pop af
+	ret nz
+	ld a,15			; music_credits
+	ld hl,MUSIC_Load
+	call MB_CALL
+	ld hl,MB_CREDITS
+	ld (ovl_cptr),hl
+	ld a,37
+	ld (ovl_cn),a
+ovl_cl:
+	ld hl,(ovl_cptr)
+	ld b,10
+	ld c,24			; полоса под картинкой, залита цветом 1 (фон шрифта тот же)
+	call ovl_printf
+	call ovl_scroll8
+	ld hl,(ovl_cptr)
+	ld de,16
+	add hl,de
+	ld (ovl_cptr),hl
+	ld a,(ovl_cn)
+	dec a
+	ld (ovl_cn),a
+	jp nz,ovl_cl
+	ld a,14			; end_credits_end: ещё 14 проходов, чтобы последние строки уехали в окно
+	ld (ovl_cn),a
+ovl_cl2:
+	call ovl_scroll8
+	ld a,(ovl_cn)
+	dec a
+	ld (ovl_cn),a
+	jp nz,ovl_cl2
+	ld hl,ovl_end_en	; «КОНЕЦ» по (12,16) — как credits_end оригинала
+	ld a,(language)
+	or a
+	jp nz,ovl_ce1
+	ld hl,oe_end_es
+ovl_ce1:
+	ld b,12
+	ld c,16
+	call ovl_printf
+	call ovl_wrel
+ovl_cw:
+	ei
+	halt
+	ld a,(joystick_state)
+	and $10
+	jp z,ovl_cw
+	ld hl,MUSIC_Stop
+	call MB_CALL
+	ret
+ovl_scroll8:			; строка титров уезжает вверх на свою высоту: 8 шагов по точке
+	ld a,8			; Оригинал ждёт по 4 кадра между шагами: у VDP копия окна даром. У нас
+	ld (ovl_cs),a		; шаг стоит 266 тыс. тактов = 4.4 кадра сам по себе (замер стендом),
+ovl_s8:				; поэтому ждать нечего: 8 x 4.4 = 35 кадров на строку против 32 у MSX.
+	ei
+	call MB_SCROLL
+	ld a,(ovl_cs)
+	dec a
+	ld (ovl_cs),a
+	jp nz,ovl_s8
+	ret
+ovl_cptr:	dw 0
+ovl_cn:		db 0
+ovl_cs:		db 0
+ovl_etxt_en:	dw e1e,e2e,e3e
+ovl_etxt_es:	dw e1s,e2s,e3s
+e1e: db "THE LORD OF CHAOS HAS BEEN DEFEATED, AND IANNA IS WELL PLEASED.",0
+e2e: db "GO BACK TO YOUR VILLAGE AND ENJOY A PEACEFUL LIFE. I WILL KEEP THE SWORD, FOR EVIL DOES NOT REST.",0
+e3e: db "RETURNING HOME IS THE HIGHEST REWARD, AND PEACE THE MOST PRECIOUS POSSESSION.",0
+ovl_end_en:	db "    THE END    ",0
 
 ovl_opt:	db 0
 ovl_row:	db 0
