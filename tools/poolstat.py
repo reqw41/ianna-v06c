@@ -37,7 +37,7 @@ SLOT_NEXT = sym['vec_slot_next']; POOL_ON = sym['vec_pool_on']
 FLUSH = sym.get('vec_pool_flush')
 # точки входа путей блита спрайта (те, что есть в этой сборке)
 PATHS = {}
-for name in ('drawSprite_pool', 'dsp_mirror', 'ds_dir4', 'drawSprite_mirror',
+for name in ('drawSprite_pool', 'dsp_mirror', 'ds_dir4', 'ds_dir4m', 'dsm_prep',
              'vec_blit2', 'vec_blit2m', 'ds_direct',
              'b2p_row', 'b2pm_row', 'b2p_split', 'b2pm_split'):
     if name in sym: PATHS[sym[name]] = name

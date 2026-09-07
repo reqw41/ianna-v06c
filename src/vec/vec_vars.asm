@@ -25,7 +25,7 @@ vec_spr_skip:	db 0
 vec_spr_ny:	db 0
 vec_spr_lbot:	db 0
 vec_spr_hcol:	db 0
-vec_spr_mask:	db 0
+vec_spr_mask:	db 0		; СВОБОДНА: снятый drawSprite_mirror был последним читателем
 vec_spr_p01:	dw 0
 vec_spr_dst:	dw 0		; зеркальные варианты: адрес назначения на время просмотра rev256
 vec_spr_dir:	db 0

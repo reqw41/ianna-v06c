@@ -28,6 +28,9 @@ KV_WIN_LEVEL	equ $61		; окна $8000-$DFFF -> страница 1 (карта �
 KV_POOL_WIN	equ $23		; окно $A000-$DFFF -> страница 3 (пул)
 KV_WIN_MUSIC	equ $23		; окно $A000-$DFFF -> страница 3 (музыка по $C980, эффекты по $D980)
 POOL_BASE	equ $A000
+MIRRBUF		equ POOL_BASE + 80*128	; $C800, страница 3: буфер развёрнутой колонки спрайта (192 Б).
+				; Это же место — площадка стека vec_pool_flush, но сброс идёт в другой
+				; фазе тика, во время рисования спрайтов оно свободно (см. ds_dir4m).
 P3_FONT		equ $0000
 P3_PANEL	equ $1000
 P3_WEAPON	equ $2000
@@ -1120,7 +1123,12 @@ ds_dir4:
 	xor a			; ЗАМЕР: см. выше
     endif
 	or a
-	jp nz,drawSprite_mirror
+	jp nz,ds_dir4m
+	ld a,$3c		; ds_col_end: hcol++ и вход колонки ds_col_go — зеркальный путь
+	ld (ds_hinc),a		; (ds_dir4m) ставит вместо них dec a и dsm_prep
+	ld hl,ds_col_go
+	ld (ds_col+1),hl
+ds_d4_go:
 	; Конец колонки — по L, а не по счётчику в памяти (40 тактов на строку): L растёт на строку,
 	; колонка кончается на lbot+NY (постоянно на весь спрайт, переполнения нет: = 224-y <= 224).
 	; Свободных регистров в теле нет, поэтому предел вшит в сам `cp` (самомодификация — как
@@ -1227,153 +1235,95 @@ ds_col_end:
 	ld l,a
 	ld h,0
 	add hl,sp
-	ld sp,hl
+	ld sp,hl		; (зеркальный путь: SP стоит в буфере — dsm_prep всё равно ставит его заново)
 	ld a,(vec_spr_hcol)
-	inc a
+ds_hinc:
+	inc a			; самомодификация: зеркальный путь идёт колонками справа налево (dec a)
 	ld (vec_spr_hcol),a
 	ld a,(vec_col_cnt)
 	dec a
 	ld (vec_col_cnt),a
 	jp nz,ds_col
 	jp vec_stk_leave
-drawSprite_mirror:
+; ---------------------------------------------------------------------------
+; ЗЕРКАЛЬНЫЙ прямой блит четырёхплоскостного кадра. Своего тела у него нет: колонка
+; разворачивается через rev256 в буфер MIRRBUF, а в VRAM её кладёт обычное прямое тело ds_row.
+; Путь достижим только когда пул выключен (или под спрайтом нет слотов) И готовой зеркальной
+; копии кадра нет — за шесть гейт-сцен по 60 тиков (poolstat) ни разу; отдельные 206 Б ROM
+; под него не окупались. Развёрнутая колонка стоит ~0.9 ед./строку сверх прямого блита, то есть
+; суммарно дешевле снятого тела (2.25 ед./строку), поэтому цена колонки из ds_cost годится.
+;
+; Буфер — $C800 в СТРАНИЦЕ 3 квазидиска: это площадка стека сброса пула (vec_pool_flush), а сброс
+; идёт в другой фазе тика, во время рисования спрайтов она свободна. Пишем туда через ОКНО
+; $A000-$DFFF (KV_POOL_WIN — как пул), читаем обратно стеком (KV_STK_P3 — как сброс).
+; Колонки идут справа налево: hcol стартует с cx+2 и уменьшается (ds_hinc).
+ds_dir4m:
 	ld a,(vec_spr_hcol)
 	add a,2
 	ld (vec_spr_hcol),a
-	ld a,3
-	ld (vec_col_cnt),a
-	di
-	ld hl,0
-	add hl,sp
-	ld (vec_sp_save),hl
-	ld hl,(vec_spr_src)
-	ld sp,hl
-    if !DEMO
-	ld a,(vec_spr_port)
-	ld (vec_spr_curport),a
-	out (KV_PORT),a
-    endif
-dsm_col:
-	ld hl,dsm_col_go
-	ld (vec_blit_ret),hl
-	jp vec_spr_colbud	; бюджет DI на колонку
-dsm_col_go:
-	ld a,(vec_spr_hcol)
-	ld d,a
-	ld a,(vec_spr_lbot)
-	ld e,a
+	ld a,$3d		; ds_col_end: hcol--
+	ld (ds_hinc),a
+	ld hl,dsm_prep		; ds_col: после бюджета — разворот колонки, а не сразу тело
+	ld (ds_col+1),hl
 	ld a,(vec_spr_ny)
-	ld (vec_row_cnt),a
-dsm_row:
-	ex de,hl
-	ld (vec_spr_dst),hl	; адрес VRAM (H колонки, L строки) — на время просмотра rev256
-	ld h,rev256/256
+	add a,a
+	ld l,a
+	add a,a
+	add a,l			; NY*6 = длина колонки в буфере (MIRRBUF выровнен на страницу, L с нуля)
+	ld (dsm_bend+1),a
+	ld a,(vec_spr_port)
+	or KV_POOL_WIN		; окно $A000-$DFFF -> страница 3: туда пишется развёрнутая колонка
+	ld (vec_spr_curport),a
+	ld hl,(vec_spr_src)
+	ld (vec_spr_dst),hl	; бегунок по кадру: начало текущей колонки источника
+	jp ds_d4_go
+dsm_prep:			; бюджет колонки уже взят (ds_col -> vec_spr_colbud), порт = банк + окно
+	ld hl,(vec_spr_dst)
+	ld sp,hl
+	ld hl,MIRRBUF
+	ld d,rev256/256		; таблица разворота выровнена на страницу: индекс в E, байт `ld a,(de)`
+dsm_prow:
 	pop bc			; C = p0, B = маска
-	ld l,c
-	ld a,(hl)
-	ld (vec_spr_p01),a	; p0 зеркально
-	ld l,b
-	ld a,(hl)
-	ld (vec_spr_mask),a	; маска зеркально
-	pop de			; E = p1, D = p2
-	ld l,e
-	ld e,(hl)
-	ld l,d
-	ld d,(hl)
-    if C8+SPR3
-	pop bc			; C = 0, B = пропуск
-	ld hl,(vec_spr_dst)
-	ld a,h
-	add a,$40
-	ld h,a			; плоскость 2 из трёх ($E000)
-	ld a,(vec_spr_mask)
-	and (hl)
-	or d
-	ld (hl),a
-    else
-	pop bc			; C = p3, B = пропуск
-	ld l,c
-	ld c,(hl)
-	ld hl,(vec_spr_dst)
-	ld a,h
-	add a,$60
-	ld h,a			; плоскость 3
-	ld a,(vec_spr_mask)
-	and (hl)
-	or c
-	ld (hl),a
-	ld a,h
-	sub $20
-	ld h,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or d
-	ld (hl),a
-    endif
-	ld a,h
-	sub $20
-	ld h,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or e
-	ld (hl),a
-	ld a,h
-	sub $20
-	ld h,a
-	ld a,(vec_spr_p01)
-	ld e,a
-	ld a,(vec_spr_mask)
-	and (hl)
-	or e
+	ld e,c
+	ld a,(de)
 	ld (hl),a
 	inc l
-	ex de,hl		; DE = адрес следующей строки
-	ld a,(vec_row_cnt)
-	dec a
-	ld (vec_row_cnt),a
-	jp z,dsm_col_end
-	ld c,a			; осталось строк
-	ld a,b			; пропуск
-	or a
-	jp z,dsm_row
-	ld a,c
-	dec a
-	jp z,dsm_row
-	cp b
-	jp c,dsm_k
-	ld a,b
-dsm_k:
-	ld b,a
-	ld a,c
-	sub b
-	ld (vec_row_cnt),a
-	ld a,e
-	add a,b
-	ld e,a			; k строк вверх
-	ld a,b
-	add a,a
-	ld c,a
-	add a,a
-	add a,c
-	ld l,a
-	ld h,0
+	ld e,b
+	ld a,(de)
+	ld (hl),a
+	inc l
+	pop bc			; C = p1, B = p2
+	ld e,c
+	ld a,(de)
+	ld (hl),a
+	inc l
+	ld e,b
+	ld a,(de)
+	ld (hl),a
+	inc l
+	pop bc			; C = p3, B = пропуск пустых строк
+	ld e,c
+	ld a,(de)
+	ld (hl),a
+	inc l
+	ld (hl),b		; пропуск — как есть: строка буфера того же формата, что строка кадра
+	inc l
+	ld a,l
+dsm_bend:
+	cp 0			; самомодификация (ds_dir4m): NY*6
+	jp nz,dsm_prow
+	ld hl,0
 	add hl,sp
-	ld sp,hl		; 6k байт источника
-	jp dsm_row
-dsm_col_end:
 	ld a,(vec_spr_skip)
-	ld l,a
-	ld h,0
-	add hl,sp
+	ld e,a
+	ld d,0
+	add hl,de
+	ld (vec_spr_dst),hl	; следующая колонка кадра
+	ld hl,MIRRBUF
 	ld sp,hl
-	ld a,(vec_spr_hcol)
-	dec a
-	ld (vec_spr_hcol),a
-	ld a,(vec_col_cnt)
-	dec a
-	ld (vec_col_cnt),a
-	jp nz,dsm_col
-	jp vec_stk_leave
+	ld a,KV_STK_P3
+	out (KV_PORT),a
+	jp ds_col_go
 
     if !DEMO
 ; ---- проверка слотов под спрайт: CY=1 если все супертайлы (cx..cx+2, ybot-ny+1..ybot) имеют слот
