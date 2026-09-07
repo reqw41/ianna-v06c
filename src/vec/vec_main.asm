@@ -74,6 +74,12 @@ vec_internal_loop:
 	ld a,1
 	ld (vec_in_game),a
 	call game
+	call MUSIC_Stop		; как internal_loop оригинала: музыку стоп, «нажми огонь» (кроме attract-уровня 8),
+	ld a,(current_level)	; и только потом разбор player_dead. Раньше порт перезапускал контрольную
+	cp 8			; точку сразу, без паузы и подсказки (2026-09-07).
+	jp z,vil_attract
+	call draw_gameover_string
+vil_attract:
 	xor a
 	ld (vec_in_game),a
 	ld a,(player_dead)
