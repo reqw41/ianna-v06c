@@ -598,6 +598,13 @@ BLIT2_ADDR = 0xBF00     # раньше здесь лежал вынесенны�
 # Адрес таблицы палитр экранов свой у каждого уровня: она обязана лежать В ОКНЕ $A000-$DFFF
 # (ниже окно не отображается), а свободное место там у уровней разное.
 SCRPAL_BY_LEVEL = {n: 0xBB00 for n in range(1, 10)}   # хвост стр.2 перед таблицами уровня
+# Раскладка кода в странице 3 набора ($9000-$9800): оверлей паузы, загрузчик банков, подкачка
+# страницы героя и титры концовки. Границы объявлены здесь, а не «круглыми бронями» по 256 Б:
+# оверлею паузы понадобилось место под смену оружия, а титрам с $9500 двигаться некуда — дальше
+# блок меню в ОЗУ ($9800).
+PAUSE_ADDR, PAUSE_END = 0x9000, 0x92C0          # оверлей паузы (vec_pause_phase зовёт по $9000)
+FDD_BANKCODE, FDD_BANKCODE_END = 0x92C0, 0x9420  # загрузчик банков (fdd_banks.asm)
+WPN_SRC, WPN_SRC_END = 0x9420, 0x9500           # подкачка страницы героя (wpn_load.asm)
 # Титры концовки: 37 строк по 16 Б. Лежат в наборе уровня 1, в странице 3 за загрузчиком банков,
 # то есть ПРЯМО В ОКНЕ оверлея ($8000-$9FFF, порт $43) — оверлей читает их как обычную память.
 # В самом оверлее ($8440-$9000) 592 Б под них нет.
@@ -703,12 +710,15 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
     def flen(name, d=BUILD): 
         f = d / name
         return len(f.read_bytes()) if f.exists() else 0
-    r += [(3, 0x9000, 0x9280, 'оверлей паузы'),
-          (3, 0x9280, 0x9280 + upto(flen('fdd_banks.bin')), 'загрузчик банков'),
+    r += [(3, PAUSE_ADDR, PAUSE_END, 'оверлей паузы'),
+          (3, FDD_BANKCODE, FDD_BANKCODE_END, 'загрузчик банков'),
+          (3, WPN_SRC, WPN_SRC_END, 'подкачка страницы героя'),
           (3, 0xC800, 0xC980, 'маркер набора'),
           (3, 0xC980, 0xC980 + upto(flen(f'music-level{LEVEL_MUSIC[level_no-1]}.mus', SRC)), 'музыка уровня'),
           (3, 0xD980, 0xD980 + upto(flen('iannafx.mus', SRC)), 'эффекты')]
-    assert flen('pause_ovl.bin') <= 0x280, 'оверлей паузы перерос $9000-$9280'
+    assert flen('pause_ovl.bin') <= PAUSE_END - PAUSE_ADDR, 'оверлей паузы перерос свой блок'
+    assert flen('fdd_banks.bin') <= FDD_BANKCODE_END - FDD_BANKCODE, 'загрузчик банков перерос свой блок'
+    assert flen('wpn_load.bin') <= WPN_SRC_END - WPN_SRC, 'подкачка страницы героя переросла свой блок'
     if level_no == 1:                 # фаза меню живёт только в наборе первого уровня
         r += [(2, a, a + upto(flen(m, SRC)), f'песня {m}') for a, m in SONG_SLOTS]
         r += [(3, 0x8440, 0x8440 + upto(flen('menu_ovl.bin')), 'оверлей меню'),
@@ -1045,12 +1055,17 @@ def build_kvaz(level_no=1, start=None):
     if not C8MODE:
         pz = BUILD / 'pause_ovl.bin'
         if pz.exists():
-            b = pz.read_bytes(); pages[3][0x9000:0x9000+len(b)] = b
+            b = pz.read_bytes(); pages[3][PAUSE_ADDR:PAUSE_ADDR+len(b)] = b
         # загрузчик банков: ROM-загрузчик копирует его отсюда в ОЗУ и зовёт (см. fdd_banks.asm)
         fb = BUILD / 'fdd_banks.bin'
         if fb.exists():
-            b = fb.read_bytes(); assert len(b) <= CREDITS_ADDR - 0x9280, len(b)   # дальше блоб титров
-            pages[3][0x9280:0x9280+len(b)] = b
+            b = fb.read_bytes(); assert len(b) <= FDD_BANKCODE_END - FDD_BANKCODE, len(b)
+            pages[3][FDD_BANKCODE:FDD_BANKCODE+len(b)] = b
+        # подкачка страницы героя: оверлей паузы копирует её отсюда в $0103 и зовёт (wpn_load.asm)
+        wl = BUILD / 'wpn_load.bin'
+        if wl.exists():
+            b = wl.read_bytes(); assert len(b) <= WPN_SRC_END - WPN_SRC, len(b)
+            pages[3][WPN_SRC:WPN_SRC+len(b)] = b
     if ovl.exists() and blob.exists() and not C8MODE and level_no == 1:
         b = ovl.read_bytes(); pages[3][0x8440:0x8440+len(b)] = b
         b = blob.read_bytes(); pages[3][0x9800:0x9800+len(b)] = b
@@ -1140,6 +1155,10 @@ def build_kvaz(level_no=1, start=None):
                   f'LEVELTAB\tequ ${LEVELTAB_ADDR:04X}',
                   f'LEVELTAB_PORT\tequ ${0x20 | LEVELTAB_PAGE:02X}\t; окно $A000-$DFFF -> страница {LEVELTAB_PAGE}',
                   f'FDDCOPY\tequ ${FDDCOPY_ADDR:04X}\t; копия загрузчика уровня (512 Б) — возвращается на $7E00',
+                  f'FDD_BANKCODE\tequ ${FDD_BANKCODE:04X}\t; загрузчик банков в наборе (стр.3)',
+                  f'WPN_SRC\tequ ${WPN_SRC:04X}\t; подкачка страницы героя в наборе (стр.3)',
+                  f'WPN_ORG\tequ $E800\t; куда её копирует оверлей паузы (VRAM: экран всё равно буфер)',
+                  f'WPN_LEN\tequ ${WPN_SRC_END - WPN_SRC:04X}',
                   f'FGC_CODE\tequ ${FGC_CODE:04X}\t; оверлей готовых тайлов (fgc_ovl.asm) в хвосте string_area',
                   f'FGC_PTRS\tequ ${FGC_PTRS:04X}', f'FGC_TILES\tequ ${FGC_TILES[1]:04X}\t; стр.{FGC_TILES[0]}',
                   f'ZP_BLIT2M\tequ $003B\t; зеркальный двухплоскостной блит в нулевой странице (zp_blit2m.asm)',

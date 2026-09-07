@@ -104,19 +104,47 @@ for start, data in level_data:
 import json
 lib_at = {}
 track_free = {tr: 10 for tr in free}     # свободных секторов в дорожке (счёт с сектора 1)
+# Хвост ПОСЛЕДНЕЙ дорожки каждого набора тоже свободен: наборы кратны сектору, а не дорожке, и
+# в сумме девять хвостов дают 56 КБ. Без них четыре страницы героя (22 сект.) в библиотеку уже
+# не помещались: целых свободных дорожек в области уровней остаётся всего пара.
+for start, data in level_data:
+    n = (len(data) + SEC - 1) // SEC
+    last = start + (n - 1) // 10
+    used = ((n - 1) % 10) + 1
+    if used < 10:
+        track_free[last] = 10 - used
 paks = sorted((ROOT / 'build/levels').glob('bank*.pak'), key=lambda p: -p.stat().st_size)
 for pak in paks:
     data = pak.read_bytes()
     nsec = (len(data) + SEC - 1) // SEC
     assert nsec <= 10, f'банк {pak.name} больше дорожки: {len(data)} Б'
-    tr = next((t for t in free if track_free[t] >= nsec), None)
+    tr = next((t for t in sorted(track_free) if track_free[t] >= nsec), None)
     if tr is None:
         sys.exit(f'!! библиотека не влезла: {pak.name} ({nsec} сект.), свободно {sum(track_free.values())} сект.')
     sc = 10 - track_free[tr] + 1
     at = tr*TRACK + (sc - 1)*SEC
+    assert not any(img[at:at + len(data)]), f'библиотека наехала на чужие данные: {pak.name} дор.{tr} сект.{sc}'
     img[at:at + len(data)] = data
     lib_at[pak.stem[4:]] = (tr, sc)      # bank{key}.pak -> ключ
     track_free[tr] -= nsec
+# Позиции страниц героя (ключи w0..w3) — в таблицу vec_wpntab образа ROM: fb_wpn берёт оттуда
+# дорожку и сектор по player_current_weapon. Прошиваем так же, как vfl_dirtab, но уже В ОБРАЗЕ:
+# ROM лёг в img выше, а библиотека раскладывается только сейчас.
+mw = re.search(r'^([0-9A-F]{4}):.*?\svec_wpntab:', lst, re.M)
+if mw:
+    waddr = int(mw.group(1), 16)
+    woff = 0x80 + waddr - 0x100
+    wt = bytearray(8)
+    for w in range(4):
+        if f'w{w}' in lib_at:
+            tr, sc = lib_at[f'w{w}']
+            wt[2*w], wt[2*w + 1] = tr, sc
+    img[woff:woff + 8] = wt
+    print(f'страницы героя прошиты в ROM по ${waddr:04X}: ' +
+          ', '.join(f'{w}=дор.{wt[2*w]}/сект.{wt[2*w+1]}' for w in range(4)))
+else:
+    print('!! vec_wpntab не найден в листинге — страницы оружия не прошиты')
+
 print(f'библиотека банков: {len(lib_at)} банков, '
       f'{sum((ROOT / "build/levels" / f"bank{k}.pak").stat().st_size for k in lib_at)/1024:.0f} КБ')
 

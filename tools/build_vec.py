@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT / 'tools/data'))
 from build_edd import STRING_AREA_KVAZ, STRING_AREA_DEMO, STRING_AREA_C8
 VARS_ADDR = STRING_AREA_DEMO if DEMO else (STRING_AREA_C8 if C8 else STRING_AREA_KVAZ)
 from build_edd import CREDITS_ADDR       # блоб титров в странице 3 квазидиска (см. build_edd)
+from build_edd import PAUSE_ADDR, PAUSE_END, FDD_BANKCODE, FDD_BANKCODE_END, WPN_SRC, WPN_SRC_END
 
 def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
@@ -458,7 +459,8 @@ def build_menu_bins(lst):
             'force_inv_redraw', 'draw_weapon', 'RedrawScreen', 'InvalidateTiles', 'RedrawAllSprites',
             'FX_Play', 'get_entity_max_energy', 'remove_object_from_inventory', 'player_dead',
             'ENTITY_PLAYER_POINTER', 'z_iy', 'vec_palette', 'vec_pc_reset', 'vec_key', 'vec_key_hook',
-            'vec_end_flag',
+            'vec_end_flag', 'vec_init_rev256', 'vec_slot_init', 'vec_bank_tab', 'vec_wpntab',
+            'load_scorearea', 'CHECKPOINT_AREA', 'global_timer',
             'level_width', 'current_levelx', 'current_levely', 'z_ldir', 'vec_sp_save', 'rev256',
             # для оверлея готовых тайлов (fgc_ovl.asm):
             'drawTile', 'drawTile_nosave', 'vec_pool_on', 'SPDATA', 'fg_tile_pairs', 'fg_lut_n', 'vec_budget', 'vec_blit_src',
@@ -475,7 +477,7 @@ def build_menu_bins(lst):
     assert not missing, f'нет символов для меню: {missing}'
     out = ['; сгенерировано build_vec (символы игры для оверлея меню)']
     for line in lst.split('\n'):                      # константы набора уровня (SCRPAL, LEVELTAB_PORT...)
-        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|FDD_TAB|FGC_CODE|FGC_PTRS|FGC_TILES|ZP_BLIT2M|ZPSRC)\s+=\s+\$([0-9A-F]{2,4})', line)
+        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|FDDCOPY|FDD_TAB|FDD_BANKCODE|WPN_SRC|WPN_ORG|WPN_LEN|FGC_CODE|FGC_PTRS|FGC_TILES|ZP_BLIT2M|ZPSRC)\s+=\s+\$([0-9A-F]{2,4})', line)
         if m: out.append(f'{m.group(1)}\tequ ${m.group(2)}')
     for n, v in syms.items():
         out.append(f'{n}\tequ ${v:04X}')
@@ -543,9 +545,10 @@ def build_menu_bins(lst):
         st.append('\tdb ' + ','.join(str(_rows[y][p]) for y in range(32)))
     (ROOT / 'build/menu_stripes.asm').write_text('\n'.join(st) + '\n')
     for src, binout, maxlen in ((VEC / 'menu_ram.asm', 'menu_ram.bin', 0x800),
-                                (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9000 - 0x8440),
-                                (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x9000),
-                                (VEC / 'fdd_banks.asm', 'fdd_banks.bin', CREDITS_ADDR - 0x9280),
+                                (VEC / 'menu_ovl.asm', 'menu_ovl.bin', PAUSE_ADDR - 0x8440),
+                                (VEC / 'pause_ovl.asm', 'pause_ovl.bin', PAUSE_END - PAUSE_ADDR),
+                                (VEC / 'fdd_banks.asm', 'fdd_banks.bin', FDD_BANKCODE_END - FDD_BANKCODE),
+                                (VEC / 'wpn_load.asm', 'wpn_load.bin', WPN_SRC_END - WPN_SRC),
                                 (VEC / 'zp_blit2m.asm', 'zp.bin', 0x100 - 0x3B)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())

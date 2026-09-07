@@ -58,7 +58,13 @@ def build_level(n):
         keys.append({'key': key, 'off': 64 + 1 + len(rec) - 1})
         rec += bytes([0, 0, 0x10 | (pg << 2) | (1 if b in two else 0), base & 0xFF, base >> 8])
         lib_write(key, blob)
-    assert len(rec) <= RECIPE, f'рецепт не влез: {len(rec)} Б'
+    assert len(rec) <= 120, f'рецепт не влез: {len(rec)} Б'
+    # Шаблон записи для страницы героя (fdd_banks.FDD_WTMPL, хвост рецепта): порт квазидиска и
+    # адрес кадра 14 банка 2. Дорожку и сектор туда подставит fb_wpn по player_current_weapon —
+    # какое оружие в руках, при сборке набора неизвестно.
+    pg2, base2, _ = banks[2]
+    a2 = base2 + B.WPN_OFF
+    rec = bytes(rec).ljust(120, b'\x00') + bytes([0x10 | (pg2 << 2), a2 & 0xFF, a2 >> 8])
     out = OUT / f'level{n}.pak'
     out.write_bytes(bytes(table) + bytes(rec).ljust(RECIPE, b'\x00') + bytes(body))
     (OUT / f'level{n}.rec.json').write_text(json.dumps(keys, indent=1))

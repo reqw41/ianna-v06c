@@ -133,8 +133,28 @@ pz_wp1:
 	jp z,pz_wp1		; это оружие не найдено — следующее
 	ld a,FX_INV_MOVE
 	call pz_fx
-	ld hl,draw_weapon
+	; Страница спрайтов героя — с дискеты: в квазидиске лежит ОДНА (банк 2), под каждый вид
+	; оружия свои кадры 14..36. Копируем подкачку из набора (окно оверлея открыто, страница 3
+	; видна по $8000-$9FFF) в VRAM и зовём при закрытом окне.
+	ld hl,WPN_SRC
+	ld de,WPN_ORG
+	ld bc,WPN_LEN
+	call z_ldir
+	ld hl,WPN_ORG
 	ld (vec_ovl_tgt),hl
+	call vec_ovl_call
+	; VRAM была буфером загрузки — панель и поле перерисовываем целиком, а кэш панели
+	; («что уже стоит в VRAM») сбрасываем: иначе drawChar сочтёт мусор нужными знаками.
+	ld hl,vec_pc_reset
+	ld (vec_ovl_tgt),hl
+	call vec_ovl_call
+	ld hl,load_scorearea
+	ld (vec_ovl_tgt),hl
+	call vec_ovl_call
+	ld hl,InvalidateTiles
+	ld (vec_ovl_tgt),hl
+	ld bc,0
+	ld de,32*256 + 20
 	call vec_ovl_call
 	ld hl,RedrawScreen
 	ld (vec_ovl_tgt),hl
