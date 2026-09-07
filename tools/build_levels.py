@@ -93,6 +93,20 @@ def overlay_digest():
             d[name] = hashlib.md5(f.read_bytes()).hexdigest()
     return d
 
+def build_weapons():
+    """Четыре страницы героя (кадры 14..36) — в ту же библиотеку, по одному разу на дискету.
+    Перестановка цветов у всех уровней одна (сторож в build_edd.weapon_blob), поэтому кусок общий.
+    Ключи w0..w3: их позиции build_fdd прошивает в ROM (vec_wpntab), рецептом наборов они не
+    востребованы — страницу берёт fb_wpn по текущему player_current_weapon."""
+    import build_edd as B
+    out = []
+    for w in range(4):
+        (OUT / f'bankw{w}.pak').unlink(missing_ok=True)      # lib_write не перезаписывает
+        blob = B.weapon_blob(w)
+        p = lib_write(f'w{w}', blob)
+        out.append((w, len(blob), p.stat().st_size))
+    return out
+
 if __name__ == '__main__':
     from build_edd import LEVEL_BANKS
     levels = [int(a) for a in sys.argv[1:] if a.isdigit()] or sorted(LEVEL_BANKS)
@@ -101,6 +115,8 @@ if __name__ == '__main__':
         path, size = build_level(n)
         total += size
         print(f'уровень {n}: {path.name} {size:6d} Б ({size/1024:5.1f} КБ, {(size+10239)//10240} дорожек)')
+    for w, raw, pk in build_weapons():
+        print(f'страница героя, оружие {w}: {raw} Б -> {pk} Б сжато ({(pk+1023)//1024} сект.)')
     print(f'итого {total/1024:.1f} КБ на {len(levels)} уровней; дискета 800 КБ')
     # ВАЖНО: build_edd уровнезависим — он же генерирует gen_data.asm (палитра, таблица банков, LUT
     # передних тайлов), которую вкомпилировали в ROM. После цикла по уровням gen_data остаётся от
