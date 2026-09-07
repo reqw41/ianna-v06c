@@ -933,9 +933,13 @@ def build_kvaz(level_no=1, start=None):
         mfont = sr5_rows(pletter_depack((SRC / 'menu_font.SR5.plet1').read_bytes()), 16)
         for k, g in enumerate(menu_glyphs(mfont)):
             b = column_blob(g, 0, 1, 0, 8, pm_panel); pages[3][0xE000 + k*32: 0xE000 + k*32 + len(b)] = b
-    panel = sr5_rows(pletter_depack((SRC / 'marcador.SR5.plet1').read_bytes()), 32)
+    # Русские надписи панели (издание одноязычное): названия оружия и «У:» вместо «L:».
+    # Патч по точкам поверх распакованного битмапа — исходные .SR5 остаются английскими,
+    # размер в наборе не меняется (те же 32 знакоместа панели, 4x192 и 2x288 оружия/значков).
+    import hud_ru
+    panel = hud_ru.patch_panel(sr5_rows(pletter_depack((SRC / 'marcador.SR5.plet1').read_bytes()), 32))
     b = column_blob(panel, 0, 32, 0, 32, pm_panel); pages[3][0x1000:0x1000+len(b)] = b
-    armas = sr5_rows(pletter_depack((SRC / 'armas.SR5.plet1').read_bytes()), 24)
+    armas = hud_ru.patch_armas(sr5_rows(pletter_depack((SRC / 'armas.SR5.plet1').read_bytes()), 24))
     for w in range(4):
         b = column_blob(armas, w*32, 3, 0, 16, pm_panel); pages[3][0x2000 + w*192: 0x2000 + w*192 + len(b)] = b
     for k, x0 in enumerate((128, 152)):
