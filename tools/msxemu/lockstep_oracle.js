@@ -37,11 +37,14 @@ const A = {
   current_levelx: 0xEC6F, current_levely: 0xEC70, player_dead: 0xEC71,
   current_level: 0xEC7A, screen_changed: 0xEC7C, randData: 0xEC85,
   intro_var: 0xECD4, number_screens: 0xECD5,
+  SaveCheckpoint: 0x427E,
   VARS: 0xEC48,         // joystick_state.. — блок игровых переменных, копируется в снимок целиком
   VARSLEN: 72,          // по randData включительно
   TICKC: 0xECE0,        // свободное ОЗУ сразу за END_VARS ($ECDD); стек MSX живёт много выше
+  STARTF: 0xECE1, STARTX: 0xECE2, STARTY: 0xECE3,   // одноразовая подмена стартового экрана
   SNAPCODE: 0xED00,     // подпрограмма снимка, дописывается в ОЗУ из JS
-  SNAP: 0xED40,         // буфер снимка: 224 Б SPDATA+ENTITY_DATA, затем VARSLEN переменных
+  STARTHOOK: 0xED80,    // подпрограмма подмены стартового экрана, тоже в ОЗУ
+  SNAP: 0xEE00,         // буфер снимка: 224 Б SPDATA+ENTITY_DATA, затем VARSLEN переменных
   HOOK: 0x456C,         // хвост тела random, освободившийся после патча ГПСЧ (9 Б)
 };
 
@@ -87,6 +90,16 @@ function makeRom() {
     if (rom[a] === call[0] && rom[a + 1] === call[1] && rom[a + 2] === call[2]) found.push(a);
   if (found.length !== 1) throw new Error('ожидался ровно один call RunScripts, найдено ' + found.length);
   rom[found[0] + 1] = A.HOOK & 0xFF; rom[found[0] + 2] = A.HOOK >> 8;
+  // --start: `call SaveCheckpoint` -> крючок, подменяющий стартовый экран ровно как run_vec.START
+  if (START) {
+    const cs = [0xCD, A.SaveCheckpoint & 0xFF, A.SaveCheckpoint >> 8];
+    let n = 0;
+    for (let a = 0; a < 0x4000; a++)
+      if (rom[a] === cs[0] && rom[a + 1] === cs[1] && rom[a + 2] === cs[2]) {
+        rom[a + 1] = A.STARTHOOK & 0xFF; rom[a + 2] = A.STARTHOOK >> 8; n++;
+      }
+    if (n === 0) throw new Error('call SaveCheckpoint не найден');
+  }
   const dst = path.join(ROOT, 'build/ianna_lockstep.rom');
   fs.writeFileSync(dst, rom);
   return dst;
@@ -115,7 +128,22 @@ function installSnap() {
     0xC3, lo(A.RunScripts), hi(A.RunScripts),                 // jp RunScripts
   ];
   for (let i = 0; i < code.length; i++) e.writeMem(A.SNAPCODE + i, code[i]);
-  if (A.SNAPCODE + code.length > A.SNAP) throw new Error('SNAPCODE наехал на буфер');
+  e.writeMem(A.TICKC, 0);
+  if (A.SNAPCODE + code.length > A.STARTHOOK) throw new Error('SNAPCODE наехал на STARTHOOK');
+  // Одноразовая подмена стартового экрана перед SaveCheckpoint — точный аналог run_vec.START:
+  // патчить надо ДО копии в контрольную точку, иначе после смерти оригинал возродится в начале
+  // уровня, а порт — на заданном экране.
+  const sh = [
+    0xF5,                                                     // push af
+    0x3A, lo(A.STARTF), hi(A.STARTF), 0xA7, 0x28, 0x10,       // ld a,(STARTF) : and a : jr z,skip
+    0xAF, 0x32, lo(A.STARTF), hi(A.STARTF),                   // xor a : ld (STARTF),a  (один раз)
+    0x3A, lo(A.STARTX), hi(A.STARTX), 0x32, lo(A.current_levelx), hi(A.current_levelx),
+    0x3A, lo(A.STARTY), hi(A.STARTY), 0x32, lo(A.current_levely), hi(A.current_levely),
+    0xF1,                                                     // skip: pop af
+    0xC3, lo(A.SaveCheckpoint), hi(A.SaveCheckpoint),         // jp SaveCheckpoint
+  ];
+  for (let i = 0; i < sh.length; i++) e.writeMem(A.STARTHOOK + i, sh[i]);
+  if (A.STARTHOOK + sh.length > A.SNAP) throw new Error('STARTHOOK наехал на буфер');
 }
 installSnap();
 const kb = e.W.room.keyboard;
@@ -136,12 +164,6 @@ function forceRet() {
   const ra = bus.read(sp) | (bus.read(sp + 1) << 8);
   st.PC = ra; st.SP = (sp + 2) & 0xffff; cpu.loadState(st); return ra;
 }
-function injectCall(addr, regs) {
-  const st = cpu.saveState(); const bus = e.m.bus; const sp = (st.SP - 2) & 0xffff;
-  bus.write(sp, st.PC & 0xff); bus.write((sp + 1) & 0xffff, (st.PC >> 8) & 0xff);
-  st.SP = sp; st.PC = addr; st.Tn = 0; st.ai = false; st.p = 0;
-  Object.assign(st, regs); cpu.loadState(st);
-}
 
 // --- пропуск титула и вступления
 e.runFrames(60);
@@ -153,30 +175,8 @@ for (let i = 0; i < 8 && !got; i++) {
 if (!got) { console.error('интро не поймано'); process.exit(1); }
 e.writeMem(A.intro_var, rb(A.number_screens) - 1); forceRet();
 e.writeMem(A.current_level, LEVEL - 1);   // до LoadLevel в begin_level
-e.runFrames(300);
-
-// --- снять сообщение стартового экрана (то же делает rv.Warmup на порте)
-function dismiss(maxTries) {
-  for (let k = 0; k < (maxTries || 16); k++) {
-    if (!inWait()) break;
-    setKeys(['fire']); e.runFrames(10); setKeys([]); e.runFrames(10);
-  }
-}
-dismiss();
-e.runFrames(60); dismiss();
-
-// --- при --start: перейти на нужный экран инъекцией ChangeScreen
-if (START) {
-  const w = rb(A.level_width);
-  e.writeMem(A.current_levelx, START[0]); e.writeMem(A.current_levely, START[1]);
-  injectCall(A.ChangeScreen, { A: (START[1] * w + START[0]) & 0xff });
-  e.runFrames(40); dismiss(); e.runFrames(12); dismiss();
-}
-if (HERO) { e.writeMem(A.SPDATA + 3, HERO[0]); e.writeMem(A.SPDATA + 4, HERO[1]); }
-
-// --- точка синхронизации: обнулить ГПСЧ и счётчик тиков
-e.writeMem(A.randData, 0); e.writeMem(A.randData + 1, 0);
-e.writeMem(A.TICKC, 0);
+if (START) { e.writeMem(A.STARTF, 1); e.writeMem(A.STARTX, START[0]); e.writeMem(A.STARTY, START[1]); }
+// дальше игру ведёт только tick(): он сам крутит кадры до первого RunScripts (загрузка уровня)
 
 // --- тик = изменение TICKC (крючок перед RunScripts). Сообщения снимаются «огнём» и на порте тоже.
 let dismissedAt = [];
@@ -212,8 +212,14 @@ function snap(t, keys) {
            gt: gv(A.global_timer) };
 }
 
+// Прогрев отсчитывается В ИГРОВЫХ ТИКАХ от самого первого RunScripts (TICKC обнулён при
+// установке крючка), ровно как на порте. Ждать «столько-то кадров» нельзя: на экране, где герой
+// сразу падает (стартовый экран ур.4), разная длина прогрева даёт разную фазу падения, и сверка
+// расходится уже на нулевом тике.
 setKeys([]);
-for (let i = 0; i < SETTLE; i++) if (!tick([])) { console.error('тик не пришёл (settle)'); process.exit(1); }
+for (let i = 0; i < SETTLE; i++) if (!tick([])) { console.error('тик не пришёл (прогрев)'); process.exit(1); }
+if (HERO) { e.writeMem(A.SPDATA + 3, HERO[0]); e.writeMem(A.SPDATA + 4, HERO[1]); }
+e.writeMem(A.randData, 0); e.writeMem(A.randData + 1, 0);   // точка синхронизации ГПСЧ
 const ticks = [];
 for (let k = 0; k < PLAN.length; k++) {
   setKeys(PLAN[k]);

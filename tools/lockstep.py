@@ -53,7 +53,10 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
     argv = sys.argv; sys.argv = [argv[0]]
     import run_vec as rv
     sys.argv = argv
-    rv.STEP_BUDGET = 400000            # тик считаем сами, кадр обрывать по числу инструкций нельзя
+    # Кадр — штатный run_vec (HALT или ~13000 инструкций). Здесь, в отличие от сверки СБОРОК
+    # между собой (cmpticks ставит 400000), важна верность железу: на Векторе прерывание приходит
+    # каждые 20 мс независимо от того, крутится код в busy-loop или нет.
+    rv.STEP_BUDGET = rv.STEP_BUDGET
     sym = rv.load_syms(pathlib.Path(lst or ROOT / 'build/ianna_vec.lst'))
     keys = []
     cpu = rv.make_cpu(keys)
@@ -64,16 +67,10 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
     # ГПСЧ как на MSX-копии: A := randData += $4D
     a = sym['random']; rd = sym['randData']
     cpu.mem[a:a + 9] = bytes((0x3A, rd & 0xFF, rd >> 8, 0xC6, 0x4D, 0x32, rd & 0xFF, rd >> 8, 0xC9))
-    rv.START = tuple(start) if start else None
-    rv._start_done[0] = False
-    rv.start_game(cpu, keys, sym)
-    if hero:
-        cpu.mem[sym['SPDATA'] + 3] = hero[0]; cpu.mem[sym['SPDATA'] + 4] = hero[1]
-
-    RS = sym['RunScripts']; WTL = sym['wait_till_read_loop']
-
+    RS = sym['RunScripts']; WTL = sym['wait_till_read_loop']; SC = sym['SaveCheckpoint']
     SP = sym['SPDATA']; EN = sym['ENTITY_DATA']
-    cpu.mem[rd] = 0; cpu.mem[rd + 1] = 0        # точка синхронизации
+    LX = sym['current_levelx']; LY = sym['current_levely']
+    startpatch = [tuple(start)] if start else []     # одноразовая подмена стартового экрана
     dismissed = []
     state = {'t': -1}
 
@@ -81,10 +78,17 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
         """Догнать точку снимка — вход в RunScripts (та же точка, что крючок оракула).
 
         Сообщение («нажми огонь», в том числе после смерти) снимаем огнём: пока игра стоит в
-        wait_till_read, RunScripts не зовётся и тик не придёт. То же делает оракул и rv.Warmup."""
+        wait_till_read, RunScripts не зовётся и тик не придёт. То же делает оракул и rv.Warmup.
+
+        Кадр здесь — как в run_vec.run_frames: до HALT ИЛИ rv.STEP_BUDGET инструкций, и только
+        потом прерывание. Без второго условия busy-loop wait_till_read не получает прерываний
+        вовсе, joystick_state не обновляется, и порт висит в сообщении навечно (ловилось на
+        стартовом экране ур.4: второе сообщение приходит на тике 29)."""
         budget = 0
+        frame = rv.STEP_BUDGET
         while budget < 40_000_000:
-            while not cpu.halted:
+            c = 0
+            while not cpu.halted and c < frame:
                 pc = cpu.pc
                 if pc == RS:
                     cpu.step()                            # снимок берём тут же, до тела RunScripts
@@ -94,7 +98,9 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
                 if pc == WTL and 'fire' not in keys:
                     dismissed.append(state['t'] + 1)
                     keys.append('fire')
-                cpu.step(); budget += 1
+                if startpatch and pc == SC:       # то же, что крючок оракула перед SaveCheckpoint
+                    cpu.mem[LX], cpu.mem[LY] = startpatch.pop()
+                cpu.step(); c += 1; budget += 1
             cpu.halted = False
             if cpu.ie:
                 cpu.ie = False; cpu.push(cpu.pc); cpu.pc = 0x38
@@ -116,13 +122,23 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
                 'pd': cpu.mem[sym['player_dead']], 'lx': cpu.mem[sym['current_levelx']],
                 'ly': cpu.mem[sym['current_levely']], 'gt': cpu.mem[sym['global_timer']]}
 
+    # Прогрев отсчитывается В ИГРОВЫХ ТИКАХ от самого первого RunScripts — так же, как оракул
+    # считает свой TICKC. Ждать «столько-то кадров» нельзя: на экране, где герой сразу падает
+    # (стартовый экран ур.4), разная длина прогрева даёт разную фазу падения, и сверка расходится
+    # уже на нулевом тике (порт был на 16 пикселей правее и на 32 ниже оригинала).
     keys.clear()
     for _ in range(settle):
-        if not tick([]): sys.exit('порт: тик не пришёл (settle)')
+        if not tick([]): sys.exit('порт: тик не пришёл (прогрев)')
+    if hero:
+        cpu.mem[SP + 3] = hero[0]; cpu.mem[SP + 4] = hero[1]
+    cpu.mem[rd] = 0; cpu.mem[rd + 1] = 0        # точка синхронизации ГПСЧ
     ticks = []
     for k, ks in enumerate(plan):
         keys.clear(); keys.extend(ks)
         state['t'] = k
+        if k % 10 == 0:
+            sys.stderr.write('  порт: тик %d/%d (%d млн инстр.)\n' % (k, len(plan), cpu.icount // 1000000))
+            sys.stderr.flush()
         if not tick(ks):
             print('порт: тик не пришёл на', k); break
         ticks.append(snap(k, ks))
