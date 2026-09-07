@@ -300,11 +300,7 @@ def main():
     # 16x10 бит) на рядах 10-11 переполняют младший байт адреса — карта фона писала в карту переднего слоя
     # (туман в рядах 0-1 пропадал после смены экрана), карта переднего слоя — в код по $6A00 (вход vec_blit2).
     (TR / 'tiles.asm').write_text(t.replace(old, 'InvalidateSTiles:\n\tld a,c\t; ВЕКТОР: ряды панели не рисуются — прямоугольник не нужен\n\tcp 10\n\tret nc\n\tadd a,e\n\tcp 11\n\tjp c,ist_hok\n\tld a,10\n\tsub c\n\tld e,a\t; ряды 10-11 не копим: карты RedrawInvTiles на 10 рядов\nist_hok:\n\tpush de'))
-    # готовые тайлы фон+FG (fgc_ovl.asm): хук в DrawTile после чтения карты — код живёт в наборе уровня
-    t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
-    old = '\tld hl, CURRENT_SCREEN_MAP\n\tadd hl, de\n\tld a, (hl)\n\tjp drawTile'
-    assert t.count(old) == 1, 'DrawTile: не нашёл место хука готовых тайлов'
-    (TR / 'tiles.asm').write_text(t.replace(old, '\tld hl, CURRENT_SCREEN_MAP\n\tadd hl, de\n\tld a, (fgc_on)\t; ВЕКТОР: готовые тайлы фон+FG — код в хвосте string_area из набора уровня\n\tor a\n\tjp nz, FGC_ENTRY\n\tld a, (hl)\n\tjp drawTile'))
+    # (хук готовых тайлов фон+FG в DrawTile снят 2026-09-07 вместе с fgc_ovl: с пулом он был мёртв)
     # накладные обхода грязных тайлов в RedrawInvTiles_FG (z_exx x2 на тайл, EI) — зарядить в бюджет DI
     t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
     old = 'DrawFGTile:\n'
@@ -504,7 +500,6 @@ def build_menu_bins(lst):
                                 (VEC / 'menu_ovl.asm', 'menu_ovl.bin', 0x9000 - 0x8440),
                                 (VEC / 'pause_ovl.asm', 'pause_ovl.bin', 0x9800 - 0x9000),
                                 (VEC / 'fdd_banks.asm', 'fdd_banks.bin', 0x9600 - 0x9280),
-                                (VEC / 'fgc_ovl.asm', 'fgc.bin', 0x100),
                                 (VEC / 'zp_blit2m.asm', 'zp.bin', 0x100 - 0x3B)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())

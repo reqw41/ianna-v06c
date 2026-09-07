@@ -512,9 +512,6 @@ drawTile:
 ; dt_rit / dft_rit — вход из обхода грязных прямоугольников (overlap_hot.asm): HL = &CURRENT_SCREEN_MAP[y*16+x],
 ; B = X px, C = Y px; ряды >= 10 обход не даёт (InvalidateSTiles режет высоту). Регистры не сохраняются.
 dt_rit:
-	ld a,(fgc_on)		; готовые тайлы фон+FG (оверлей в наборе уровня, см. fgc_ovl.asm)
-	or a
-	jp nz,FGC_ENTRY
 	ld a,(hl)
 	jp drawTile_nosave
 dft_rit:
