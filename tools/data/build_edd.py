@@ -334,10 +334,17 @@ def bank_tab_lines(banks):
     lines = ['; Таблица банков MSX 2..21 -> (порт стека квазидиска, старший байт базы) кадров спрайтов; неизвестные -> стр.0 $0000',
              'vec_bank_tab:']
     for b in range(2, 22):
-        pg, base = by.get(b, (0, 0))
-        two = ' + 1' if b in BANK_2PLANE and not C8MODE else ''
+        # Банки 4..6 — герой с топором/клинком/затмением (sprite_barbaro_3/4/5). Их в наборах нет:
+        # каждый весит 23 КБ, а свободного места в наборе 1..2 КБ. Движок же при смене оружия
+        # добавляет к банку rom_offset_weapon (entities.asm setrompage), и без записи в таблице
+        # герой рисовался бы из $0000 стр.0 — мусор вместо человека (2026-09-08). Пока такой банк
+        # не загружен, показываем героя с мечом: 4..6 указывают на банк 2.
+        src = b if b in by else (2 if b in (4, 5, 6) and 2 in by else b)
+        pg, base = by.get(src, (0, 0))
+        two = ' + 1' if src in BANK_2PLANE and not C8MODE else ''
+        note = '' if b in by else (' -> банк 2 (спрайты оружия не загружены)' if src != b else ' (нет)')
         lines.append(f'\tdb KV_STK_P{pg}{two},${base >> 8:02X}\t; {b} {BANK_FILE.get(b, "-")}'
-                     f'{"" if b in by else " (нет)"}{" — 2 плоскости (бит 0 порта)" if two else ""}')
+                     f'{note}{" — 2 плоскости (бит 0 порта)" if two else ""}')
     return lines
 
 LIVE_COLORS = None      # цвета, реально встречающиеся на уровне (фон, передние тайлы, полноцветные
@@ -573,8 +580,13 @@ def level_table_blob(pal, banks, fg, fgc=False):
     by = {b: (pg, base) for b, pg, base, _ in banks}
     out = bytearray(pal)                       # 40 Б: порт стека страницы + старший байт базы банка
     for b in range(2, 22):
-        pg, base = by.get(b, (0, 0))
-        two = 1 if b in BANK_2PLANE else 0     # бит 0 = банк в двух плоскостях, кадр 288 Б
+        # 4..6 — герой с другим оружием (sprite_barbaro_3/4/5, по 23 КБ): в наборы не влезают, а
+        # движок при смене оружия добавляет rom_offset_weapon к банку (entities.asm setrompage).
+        # Без записи герой рисовался из $0000 стр.0 — мусор (жалоба 2026-09-08). Пока этих банков
+        # нет, показываем героя с мечом: 4..6 = банк 2.
+        src = b if b in by else (2 if b in (4, 5, 6) and 2 in by else b)
+        pg, base = by.get(src, (0, 0))
+        two = 1 if src in BANK_2PLANE else 0   # бит 0 = банк в двух плоскостях, кадр 288 Б
         out += bytes([0x10 | (pg << 2) | two, base >> 8])
     out.append(len(fg))                        # передних тайлов
     # Пул работает на ВСЕХ уровнях: двухплоскостной спрайт рисуется в слот пула своим телом строки
