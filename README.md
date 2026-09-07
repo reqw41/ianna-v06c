@@ -14,3 +14,8 @@
 `cp build/ianna.rom ~/projects/vector06js/sword.rom; cp build/ianna.edd ~/projects/vector06js/sword.edd`
 → http://localhost:8000/?sword.rom&edd=sword.edd (имя НЕ должно начинаться с `i` — префикс режима).
 Клавиши: стрелки, Z/пробел — удар, X — действие.
+
+## Сверка с оригиналом
+- `python3 tools/lockstep.py --level=N [--start=x,y] --route=none:30,right:40,fire+right:30`
+  — один сценарий клавиш на двух стендах (порт и MSX2-оригинал в headless WebMSX), сверка
+  состояния сущностей и спрайтов ТИК-В-ТИК, печать первого расхождения с контекстом.
