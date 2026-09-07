@@ -144,7 +144,11 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
             ent.append(None if p == 0 else [idx] + list(r[2:12]))
         return {'t': t, 'keys': k, 'spr': spr, 'ent': ent,
                 'pd': cpu.mem[sym['player_dead']], 'lx': cpu.mem[sym['current_levelx']],
-                'ly': cpu.mem[sym['current_levely']], 'gt': cpu.mem[sym['global_timer']]}
+                'ly': cpu.mem[sym['current_levely']], 'gt': cpu.mem[sym['global_timer']],
+                # ГПСЧ: последовательность обязана совпадать (обе стороны исполняют один патч),
+                # расхождение здесь означает РАЗНОЕ ЧИСЛО вызовов random — это уже логика
+                'ar': cpu.mem[sym['action_random_number']], 'rnd': cpu.mem[sym['randData']],
+                'js': cpu.mem[sym['joystick_state']]}
 
     # Прогрев отсчитывается В ИГРОВЫХ ТИКАХ от самого первого RunScripts — так же, как оракул
     # считает свой TICKC. Ждать «столько-то кадров» нельзя: на экране, где герой сразу падает
@@ -177,7 +181,7 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
 def diff_tick(a, b):
     """Список расхождений одного тика: (поле, значение порта, значение оригинала)."""
     out = []
-    for f in ('pd', 'lx', 'ly'):
+    for f in ('pd', 'lx', 'ly', 'ar', 'rnd', 'js'):
         if a[f] != b[f]: out.append((f, a[f], b[f]))
     NAMES = ('spr', 'frame', 'x', 'y', 'mir')
     for i in range(16):

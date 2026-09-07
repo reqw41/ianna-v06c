@@ -35,13 +35,14 @@ const A = {
   SPDATA: 0xEA0E, ENTITY_DATA: 0xEA8E,
   joystick_state: 0xEC48, level_width: 0xEC4C, frames_noredraw: 0xEC59, global_timer: 0xEC5F,
   current_levelx: 0xEC6F, current_levely: 0xEC70, player_dead: 0xEC71,
-  current_level: 0xEC7A, screen_changed: 0xEC7C, randData: 0xEC85,
+  current_level: 0xEC7A, screen_changed: 0xEC7C, action_random_number: 0xEC7E, randData: 0xEC85,
   intro_var: 0xECD4, number_screens: 0xECD5,
   SaveCheckpoint: 0x427E,
   VARS: 0xEC48,         // joystick_state.. — блок игровых переменных, копируется в снимок целиком
   VARSLEN: 72,          // по randData включительно
   TICKC: 0xECE0,        // свободное ОЗУ сразу за END_VARS ($ECDD); стек MSX живёт много выше
   STARTF: 0xECE1, STARTX: 0xECE2, STARTY: 0xECE3,   // одноразовая подмена стартового экрана
+  ZEROF: 0xECE4,        // одноразовое обнуление randData ВНУТРИ крючка (см. синхронизацию ГПСЧ)
   SNAPCODE: 0xED00,     // подпрограмма снимка, дописывается в ОЗУ из JS
   STARTHOOK: 0xED80,    // подпрограмма подмены стартового экрана, тоже в ОЗУ
   SNAP: 0xEE00,         // буфер снимка: 224 Б SPDATA+ENTITY_DATA, затем VARSLEN переменных
@@ -118,8 +119,16 @@ function installSnap() {
   // TICKC инкрементируется ПОСЛЕ копирования. Если наоборот — кадр WebMSX может кончиться
   // посреди ldir: JS увидит «тик пришёл», а хвост буфера будет ещё от прошлого тика. Ловилось
   // как дрожание байта 6 (animation position) сущности игрока на ур.3 — 13 тиков из 100.
+  // Обнуление randData тоже делает крючок, а не JS. Порт обнуляет ГПСЧ ровно на входе в
+  // RunScripts прогревочного тика; если то же самое делать из JS, кадр успевает уйти внутрь тика,
+  // random в нём уже вызван, и последовательности расходятся на один вызов (ловилось на сцене
+  // голема: action_random_number 77 против 177 уже на нулевом тике).
   const code = [
     0xF5, 0xE5, 0xD5, 0xC5,                                   // push af,hl,de,bc
+    0x3A, lo(A.ZEROF), hi(A.ZEROF), 0xA7, 0x28, 0x0A,         // ld a,(ZEROF) : and a : jr z,+10
+    0xAF, 0x32, lo(A.ZEROF), hi(A.ZEROF),                     // xor a : ld (ZEROF),a
+    0x32, lo(A.randData), hi(A.randData),                     // ld (randData),a
+    0x32, lo(A.randData + 1), hi(A.randData + 1),             // ld (randData+1),a
     0x21, lo(A.SPDATA), hi(A.SPDATA),                         // ld hl,SPDATA
     0x11, lo(A.SNAP), hi(A.SNAP),                             // ld de,SNAP
     0x01, 224, 0, 0xED, 0xB0,                                 // ld bc,224 : ldir
@@ -188,11 +197,13 @@ function tick(scenKeys) {
   const c0 = rb(A.TICKC);
   for (let f = 0; f < 1200; f++) {
     e.runFrames(1);
-    if (rb(A.TICKC) !== c0) return true;   // снимок уже лежит в SNAP, снятый на входе в RunScripts
-    if (inWait()) {                       // сообщение/«нажми огонь»: держим огонь, как rv.Warmup
-      dismissedAt.push(tno + 1);
-      setKeys(['fire']); e.runFrames(10); setKeys([]); e.runFrames(10);
-      setKeys(scenKeys);
+    if (rb(A.TICKC) !== c0) {              // снимок уже лежит в SNAP, снятый на входе в RunScripts
+      if (held.has('fire') && !scenKeys.includes('fire')) setKeys(scenKeys);  // сообщение снято
+      return true;
+    }
+    if (inWait() && !held.has('fire')) {   // сообщение/«нажми огонь»: держим огонь ДО СЛЕДУЮЩЕГО
+      dismissedAt.push(tno + 1);           // ТИКА — ровно как порт, иначе на тике возрождения
+      setKeys(['fire']);                   // joystick_state расходится (16 против 0)
     }
   }
   return false;
@@ -212,7 +223,10 @@ function snap(t, keys) {
     ent.push(p === 0 ? null : [idx].concat(r.slice(2, 12)));
   }
   return { t, keys, spr, ent, pd: gv(A.player_dead), lx: gv(A.current_levelx), ly: gv(A.current_levely),
-           gt: gv(A.global_timer) };
+           gt: gv(A.global_timer),
+           // ГПСЧ: последовательность обязана совпадать (обе стороны исполняют один патч),
+           // расхождение здесь означает РАЗНОЕ ЧИСЛО вызовов random — это уже логика
+           ar: gv(A.action_random_number), rnd: gv(A.randData), js: gv(A.joystick_state) };
 }
 
 // Прогрев отсчитывается В ИГРОВЫХ ТИКАХ от самого первого RunScripts (TICKC обнулён при
@@ -220,9 +234,10 @@ function snap(t, keys) {
 // сразу падает (стартовый экран ур.4), разная длина прогрева даёт разную фазу падения, и сверка
 // расходится уже на нулевом тике.
 setKeys([]);
-for (let i = 0; i < SETTLE; i++) if (!tick([])) { console.error('тик не пришёл (прогрев)'); process.exit(1); }
+for (let i = 0; i < SETTLE - 1; i++) if (!tick([])) { console.error('тик не пришёл (прогрев)'); process.exit(1); }
+e.writeMem(A.ZEROF, 1);        // ГПСЧ обнулит сам крючок на входе в RunScripts последнего тика прогрева
+if (!tick([])) { console.error('тик не пришёл (прогрев)'); process.exit(1); }
 if (HERO) { e.writeMem(A.SPDATA + 3, HERO[0]); e.writeMem(A.SPDATA + 4, HERO[1]); }
-e.writeMem(A.randData, 0); e.writeMem(A.randData + 1, 0);   // точка синхронизации ГПСЧ
 const ticks = [];
 for (let k = 0; k < PLAN.length; k++) {
   setKeys(PLAN[k]);
