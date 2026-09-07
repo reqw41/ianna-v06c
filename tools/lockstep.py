@@ -181,7 +181,11 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
 def diff_tick(a, b):
     """Список расхождений одного тика: (поле, значение порта, значение оригинала)."""
     out = []
-    for f in ('pd', 'lx', 'ly', 'ar', 'rnd', 'js'):
+    # action_random_number ('ar') в сверку НЕ входит: игра его не инициализирует, и до первого
+    # вызова random он равен 0 на MSX (ОЗУ обнулено BIOS) и $FF на Векторе (область переменных
+    # приходит из образа ROM). Разница чисто в начальном значении, читается он всегда после
+    # записи. Состояние ГПСЧ отслеживает 'rnd' (randData), он обнуляется в точке синхронизации.
+    for f in ('pd', 'lx', 'ly', 'rnd', 'js'):
         if a[f] != b[f]: out.append((f, a[f], b[f]))
     NAMES = ('spr', 'frame', 'x', 'y', 'mir')
     for i in range(16):
