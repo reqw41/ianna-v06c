@@ -37,9 +37,8 @@ vec_start:
 	call InitTiles
 	call MUSIC_Init
 	; переменные как в main оригинала
-	ld a,1
-	ld (language),a		; 1 = английский (0 = испанский); меню оригинала позже даст выбор
 	xor a
+	ld (language),a		; РУССКОЕ ИЗДАНИЕ: язык один — русский (слот 0, бывший испанский)
 	ld (action_ack),a
 	ld (wait_alternate),a
 	ld (intro_shown),a

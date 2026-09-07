@@ -156,6 +156,12 @@ def make_vars():
     # неиспользуемые буферы VDP-команд (кроме vdpCmdSprite: там NY для drawSprite) и палитры
     text = re.sub(r'^(tileDat|fgtileDat|dirtyTileDat|cmdDat|charDat|charDat2|charDat3|fillDat|vdpCmdWeapon|lineMoveDat|vdpCopyDat|scoreDat): ds 15', r'\1: ds 0', text, flags=re.M)
     text = text.replace('currentPal: ds 32', 'currentPal: ds 0')
+    # РУССКОЕ ИЗДАНИЕ: приглашение пароля на панели. draw_password пишет 10 знаков по
+    # score_password_string+9, поэтому приставка ровно 9 знаков: два пробела + «ПАРОЛЬ:».
+    # Коды шрифта: 96..127 = А..Я (font_ru.py), 32 = пробел, 58 = двоеточие.
+    old = 'score_password_string: db "PASSWORD:1234567890",0'
+    assert old in text, 'vars.asm: score_password_string'
+    text = text.replace(old, 'score_password_string: db 32,32,111,96,112,110,107,124,58,"1234567890",0\t; «  ПАРОЛЬ:»\n')
     text = re.sub(r'string_list: dw string_1, string_2, string_3, string_4_1', 'string_list: dw 0,0,0,0', text)
     text = re.sub(r'string_list_es: dw string_1, string_2, string_3_es, string_4_1', 'string_list_es: dw 0,0,0,0', text)
     text = f'\torg ${VARS_ADDR:04X}\t; vars наверху ОЗУ; string_area = ${VARS_ADDR:04X} (указатели скриптов уровня перенесены сюда)\n' + text
