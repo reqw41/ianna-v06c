@@ -2,7 +2,7 @@
 // Исполняет тот же сценарий клавиш, что tools/lockstep.py, и на каждом игровом тике пишет
 // нормализованное состояние (спрайты, сущности, player_dead, current_levelx/y) в JSON.
 //
-//   node tools/msxemu/lockstep_oracle.js --level=2 --route=none:30,left:40 [--start=5,6]
+//   node tools/msxemu/lockstep_oracle.js --level=1 --route=none:30,left:40 [--start=5,6]
 //        [--hero=96,112] [--settle=10] --out=/путь/msx.json
 //
 // Как ловится тик. WebMSX headless умеет шагать только целыми кадрами, а тик игры — это
@@ -52,7 +52,10 @@ function arg(name, def) {
   const p = process.argv.find(a => a.startsWith('--' + name + '='));
   return p === undefined ? def : p.slice(name.length + 3);
 }
-const LEVEL = parseInt(arg('level', '1'), 10);
+// --level здесь — ИНДЕКС уровня в игре (current_level), а не номер файла карты: таблица
+// LEVEL_PAGE перечисляет карты как level1..level8, level0, level9, поэтому level9.map = индекс 9.
+// Пересчёт делает lockstep.py (level_index).
+const LEVEL = parseInt(arg('level', '0'), 10);
 const START = arg('start', null) ? arg('start').split(',').map(Number) : null;
 const HERO = arg('hero', null) ? arg('hero').split(',').map(Number) : null;
 const ROUTE = arg('route', 'none:30');
@@ -174,7 +177,7 @@ for (let i = 0; i < 8 && !got; i++) {
 }
 if (!got) { console.error('интро не поймано'); process.exit(1); }
 e.writeMem(A.intro_var, rb(A.number_screens) - 1); forceRet();
-e.writeMem(A.current_level, LEVEL - 1);   // до LoadLevel в begin_level
+e.writeMem(A.current_level, LEVEL);   // до LoadLevel в begin_level
 if (START) { e.writeMem(A.STARTF, 1); e.writeMem(A.STARTX, START[0]); e.writeMem(A.STARTY, START[1]); }
 // дальше игру ведёт только tick(): он сам крутит кадры до первого RunScripts (загрузка уровня)
 

@@ -10,18 +10,22 @@
 VRAM не сравниваются: рендер у платформ разный.
 
   python3 tools/lockstep.py --level=2 --route=none:30,left:40,fire+left:30 [--start=5,6]
-        [--hero=x,y] [--settle=10] [--build] [--side=both|vec|msx] [--tag=имя]
+        [--hero=x,y] [--settle=20] [--build] [--side=both|vec|msx] [--tag=имя] [--curlevel]
 
 ГПСЧ. Обе стороны исполняют ОДИН И ТОТ ЖЕ подменённый алгоритм A := randData += $4D
 (на порте — патч в ОЗУ после прогрева, на MSX — патч в копии ROM), и в момент синхронизации
 randData := 0. Штатный `random` оригинала читает `ld a,r` — воспроизвести его на i8080
 невозможно в принципе, поэтому без подмены локстеп бессмыслен.
 
-Синхронизация. Стартовый экран уровня: порт грузит набор уровня (build_edd --level), MSX ставит
-current_level до LoadLevel — герой у обоих в initial_coordx/y уровня. Не стартовый экран
-(--start): порт патчит current_levelx/y в SaveCheckpoint (run_vec.START), MSX переходит на экран
-инъекцией ChangeScreen; герой при инъекции остаётся на прежнем месте, поэтому для сцен «войти
-на экран сбоку» задаётся --hero=x,y (равный тому, что показал порт на тике 0).
+Синхронизация. Прогрев доводится до ОДНОГО номера игрового тика (--settle) от самого первого
+RunScripts — обе стороны считают тики одинаково. Стартовый экран уровня: порт грузит набор уровня
+(build_edd --level), MSX ставит current_level до LoadLevel — герой у обоих в initial_coordx/y.
+Не стартовый экран (--start): обе стороны подменяют current_levelx/y ПЕРЕД SaveCheckpoint, чтобы
+экран попал и в контрольную точку (иначе после смерти оригинал возродится не там, где порт).
+--hero=x,y — принудительная посадка героя, если сцену иначе не свести.
+--curlevel ставит порту номер уровня (обычно его проставляет меню; стенд запускает набор
+напрямую и оставляет 0). Для уровней 1..9 разница видна только на экране пароля (оригинал его
+показывает и ждёт огня, порт — нет) и в выборе песни, на сущности и спрайты не влияет.
 
 Клавиши. Набор keys[k] выставляется на границе тика k и держится весь тик. Снимок тика k — это
 состояние НА ВХОДЕ в RunScripts тика k, то есть результат тика k-1; joystick_state защёлкивается
@@ -35,6 +39,17 @@ import sys, os, re, json, pathlib, subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRATCH = pathlib.Path('/private/tmp/claude-501/-Users-boris/6043f58d-525e-4e56-9451-1177913a730d/scratchpad/agent_lock')
+
+
+def level_index(level):
+    """Номер уровня в игре (current_level) по имени файла карты levelN.map.
+
+    Таблица LEVEL_PAGE в ianna.asm перечисляет карты в порядке
+    level1..level8, level0, level9: индекс 8 — это level0.map (ATTRACT/девятый уровень),
+    а level9.map (секретный уровень) стоит под индексом 9. Прямолинейное level-1 для --level=9
+    выбирало на оригинале ATTRACT, а на порте в наборе лежала карта level9 — сцены не совпадали
+    ни одним байтом (найдено 2026-09-07)."""
+    return level - 1 if level <= 8 else 9
 
 
 def parse_route(r):
@@ -68,6 +83,13 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
     a = sym['random']; rd = sym['randData']
     cpu.mem[a:a + 9] = bytes((0x3A, rd & 0xFF, rd >> 8, 0xC6, 0x4D, 0x32, rd & 0xFF, rd >> 8, 0xC9))
     RS = sym['RunScripts']; WTL = sym['wait_till_read_loop']; SC = sym['SaveCheckpoint']
+    LL = sym['LoadLevel']; CL = sym['current_level']
+    # Порт всегда стартует набор с current_level=0 (номер уровня ему проставляет меню, а стенд
+    # запускает набор напрямую). Видно это только по экрану пароля (оригинал его
+    # показывает и ждёт огня, порт — нет) и по выбору песни; на сущности и спрайты не влияет.
+    # --curlevel ставит номер там же, где его ставит оракул, — перед LoadLevel. ВНИМАНИЕ: индекс 8
+    # (level0.map, attract) порту недоступен — build_edd таких наборов не делает.
+    curlevel = [level_index(level)] if '--curlevel' in sys.argv else []
     SP = sym['SPDATA']; EN = sym['ENTITY_DATA']
     LX = sym['current_levelx']; LY = sym['current_levely']
     startpatch = [tuple(start)] if start else []     # одноразовая подмена стартового экрана
@@ -100,6 +122,8 @@ def run_vec_side(level, start, hero, plan, settle, out_path, rom=None, lst=None,
                     keys.append('fire')
                 if startpatch and pc == SC:       # то же, что крючок оракула перед SaveCheckpoint
                     cpu.mem[LX], cpu.mem[LY] = startpatch.pop()
+                if curlevel and pc == LL:
+                    cpu.mem[CL] = curlevel.pop()
                 cpu.step(); c += 1; budget += 1
             cpu.halted = False
             if cpu.ie:
@@ -226,7 +250,7 @@ def main():
                        stdout=subprocess.DEVNULL)
 
     if side in ('both', 'msx'):
-        cmd = ['node', str(ROOT / 'tools/msxemu/lockstep_oracle.js'), '--level=%d' % level,
+        cmd = ['node', str(ROOT / 'tools/msxemu/lockstep_oracle.js'), '--level=%d' % level_index(level),
                '--route=' + route, '--settle=%d' % settle, '--out=' + str(msx_json)]
         if start: cmd.append('--start=%d,%d' % tuple(start))
         if hero: cmd.append('--hero=%d,%d' % tuple(hero))
