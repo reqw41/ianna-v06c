@@ -313,8 +313,28 @@ def idx_prep(reg,dv):
 # ------------------------------------------------------------------ трансляция
 class Translator:
     def __init__(self, fname, overrides=None):
-        self.fname=fname; self.overrides=overrides or {}
+        self.fname=fname; self.overrides=dict(overrides or {})
+        self.expect=self.overrides.pop('__expect__',{})
         self.warns=[]; self.stats={}
+
+    def relocate_overrides(self, lines):
+        """Замены привязаны к номеру строки, но сверяются с текстом (EXPECT в overrides.py): если строка
+        с этим номером не та, ищем единственную строку с ожидаемым текстом и переносим замену туда."""
+        base=os.path.basename(self.fname)
+        norm=lambda s: ' '.join(s.split())
+        byno={L.no:norm(L.raw) for L in lines}
+        shift=0		# сдвиг соседней перенесённой замены: неуникальные строки (dec a) идут за ней
+        for key in sorted(k for k in self.overrides if k[0]==base and k in self.expect):
+            want=self.expect[key]
+            if byno.get(key[1])==want: continue
+            if shift and byno.get(key[1]+shift)==want: hits=[key[1]+shift]
+            else: hits=[no for no,txt in byno.items() if txt==want]
+            if len(hits)!=1:
+                raise SystemExit(f"OVERRIDE: {base}:{key[1]} ожидалось {want!r}, а там {byno.get(key[1])!r}; "
+                                 f"подходящих строк {len(hits)} — поправь tools/overrides.py")
+            shift=hits[0]-key[1]
+            print(f"  [override перенесён {base}:{key[1]} -> {hits[0]}] {want}")
+            self.overrides[(base,hits[0])]=self.overrides.pop(key)
 
     def stat(self,k): self.stats[k]=self.stats.get(k,0)+1
 
@@ -324,6 +344,7 @@ class Translator:
         # пропускаемые инструкции той же длины, что на Z80. Инлайн длину меняет,
         # поэтому рядом с такими переходами он запрещён.
         self.noinl=set()
+        self.relocate_overrides(lines)
         for k,L in enumerate(lines):
             if L.op in ('jr','djnz') and L.args and '$' in L.args[-1]:
                 n=0; j=k+1
@@ -649,7 +670,8 @@ class Translator:
 def load_overrides(path):
     ns={}
     exec(open(path,encoding='utf-8').read(), ns)
-    return ns.get('OVERRIDES',{})
+    ov=dict(ns.get('OVERRIDES',{})); ov['__expect__']=ns.get('EXPECT',{})
+    return ov
 
 def main():
     args=sys.argv[1:]
