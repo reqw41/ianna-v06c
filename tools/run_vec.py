@@ -118,7 +118,11 @@ def make_cpu(keys):
             v = pit['latched'] if pit['latched'] is not None else pit_val()
             if pit['rd'] == 0: pit['rd'] = 1; return v & 0xFF
             pit['rd'] = 0; pit['latched'] = None; return v >> 8
-        if port == 0x1B:                    # статус: бит0 BUSY, бит1 DRQ
+        if port == 0x1B:                    # статус: бит0 BUSY, бит1 DRQ, бит7 NOT READY
+            # Без образа дискеты отдаём NOT READY, как настоящий ВГ93 без привода: по этому биту
+            # vec_fdd_load и подкачка страницы героя решают, есть ли откуда читать. Раньше стенд
+            # отвечал «готов», код лез читать, получал нули и уходил исполнять мусор (pc=$67A0).
+            if fdd is None: return 0x80
             return (0x03 if st['busy'] and st['pos'] < len(st['buf']) else 0x00)
         if port == 0x18:                    # данные
             if st['pos'] < len(st['buf']):

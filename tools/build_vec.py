@@ -449,7 +449,7 @@ def main():
 
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
-    need = ['depack', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream',
+    need = ['depack', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl',
             'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', '_atVAR_Reg6', '_atVAR_Reg11', '_atVAR_Reg12', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
