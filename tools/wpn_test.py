@@ -1,33 +1,38 @@
 #!/usr/bin/env python3
-"""Стенд смены оружия в паузе: подкачка страницы героя с дискеты (wpn_load + fdd_banks).
+"""Стенд «герой с выбранным оружием»: подкачка страницы спрайтов с дискеты (fdd_banks.fb_wpn).
 
-  python3 tools/wpn_test.py [--changes=3] [--real] [--png=КАТАЛОГ]
+  python3 tools/wpn_test.py            — смена оружия в паузе (быстро, ~1 с)
+  python3 tools/wpn_test.py --real     — подкачка ПРИ ЗАГРУЗКЕ УРОВНЯ, набор читается с дискеты
+  ключи: --changes=N (смен подряд), --weapon=W (какое оружие подложить к загрузке), --png=КАТАЛОГ
 
-Что проверяет за один прогон:
-  * страница героя в квазидиске побайтно совпала с эталоном build_edd.weapon_blob(оружие);
-  * соседние кадры банка 2 (0..13 и 37..40) целы — подкачка не залезла за свои границы;
-  * палитра железа вернулась к исходной (снимаем порты $02/$0C, а не теневую копию в ОЗУ);
-  * поле после выхода из паузы совпало с исходным кадром, панель отличается только блоком оружия;
-  * сколько кадров занимают чтение и возврат картинки.
+Что где проверяется.
+  Обычный прогон — ПАУЗА. Смена оружия обязана быть МГНОВЕННОЙ и безобидной: панель меняет
+    название и значок, поле не трогается вовсе, палитра не гаснет, чтения с дискеты нет.
+    (Чтение прямо из паузы снято 2026-09-08: на живой машине оно рвало картинку, а headless-модель
+    дефект не воспроизводила. Стенд сторожит, что оно не вернулось незаметно: вход в wpn_load
+    по WPN_ORG считается отдельно и обязан быть нулевым.)
+  --real — ЗАГРУЗКА УРОВНЯ. Квазидиск пуст, набор читается с дискеты, как на железе; перед
+    вызовом vec_fdd_load подкладываем player_current_weapon (движок читает его в fb_wpn).
+    Проверяем, что страница героя в квазидиске побайтно совпала с build_edd.weapon_blob(оружие)
+    и что соседние кадры банка 2 (0..13 и 37..40, общие у всех видов) целы.
 
-Почему нужен отдельный стенд. Обычный путь «дойти до игры по дискете» — это чтение 45 КБ
-набора и распаковка 256 КБ квазидиска питоновским i8080: 10 с на прогон и невозможность
-цикла правок. Поэтому по умолчанию квазидиск заполняется ГОТОВЫМ build/ianna.edd (в нём
-маркер 'IA' в стр.3 $C800, и vec_fdd_load набор с дискеты не перечитывает), а образ дискеты
-всё равно подан: из него берётся ROM (там прошиты vfl_dirtab и vec_wpntab) и читается сама
-библиотека страниц героя — 6 секторов. Прогон 1 с. Ключ --real проверяет, что быстрый путь
-не врёт: квазидиск пуст, набор читается с дискеты, результат тот же (10 с).
+Почему стенд отдельный. Обычный путь «дойти до игры по дискете» — это чтение 45 КБ набора и
+распаковка 256 КБ квазидиска питоновским i8080: 10 с на прогон. Для сцены паузы это лишнее,
+поэтому по умолчанию квазидиск заполняется готовым build/ianna.edd (маркер 'IA' в стр.3 $C800 —
+vec_fdd_load набор тогда не перечитывает), а образ дискеты всё равно подан: из него берётся ROM
+с прошитыми vfl_dirtab/vec_wpntab. Прогон 1 с вместо десятков минут.
 
 Перед запуском собрать образ:
   python3 tools/build_vec.py && python3 tools/build_levels.py &&
   python3 tools/build_vec.py && python3 tools/build_fdd.py
 """
-import sys, os, re, pathlib, functools, io, contextlib
+import sys, os, pathlib, functools, io, contextlib
 print = functools.partial(print, flush=True)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OPTS = [a for a in sys.argv[1:] if a.startswith('--')]
 NCH = int(next((o[10:] for o in OPTS if o.startswith('--changes=')), '3'))
+WANT = int(next((o[9:] for o in OPTS if o.startswith('--weapon=')), '1'))
 PNG = next((o[6:] for o in OPTS if o.startswith('--png=')), None)
 REAL = '--real' in OPTS
 
@@ -46,15 +51,12 @@ sys.path.insert(0, str(ROOT / 'tools/data'))
 import run_vec as rv
 
 SYM = rv.load_syms(ROOT / 'build/ianna_vec.lst')
-# Конец подкачки — метка wl_bail: через неё проходят оба выхода wpn_load (и «прочитали»,
-# и «дисковода нет»). Адрес берём из листинга, чтобы не протухал при правках.
-WL_END = int(re.search(r'^wl_bail\s+=\s+\$([0-9A-F]{4})',
-                       (ROOT / 'build/wpn_load.bin.lst').read_text(errors='replace'), re.M).group(1), 16)
+WPN_ORG = 0xE800                # куда оверлей паузы копировал подкачку; сейчас не должен звать
 
 
 def track_palette(cpu):
     """НАСТОЯЩАЯ палитра железа (порты $02/$0C). Теневая копия vec_palette в ОЗУ для этой
-    проверки не годится: подкачка гасит палитру портами, ОЗУ при этом не трогая, и снимок
+    проверки не годится: подкачка гасила палитру портами, ОЗУ при этом не трогая, и снимок
     по vec_palette показывал буфер загрузки в старых цветах там, где экран чёрен."""
     cpu.hwpal = [0] * 16
     st = {'idx': 0, 'n': 0}
@@ -96,60 +98,89 @@ def shot(cpu, name):
     print('   PNG:', d / f'{name}.png')
 
 
-def main():
-    import build_edd as B
-    with contextlib.redirect_stdout(io.StringIO()):
-        B.build_kvaz(1)
-    pg2, base2, blob2 = B.BANK_BLOBS[2]
-    kvbase = pg2 * 65536 + base2
-    at = kvbase + B.WPN_OFF
-    ref = {w: B.weapon_blob(w) for w in range(4)}
-    print(f'банк 2: стр.{pg2} база ${base2:04X}; кадр 14 по ${base2 + B.WPN_OFF:04X}, '
-          f'подкачка {len(ref[0])} Б')
-
-    keys = []
+def make_cpu(keys, before_fdd=None):
     cpu = rv.make_cpu(keys)
     mp = SYM['vec_menu_phase']                 # фазу меню глушим: слайды интро тут ни при чём
     call = bytes((0xCD, mp & 0xFF, mp >> 8))
     for a in range(0x100, 0x8000 - 3):
         if bytes(cpu.mem[a:a + 3]) == call: cpu.mem[a:a + 3] = b'\x00\x00\x00'
     track_palette(cpu)
+    if before_fdd is not None:
+        # player_current_weapon движок читает в fb_wpn ПОСРЕДИ загрузки набора, а инициализирует
+        # позже — подкладываем значение на входе в vec_fdd_load, как это делает переход на
+        # следующий уровень с оружием в руках.
+        fdd = SYM['vec_fdd_load']; cw = SYM['player_current_weapon']
+        done = [False]
+        orig = cpu.step
+        def step():
+            if not done[0] and cpu.pc == fdd:
+                cpu.mem[cw] = before_fdd; done[0] = True
+            orig()
+        cpu.step = step
+    return cpu
+
+
+def test_load():
+    """--real: страница героя, положенная при ЗАГРУЗКЕ УРОВНЯ, против эталона."""
+    import build_edd as B
+    with contextlib.redirect_stdout(io.StringIO()):
+        B.build_kvaz(1)
+    pg2, base2, blob2 = B.BANK_BLOBS[2]
+    kvbase = pg2 * 65536 + base2
+    at = kvbase + B.WPN_OFF
+    ref = B.weapon_blob(WANT)
+    print(f'банк 2: стр.{pg2} база ${base2:04X}; кадр 14 по ${base2 + B.WPN_OFF:04X}, '
+          f'подкачка {len(ref)} Б; оружие при загрузке {WANT}')
+    keys = []
+    cpu = make_cpu(keys, before_fdd=WANT)
+    rv.start_game(cpu, keys, SYM)
+    frames(cpu, 5, keys)
+    shot(cpu, 'wpn_load')
+    page = bytes(cpu.kvaz[at:at + len(ref)]) == ref
+    pre = bytes(cpu.kvaz[kvbase:at]) == blob2[:B.WPN_OFF]
+    post = bytes(cpu.kvaz[at + len(ref):kvbase + len(blob2)]) == blob2[B.WPN_OFF + len(ref):]
+    print(f'страница == эталон weapon_blob({WANT}): {page}; кадры 0..13 целы: {pre}; '
+          f'кадры 37..40 целы: {post}')
+    return page and pre and post
+
+
+def test_pause():
+    """Смена оружия в паузе: мгновенная, поле не трогается, дискета не читается."""
+    import build_edd as B
+    with contextlib.redirect_stdout(io.StringIO()):
+        B.build_kvaz(1)
+    pg2, base2, blob2 = B.BANK_BLOBS[2]
+    kvbase = pg2 * 65536 + base2
+    keys = []
+    cpu = make_cpu(keys)
     rv.start_game(cpu, keys, SYM)
     cpu.mem[SYM['player_available_weapons']:SYM['player_available_weapons'] + 4] = b'\x01\x01\x01\x01'
     frames(cpu, 3, keys)
     base_vram = bytes(cpu.mem[0x8000:0x10000])
+    kv0 = bytes(cpu.kvaz)
     pal0 = list(cpu.hwpal)
     shot(cpu, 'wpn_0before')
-    assert bytes(cpu.kvaz[kvbase:kvbase + len(blob2)]) == blob2, 'банк 2 в квазидиске не совпал с эталоном'
 
     frames(cpu, 3, keys, ('h',))
     frames(cpu, 5, keys, ())
-    pause_vram = bytes(cpu.mem[0x8000:0x10000])
     shot(cpu, 'wpn_1pause')
-    bad = 0
+
+    hit = [0]                       # входов в снятую подкачку (обязан остаться нулём)
+    dark = [False]
+    def hook(c):
+        if c.pc == WPN_ORG: hit[0] += 1
+    ok = True
     for k in range(NCH):
-        done, lit, fr = [None], [None], [0]
-        def hook(c):
-            if c.pc == WL_END and done[0] is None: done[0] = fr[0]
         frames(cpu, 3, keys, ('down',), hook=hook)
         keys[:] = []
-        for i in range(400):
-            fr[0] = i
+        for i in range(12):
             frames(cpu, 1, keys, (), hook=hook)
-            if done[0] is not None and lit[0] is None and any(cpu.hwpal): lit[0] = i
-            if lit[0] is not None and i >= lit[0] + 3: break
+            if not any(cpu.hwpal): dark[0] = True
         w = cpu.mem[SYM['player_current_weapon']]
-        page = bytes(cpu.kvaz[at:at + len(ref[w])]) == ref[w]
-        pre = bytes(cpu.kvaz[kvbase:at]) == blob2[:B.WPN_OFF]
-        post = bytes(cpu.kvaz[at + len(ref[w]):kvbase + len(blob2)]) == blob2[B.WPN_OFF + len(ref[w]):]
         pal = list(cpu.hwpal) == pal0
-        bad += not (page and pre and post and pal)
-        print(f'смена {k+1}: оружие {w}; чтение {done[0]} кадров, картинка вернулась на {lit[0]} '
-              f'({((lit[0] or 0) + 3) / 50:.1f} с); страница == эталон: {page}; '
-              f'кадры 0..13 целы: {pre}; кадры 37..40 целы: {post}; палитра вернулась: {pal}')
+        ok &= pal
+        print(f'смена {k+1}: оружие {w}; палитра не гасла: {pal}; кадров ожидания: 15')
     shot(cpu, 'wpn_2after')
-    print('VRAM отличается от кадра паузы в',
-          sum(1 for x, y in zip(pause_vram, cpu.mem[0x8000:0x10000]) if x != y), 'Б')
 
     frames(cpu, 3, keys, ('h',))
     frames(cpu, 25, keys, ())
@@ -165,9 +196,19 @@ def main():
                 else:
                     pan += 1
                     box = [min(box[0], x), max(box[1], x + 7), min(box[2], y), max(box[3], y)]
+    # Банк героя в квазидиске обязан остаться нетронутым: пауза его больше не переписывает.
+    # Считать «сколько байт изменилось во всём квазидиске» бесполезно — движок штатно гоняет пул
+    # супертайлов (стр.3 $A000+) и состояние музыки, это полторы тысячи байт за десяток кадров.
+    bank = bytes(cpu.kvaz[kvbase:kvbase + len(blob2)]) == kv0[kvbase:kvbase + len(blob2)]
     print(f'после выхода из паузы: поле отличается в {fld} Б, панель в {pan} Б'
           + (f' (габарит x {box[0]}..{box[1]}, y {box[2]}..{box[3]})' if pan else ''))
-    ok = bad == 0 and fld == 0
+    print(f'экран гас: {dark[0]} (не должен); входов в wpn_load: {hit[0]} (не должно быть); '
+          f'банк 2 в квазидиске цел: {bank}')
+    return ok and fld == 0 and not dark[0] and hit[0] == 0 and bank
+
+
+def main():
+    ok = test_load() if REAL else test_pause()
     print('ИТОГ:', 'OK' if ok else 'ПРОВАЛ')
     return 0 if ok else 1
 
