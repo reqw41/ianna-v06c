@@ -39,13 +39,15 @@ def check_overlays(n, pak):
         f = ROOT / 'build' / name
         if f.exists():
             now[name] = hashlib.md5(f.read_bytes()).hexdigest()
+    # FDDCOPY — примитивы ВГ93 из образа ROM, лежащие копией в наборе (см. build_levels)
+    now['FDDCOPY'] = hashlib.md5(bytes(rom[0x7E00 - 0x100:0x7E00 - 0x100 + 512])).hexdigest()
     if not meta.exists():
         sys.exit(f'!! у набора уровня {n} нет отпечатка оверлеев — пересоберите: python3 tools/build_levels.py')
     was = json.loads(meta.read_text())
     if was != now:
         bad = [k for k in now if was.get(k) != now[k]]
-        sys.exit(f'!! набор уровня {n} собран с другими оверлеями ({", ".join(bad)}): в квазидиске окажется '
-                 f'меню от прежней сборки ROM и игра сорвётся после загрузки.\n'
+        sys.exit(f'!! набор уровня {n} собран с другой сборкой ROM ({", ".join(bad)}): в квазидиске окажется '
+                 f'меню (или примитивы ВГ93) от прежней сборки, и игра сорвётся после загрузки.\n'
                  f'   Порядок: python3 tools/build_vec.py && python3 tools/build_levels.py && '
                  f'python3 tools/build_vec.py && python3 tools/build_fdd.py')
 
