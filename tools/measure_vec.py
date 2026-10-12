@@ -4,6 +4,11 @@
 режим 0, latch по out $08=0) — для таймерного бюджета. Печатает: доставлено/потеряно прерываний,
 тиков, кадров/тик, где терялись (по функциям).
   python3 tools/measure_vec.py [rom lst] [--route=right:300] [--start=3,1] [--frames=600] [--fixrand]
+Маршрут — отрезки «клавиши:кадров» через запятую: none, right, fire+right ...; fight — бой по сценарию
+FIGHT (удары во все стороны с шагами, один и тот же для любой сборки); pace — ходьба туда-обратно. Текст скрипта посреди отрезка
+снимается сам («огонь» на wait_till_read до следующего тика); такие тики в среднее не входят.
+--pos=X,Y — место героя на стартовом экране в пикселях (штатное место уровня на чужом экране бывает в воздухе).
+Герой на время замера неуязвим (здоровье возвращается каждый тик); --mortal — как в игре.
   IANNA_EDD=<edd> — образ квазидиска для этой сборки
 """
 import sys, re, bisect, collections, pathlib
@@ -14,6 +19,9 @@ FRAMES=int(next((o[9:] for o in OPTS if o.startswith('--frames=')),'600'))
 ROUTE=next((o[8:] for o in OPTS if o.startswith('--route=')),'none:300,right:300')
 START=next((tuple(int(v) for v in o[8:].split(',')) for o in OPTS if o.startswith('--start=')),None)
 FIXRAND='--fixrand' in OPTS
+PROF=any(o.startswith('--prof') for o in OPTS); PROFN=int(next((o[7:] for o in OPTS if o.startswith('--prof=')),'40'))
+SHOT=next((o[7:] for o in OPTS if o.startswith('--shot=')),None)
+POS=next((tuple(int(v) for v in o[6:].split(',')) for o in OPTS if o.startswith('--pos=')),None)   # место героя на стартовом экране, px
 BHIST='--budget-hist' in OPTS
 NOFG='--nofg' in OPTS   # замер без передних тайлов: слой FG обнуляется в ОЗУ при каждом DrawScreen   # гистограмма отказов бюджета: фаза кадра и цена запроса   # FrameCounter := номер тика перед RunScripts — логика не зависит от скорости сборки (сравнение A/B на сценах с врагами)
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
@@ -84,6 +92,18 @@ def in_h(p):
 cpu.out_handler=out_h; cpu.in_handler=in_h
 FC=sym['FrameCounter']; AT=sym['animate_tile']; SC=sym['SaveCheckpoint']
 DSCR=sym.get('DrawScreen',-1); VBW=sym.get('vbg_wait',-1); DTW=sym.get('dtd_wait',-2);   # ожидания кадра: общий vec_budget и вписанный в dt_direct bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
+bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
+# --tail=spr|all — ОЦЕНКА идеи «не терять хвост кадра»: запрос бюджета, не влезший до конца кадра, делает
+# сейчас столько, сколько влезает, а остаток — после прерывания. Кода в ROM для этого нет: стенд просто
+# возвращает время влезшей части (минус накладные второго входа TAIL_OVH; меньше TAIL_MIN не режем).
+# spr — только колонки спрайтов (vec_spr_colbud: цена NY*1,25+8), all — любой запрос (потолок).
+TAIL=next((o[7:] for o in OPTS if o.startswith('--tail=')),None); VBL=228; TAIL_OVH=10; TAIL_MIN=5
+# --nolatewait — ОЦЕНКА идеи «опоздавший тик не ждёт начала кадра»: waitforVBlank делает halt всегда, даже
+# когда frames_noredraw уже >= frames_lock; стенд этот halt пропускает (вывод начинается с любой фазы кадра).
+NOLATE=any(o.startswith('--nolatewait') for o in OPTS); LATEWIN=[tuple(int(v) for v in w.split('-')) for w in next((o[13:] for o in OPTS if o.startswith('--nolatewait=')),'0-999').split(',')]   # --nolatewait=A-B[,C-D]: только при фазе кадра в окне
+WHG=sym.get('waitforvblank_halt_go',-1); FNR=sym['frames_noredraw']; FLK=sym['frames_lock']
+WHF=sym['vec_wait_halted']; nolate_n=[0]
+VBA=sym.get('vbg_again',-1); DTB=sym.get('dtd_bud',-1); tail_credit=[0]; tail_sum=[0]
 delivered=0; lost=0; lost_at=collections.Counter(); next_irq=FRAME; started=False
 def run(nframes):
     global delivered,lost,next_irq,started
@@ -105,6 +125,18 @@ def run(nframes):
             else:
                 lost+=1; lost_at[fn(cpu.pc)]+=1
 HOLD=None
+# бой: (клавиши, кадров) по кругу — удары вправо/вверх/вниз/влево с паузами и шаг туда-обратно
+FIGHT=[(['fire','right'],10),([],6),(['fire','up'],10),([],6),(['fire','down'],10),([],6),
+       (['fire','left'],10),([],6),(['right'],12),(['left'],12)]
+PACE=[(['right'],30),(['left'],30)]      # ходьба туда-обратно: «right» за 200 кадров уходит с экрана
+SCEN={'fight':FIGHT,'pace':PACE}
+def scen_keys(name,f):
+    sc=SCEN[name]; f%=sum(n for _,n in sc)
+    for k,n in sc:
+        if f<n: return k
+        f-=n
+IMMORTAL='--mortal' not in OPTS; EPP=sym['ENTITY_PLAYER_POINTER']; energy0=[None]; hits=[0]
+WT=sym.get('wait_till_read',-1); AS=sym.get('action_string',-1)
 def rd(a): return mem[a]
 ntick=[0]
 w=rv.Warmup(sym,keys); patched=False; started=False   # прогрев общий с run_vec (сообщение уровня снимается автоматически)
@@ -114,7 +146,7 @@ for fr in range(1500):
         if cpu.halted: cyc[0]=next_irq
         else:
             pc=cpu.pc
-            if START and not patched and pc==SC: mem[sym['current_levelx']]=START[0]; mem[sym['current_levely']]=START[1]; patched=True
+            if START and not patched and pc==SC: mem[sym['current_levelx']]=START[0]; mem[sym['current_levely']]=START[1]; patched=True; mem[sym['initial_coordx']]=POS[0] if POS else mem[sym['initial_coordx']]; mem[sym['initial_coordy']]=POS[1] if POS else mem[sym['initial_coordy']]
             if w.step(pc,fr): started=True
             cyc[0]+=CYC[mem[pc]]; cpu.step()
         if cyc[0]>=next_irq:
@@ -130,8 +162,11 @@ if NOFG:   # NOFG после прогрева: экран уже нарисов�
 for seg in ROUTE.split(','):
     k,n=seg.split(':'); n=int(n)
     keys.clear()
-    for kk in k.split('+'):
-        if kk!='none': keys.append(kk)
+    if k not in SCEN:
+        for kk in k.split('+'):
+            if kk!='none': keys.append(kk)
+    prof=collections.Counter(); n_ext=0; hits[0]=0; where=collections.Counter();  route_keys=list(keys); seg_fr=0; in_wait=False; seen_msg=False; nmsg=0
+    if k in SCEN: keys[:]=scen_keys(k,0)
     d0,l0=delivered,lost
     # тики считаем по входам в RunScripts; тики со сменой экрана (LoadScreen внутри) — отдельно
     hold_ticks=[0]; hold_slow=[0]
@@ -139,30 +174,65 @@ for seg in ROUTE.split(','):
     while cyc[0]<end:
         pc=cpu.pc
         if pc==LS: seen_load=True
+        elif pc==AS: seen_msg=True
+        elif pc==WT and not in_wait: in_wait=True; seen_msg=True; keys[:]=['fire']
         if pc==RS:
-            tick_frames.append(((cyc[0]-tstart)/FRAME, seen_load)); tstart=cyc[0]; seen_load=False
+            if IMMORTAL:      # здоровье героя (байт 4 сущности) держим на стартовом: иначе великан убивает его
+                ep=EPP                                  # за сотню кадров и дальше меряется экран конца игры
+                if energy0[0] is None: energy0[0]=mem[ep+4]
+                elif mem[ep+4]<energy0[0]: hits[0]+=1; mem[ep+4]=energy0[0]
+            if in_wait: in_wait=False; keys[:]=scen_keys(k,seg_fr) if k in SCEN else route_keys
+            nmsg+=seen_msg
+            if seen_msg: end+=cyc[0]-tstart; n_ext+=(cyc[0]-tstart)/FRAME   # печать текста (~200 кадров) в длину отрезка не входит
+            tick_frames.append(((cyc[0]-tstart)/FRAME, 'M' if seen_msg else seen_load)); tstart=cyc[0]; seen_load=False; seen_msg=False
             if HOLD: hold_ticks[0]+=1; hold_slow[0]+=1 if mem[HOLD]>=8 else 0   # темп анимации: сколько тиков в замедленном режиме
             if FIXRAND: ntick[0]+=1; mem[sym['FrameCounter']]=ntick[0]&0xFF; mem[sym['FrameCounter']+1]=0
         if cpu.halted: idle+=next_irq-cyc[0]; cyc[0]=next_irq
         else:
+            if TAIL and tail_credit[0] and (cpu.pc==VBA or cpu.pc==DTB):
+                # модель «блит режется по строкам»: часть, влезавшая в хвост прошлого кадра, уже сделана —
+                # возвращаем её время (часы и точка перезарядки ВИ53 сдвигаются вместе: фаза для бюджета та же)
+                cyc[0]-=tail_credit[0]; pit['reload_cyc']-=tail_credit[0]; tstart=min(tstart,cyc[0]); tail_sum[0]+=tail_credit[0]; tail_credit[0]=0
+            if NOLATE and cpu.pc==WHG and mem[FNR]>=mem[FLK] and not mem[WHF] and any(lo<=(cyc[0]-pit['reload_cyc'])/256<hi for lo,hi in LATEWIN):
+                cpu.pc+=1; nolate_n[0]+=1      # тик уже опоздал: halt перед выводом пропускаем
             if cpu.pc==VBW or cpu.pc==DTW:
                 bh_n[0]+=1
+                if TAIL:
+                    sp=cpu.sp; ret=mem[sp+2]|mem[sp+3]<<8
+                    who=fn(ret) if cpu.pc==VBW else 'dt_direct'
+                    if TAIL=='all' or who=='vec_spr_colbud':
+                        ph=(cyc[0]-pit['reload_cyc'])/256
+                        cr=VBL-ph-TAIL_OVH
+                        if cr>=TAIL_MIN: tail_credit[0]=int(cr*256)
                 if BHIST:
                     cost=cpu.l; phase=(cpu.a-cost)&0xFF
                     bh_cost[cost]+=1; bh_phase[phase//16*16]+=1; bh_lost[0]+=max(0,234-phase)
+            if PROF: prof[fn(cpu.pc)]+=CYC[mem[cpu.pc]]
             cyc[0]+=CYC[mem[cpu.pc]]
             try: cpu.step()
             except RuntimeError:
                 print('  КРАХ; последние PC:', ' '.join(f'{x:04X}' for x in pc_ring[-24:])); raise
         if cyc[0]>=next_irq:
-            next_irq+=FRAME
+            next_irq+=FRAME; seg_fr+=1
+            where[fn(cpu.pc)]+=1
+            if k in SCEN and not in_wait: keys[:]=scen_keys(k,seg_fr)
             if cpu.ie: cpu.ie=False; cpu.halted=False; cpu.push(cpu.pc); cpu.pc=0x38; delivered+=1
             else: lost+=1; lost_at[fn(cpu.pc)]+=1
-    d1,l1=delivered,lost; dd=d1-d0; dl=l1-l0; idle_pct=idle/(n*FRAME)*100
-    norm=[f for f,l in tick_frames[1:] if not l]; loads=[f for f,l in tick_frames[1:] if l]
+    d1,l1=delivered,lost; dd=d1-d0; dl=l1-l0; idle_pct=idle/((n+n_ext)*FRAME)*100
+    norm=[f for f,l in tick_frames[1:] if not l]; loads=[f for f,l in tick_frames[1:] if l and l!='M']
     avg=sum(norm)/max(len(norm),1)
     print(f'  {k:10s} {n:4d} кадров: потеряно прерываний {dl} ({dl/n*100:.1f} %); обычных тиков {len(norm)}: {avg:.2f} кадра/тик ({50/max(avg,0.01):.1f} тик/с), доля тиков >5 кадров {sum(1 for f in norm if f>5.5)/max(len(norm),1)*100:.0f} %, простой (halt) {idle_pct:.0f} %' + (f'; смен экрана {len(loads)}: {", ".join(f"{f:.0f}" for f in loads)} кадров' if loads else '')
+          + (f'; тиков с текстом {nmsg}' if nmsg else '')
+          + (f'; ударов по герою {hits[0]}' if hits[0] else '')
+          + f'; экран {mem[sym["current_levelx"]]},{mem[sym["current_levely"]]}' + (f', герой погиб ({mem[sym["player_dead"]]})' if mem[sym['player_dead']] else '')
           + (f'; анимация замедлена в {hold_slow[0]/max(hold_ticks[0],1)*100:.0f} % тиков' if HOLD else ''))
+    if SHOT:      # снимок экрана в конце отрезка: проверить, что герой стоит где надо и враг в кадре
+        rv.render(bytes(mem[0x8000:0x10000]), list(mem[sym['vec_palette']:sym['vec_palette']+16]), f'{SHOT}_{k}.png')
+    if PROF:
+        nt=max(len(tick_frames),1); tot=sum(prof.values())
+        print(f'    профиль, тактов на тик (кадр = {FRAME}); всего работы {tot/nt/FRAME:.2f} кадра/тик, простой {idle/nt/FRAME:.2f}:')
+        for name,c in prof.most_common(PROFN): print(f'      {name:28s} {c/nt:8.0f}  {c/tot*100:5.1f} %')
+    if '--where' in OPTS: print('    PC на прерывании:', dict(where.most_common(6)), 'клавиши в конце:', keys, 'ожидание текста:', in_wait)
     if norm:
         import collections as _c
         h=_c.Counter(min(int(f+0.5),12) for f in norm)
@@ -172,5 +242,5 @@ if BHIST and sum(bh_cost.values()):
     print(f'  отказы бюджета: {n}; цена запроса (ед. 256 тактов): {sorted(bh_cost.items())}')
     print(f'  фаза кадра при отказе (ед.): {sorted(bh_phase.items())}')
     print(f'  потеряно хвостов: {bh_lost[0]} ед. = {bh_lost[0]/234:.1f} кадра, в среднем {bh_lost[0]/n:.0f} ед. на отказ')
-print(f'  ожиданий кадра бюджетом (vbg_wait) за прогон: {bh_n[0]}')
+print(f'  ожиданий кадра бюджетом (vbg_wait) за прогон: {bh_n[0]}' + (f'; пропущено ожиданий опоздавшего тика: {nolate_n[0]}' if NOLATE else '') + (f'; модель хвостов ({TAIL}): возвращено {tail_sum[0]/FRAME:.1f} кадра' if TAIL else ''))
 if lost: print('  потери по функциям:', dict(lost_at.most_common(8)))

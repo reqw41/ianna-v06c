@@ -55,6 +55,10 @@ cpu.out_handler=out_h; cpu.in_handler=in_h
 SC=sym['SaveCheckpoint']; RS=sym['RunScripts']; SPD=sym['SPDATA']; LX=sym['current_levelx']
 PF=sym['vec_pool_flush']; PFD=sym.get('vpf_done',-1); DSL=sym['DrawSpriteList']; RIT=sym['RedrawInvTiles']
 next_irq=FRAME; delivered=0; lost=0
+# --latewin=A-B[,C-D] — модель правки ожидания (на сборке БЕЗ неё): опоздавший тик пропускает halt, если фаза кадра
+# (ед. 256 тактов от прерывания) в одном из окон. 0-234 = не ждать никогда. Поле на экране: фазы ~30..150.
+LATEWIN=[tuple(int(v) for v in w.split('-')) for w in next((o[10:] for o in OPTS if o.startswith('--latewin=')),'').split(',') if w]
+WHG=sym.get('waitforvblank_halt_go',-1); FNR=sym['frames_noredraw']; FLK=sym['frames_lock']; WHF=sym['vec_wait_halted']
 # --- прогрев (как measure_vec) ---
 w=rv.Warmup(sym,keys); patched=False; started=False
 for fr in range(1500):
@@ -115,12 +119,15 @@ def row_of(final,y):
 report=[]; npng=[0]; hist=collections.Counter(); frames_total=0; frames_bad=0; g_rows=0; g_frames=0; g_hole=0; hero_old=0; hero_hole=0; hero_new=0; all_old=0
 flush=[None,None]; dsl=[None]; rit=[None]; hero_at_tick=[None]
 running=True; hit_frames=[]
+EPP=sym['ENTITY_PLAYER_POINTER']; e0=[None]
 VSL=sym['vpf_slot']; VGD=sym.get('vpf_guard',-1); VGO=sym.get('vpf_guard_ok',-1); VDN=sym['vpf_done']
 slot_dt=[]; last_slot=[None]; fl_len=[]; fl_slots=[]; fl_start=[None]; fl_n=[0]; guard_spin=[0]; g_in=[None]
 fstart[0]=next_irq-FRAME
 while running:
     pc=cpu.pc
     if pc==RS:
+        if e0[0] is None: e0[0]=mem[EPP+4]      # герой неуязвим: иначе голем убивает его и в прогон попадает экран гибели
+        elif mem[EPP+4]<e0[0]: mem[EPP+4]=e0[0]
         hero_at_tick[0]=(tick[0],spr(0),spr(3),spr(1))
         running=on_tick()
     if pc==PF: flush[0]=cyc[0]-fstart[0]; fl_start[0]=cyc[0]; fl_n[0]=0; last_slot[0]=None
@@ -132,6 +139,9 @@ while running:
     if pc==VDN and fl_start[0] is not None: fl_len.append(cyc[0]-fl_start[0]); fl_slots.append(fl_n[0]); fl_start[0]=None
     if pc==DSL: dsl[0]=cyc[0]-fstart[0]
     if pc==RIT: rit[0]=cyc[0]-fstart[0]
+    if LATEWIN and pc==WHG and mem[FNR]>=mem[FLK] and not mem[WHF]:
+        ph=(cyc[0]-fstart[0])/256
+        if any(lo<=ph<hi for lo,hi in LATEWIN): cpu.pc+=1; pc=cpu.pc   # модель: опоздавший тик не ждёт кадра, если луч в окне
     if cpu.halted:
         capture_upto(next_irq-1); cyc[0]=next_irq
     else:
