@@ -190,7 +190,7 @@ class Warmup:
         elif pc == self.AS: self.msg = True
         elif pc == self.WT and not self.in_wait: self.keys.append('fire'); self.in_wait = True
         return self.first is not None and fr - self.first >= self.after and not self.msg and not self.in_wait
-def patch_menu(cpu):
+def patch_menu(cpu, lst=None):
     """Оверлей меню лежит только в наборе уровня 1; стенды запускают набор любого уровня напрямую,
     поэтому, если меню в наборе нет, вызов фазы меню из ROM глушим — иначе игра уходит по $8440
     в мусор и не стартует. Зовут make_cpu и measure_vec (он грузит ROM сам)."""
@@ -198,7 +198,9 @@ def patch_menu(cpu):
     mo = ROOT / 'build/menu_ovl.bin'
     head = mo.read_bytes()[:16] if mo.exists() else b''
     if head and bytes(cpu.kvaz[3*65536 + 0x8440: 3*65536 + 0x8450]) != head:
-        syms = load_syms(ROOT / 'build/ianna_vec.lst')
+        # листинг ТОЙ сборки, чей ROM загружен: адрес vec_menu_phase у снимков разных сборок разный
+        # (сверка cmpticks 2026-10-12 падала в $86C0 — вызов меню у старого ROM не находился)
+        syms = load_syms(pathlib.Path(lst) if lst else ROOT / 'build/ianna_vec.lst')
         mp = syms.get('vec_menu_phase')
         if mp:
             call = bytes((0xCD, mp & 0xFF, mp >> 8))

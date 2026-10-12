@@ -18,7 +18,7 @@ AnimStile_CheckSprites:
 	rlca
 	rlca
 	rlca
-	and $f8
+	and $f0			; бит 7 в B — признак колонки от InvalidateTiles (не координата)
 	ld (simulatedsprite+3),a	; xmin
 	ld a,c
 	rlca

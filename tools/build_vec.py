@@ -383,6 +383,21 @@ def main():
     old = 'ret nc\n\tpush de\n\tld a, (ndirtyrects)\n'
     assert t.count(old) == 1, 'InvalidateSTiles: тело после транслятора изменилось'
     (TR / 'tiles.asm').write_text(t.replace(old, 'ret nc\n\tpush de\n'))
+    # ГРЯЗНОЕ ПО КОЛОНКАМ (vec_vdp.asm, vec_col_tab): InvalidateTiles округляет прямоугольник до стайлов 16x16,
+    # а точные границы по X теряет. Сохраняем их в бите 7: у B (первый стайл) — «левая колонка не нужна»
+    # (первый символ нечётный), у D (число стайлов) — «правая колонка последнего не нужна» (последний символ
+    # чётный). Оба байта так и ложатся в запись tiles_dirty; читает их только раздача слотов (vpb_rect).
+    # Проверка пересечений получает чистые значения: D перед ней удваивается (бит 7 уходит), B она маскирует.
+    t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
+    old = ('InvalidateTiles:\n\tld a, d\n\tadd a, b\t; A = last X tile\n\tdec a\n\trrca\n\tand $1f\t; A = max stile\n\tld d, a\n'
+           '\tld a, b\n\trrca\n\tand $1f\n\tld b, a\t; B = min stile\n\tld a, d\n\tsub b\n\tinc a\n\tld d, a\t; D = number of stiles\n')
+    assert t.count(old) == 1, 'InvalidateTiles: начало после транслятора изменилось'
+    (TR / 'tiles.asm').write_text(t.replace(old,
+        'InvalidateTiles:\n\tld a, d\n\tadd a, b\n\tdec a\n\trrca\n\tld l, a\t; L = последний символ, сдвинутый: бит 7 = он нечётный\n'
+        '\tld a, b\n\trrca\n\tld h, a\t; H = первый символ, сдвинутый: бит 7 = он нечётный\n\tand $1f\n\tld b, a\t; B = min stile\n'
+        '\tld a, l\n\tand $1f\n\tsub b\n\tinc a\n\tld d, a\t; D = number of stiles\n'
+        '\tld a, h\n\tand $80\n\tor b\n\tld b, a\t; бит 7: левая колонка первого стайла не нужна\n'
+        '\tld a, l\n\tcpl\n\tand $80\n\tor d\n\tld d, a\t; бит 7: правая колонка последнего стайла не нужна\n'))
     # (хук готовых тайлов фон+FG в DrawTile снят 2026-09-07 вместе с fgc_ovl: с пулом он был мёртв)
     # накладные обхода грязных тайлов в RedrawInvTiles_FG (z_exx x2 на тайл, EI) — зарядить в бюджет DI
     t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
@@ -488,6 +503,7 @@ def main():
             mm = re.match(r'^([0-9A-F]{4}): ([0-9A-F]+)\s', line)     # байты в листинге без пробелов
             if mm: code_end = max(code_end, int(mm.group(1), 16) + len(mm.group(2)) // 2)
         assert code_end <= VARS_ADDR, f'код до ${code_end:04X} НАЕХАЛ на переменные ${VARS_ADDR:04X}'
+        assert code_end <= 0x6A00, f'код дошёл до ${code_end:04X}: в $6A00-$6AFF лежит vec_col_tab (vec_vdp.asm)'
         print(f'код до ${code_end-1:04X} включительно, переменные с ${VARS_ADDR:04X} (зазор {VARS_ADDR-code_end} Б)')
         m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'

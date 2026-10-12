@@ -62,7 +62,7 @@ cpu = rv.make_cpu(keys)
 rom = pathlib.Path(ROM).read_bytes()
 cpu.mem[0x100:0x100 + len(rom)] = rom
 cpu.pc = 0x100
-rv.patch_menu(cpu)      # ROM перезалит поверх make_cpu — заглушку фазы меню надо поставить снова
+rv.patch_menu(cpu, LST)      # ROM перезалит поверх make_cpu — заглушку фазы меню надо поставить снова
                         # (без неё набор без оверлея меню, т.е. любой уровень кроме 1-го, уходит в мусор)
 
 

@@ -48,7 +48,7 @@ sym = rv.load_syms(pathlib.Path(LST))
 keys = []; cpu = rv.make_cpu(keys)
 if not FDD:
     rom = pathlib.Path(ROM).read_bytes(); cpu.mem[0x100:0x100 + len(rom)] = rom; cpu.pc = 0x100
-    rv.patch_menu(cpu)
+    rv.patch_menu(cpu, LST)
 mem = cpu.mem
 if '--noseries' in OPTS and 'SERIES_ADDR' in sym:        # серийный блит выключить: se_try = `or a / ret` (серии нет)
     cpu.kvaz[3 * 65536 + sym['SERIES_ADDR']:3 * 65536 + sym['SERIES_ADDR'] + 2] = b'\xB7\xC9'

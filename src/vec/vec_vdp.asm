@@ -28,6 +28,19 @@ KV_WIN_LEVEL	equ $61		; окна $8000-$DFFF -> страница 1 (карта �
 KV_POOL_WIN	equ $23		; окно $A000-$DFFF -> страница 3 (пул)
 KV_WIN_MUSIC	equ $23		; окно $A000-$DFFF -> страница 3 (музыка по $C980, эффекты по $D980)
 POOL_BASE	equ $A000
+; ГРЯЗНОЕ ПО КОЛОНКАМ (2026-10-12). Спрайт шириной 24 точки занимает три колонки по 8, а грязное
+; округлялось до стайлов 16x16 — до четырёх: от пятой части до двух пятых заливки слотов и сброса их
+; в экран делалось зря (tools/chain_est.py). vec_col_tab[idx] (тот же индекс, что у vec_slot_tab):
+; бит 0 — нужна левая колонка стайла, бит 1 — правая; 0 = стайл чист. Ставит раздача слотов (vpb_x)
+; по точным границам из InvalidateTiles (бит 7 в xs и nx записи tiles_dirty), снимает сброс пула.
+; Читают: заливка слота фоном (dtb), чёрная заливка (dt_blk) и вывод слота в экран (vpf_slot).
+; Ненужная колонка слота не заливается и не выводится: спрайты в неё не рисуют (у любого рисуемого
+; спрайта прямоугольник инвалидирован точно), а передний тайл пишет туда мусор, который никто не видит.
+; Таблица и три ячейки лежат в зазоре ROM перед переменными (сторож границы — в build_vec).
+vec_col_tab	equ $6A00
+vec_col_f	equ vec_col_tab+255	; флаги текущего стайла — для выбора тела блита
+vec_col_l	equ vec_col_tab+254	; xs текущего прямоугольника с битом 7 (левая колонка не нужна)
+vec_col_r	equ vec_col_tab+253	; nx с битом 7 (правая колонка последнего стайла не нужна)
 POOL_SLOTS	equ 58		; слотов в пуле: $A000-$BCFF. Было 80 (до $C7FF); в обычной игре занято до 46
 				; (tools/poolmax.py, 9 уровней), больше — только в тик смены экрана на уровнях 3 и 7,
 				; там лишние стайлы идут прямым путём. Хвост $BD00-$C7FF отдан плееру Arkos (ARK_ADDR).
@@ -216,6 +229,56 @@ DBV8		macro		; 16 нулевых байт в VRAM вниз по L (dt_blk_plain)
 	push bc
 	push bc
 	endm
+DFTB8		macro		; 8 Б переднего тайла в слот: пары (данные, маска) из стека, «прочитать-и-или»
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	pop bc
+	ld a,(hl)
+	and b
+	or c
+	ld (hl),a
+	inc hl
+	endm
 DTB16		macro		; 16 Б в слот пула по возрастанию
 	pop bc
 	ld (hl),c
@@ -286,6 +349,83 @@ vb_col:				; метка для профиля (tools/blit_model.py): всё ра
 	ld l,e
 	VBCOL
     endif
+	ld hl,(vec_blit_ret)
+	jp (hl)
+
+; Одна колонка слота из двух -> VRAM (грязное по колонкам). Источник — тот же слот [p][col][row]:
+; ненужные 16 Б перешагиваются указателем стека. D портится и возвращается.
+VBSKIP		macro
+	ld hl,16
+	add hl,sp
+	ld sp,hl
+	endm
+VBNEXTP		macro		; D += $20: следующая плоскость
+	ld a,d
+	add a,$20
+	ld d,a
+	endm
+vec_blit64l:
+	ld h,d
+	ld l,e
+	VBCOL
+	VBSKIP
+	VBNEXTP
+	ld h,d
+	ld l,e
+	VBCOL
+	VBSKIP
+	VBNEXTP
+	ld h,d
+	ld l,e
+	VBCOL
+	VBSKIP
+    if !C8
+	VBNEXTP
+	ld h,d
+	ld l,e
+	VBCOL
+	VBSKIP
+	ld a,d
+	sub $60
+    else
+	ld a,d
+	sub $40
+    endif
+	ld d,a
+	ld hl,(vec_blit_ret)
+	jp (hl)
+vec_blit64r:
+	VBSKIP
+	ld h,d
+	inc h
+	ld l,e
+	VBCOL
+	VBSKIP
+	VBNEXTP
+	ld h,d
+	inc h
+	ld l,e
+	VBCOL
+	VBSKIP
+	VBNEXTP
+	ld h,d
+	inc h
+	ld l,e
+	VBCOL
+    if !C8
+	VBSKIP
+	VBNEXTP
+	ld h,d
+	inc h
+	ld l,e
+	VBCOL
+	ld a,d
+	sub $60
+    else
+	ld a,d
+	sub $40
+    endif
+	ld d,a
 	ld hl,(vec_blit_ret)
 	jp (hl)
 
@@ -597,6 +737,11 @@ dt_blit:				; вход с готовым vec_blit_src (drawFGTile: непроз�
 	call vec_slot_for_bc
 	cp POOL_SLOTS
 	jp nc,dt_direct		; $FE (грязный без слота) и $FF — прямо в VRAM
+	ld d,a
+	ld h,vec_col_tab/256	; L — индекс стайла (vec_slot_for_bc)
+	ld a,(hl)
+	ld (vec_col_f),a	; какие колонки слота заливать
+	ld a,d
 	call vec_pool_addr
 	ld a,16 - C8*2		; бюджет DI: тайл в слот. calib по ОКНУ DI (blitcalib): было 14.0 ед. при
 				; цене 18, стало 12.4 — цена 16 держит тот же запас 3.6 ед.
@@ -611,12 +756,45 @@ dt_blit:				; вход с готовым vec_blit_src (drawFGTile: непроз�
 	ld a,KV_POOL_WIN|KV_STK_P0
 	out (KV_PORT),a
 	ex de,hl		; HL = dest
+	ld a,(vec_col_f)
+	dec a
+	jp z,dtb_left		; 1 — только левая колонка
+	dec a
+	jp z,dtb_right		; 2 — только правая
 	ld a,8 - C8*2		; C8: 96 Б = 6 порций по 16 Б; счётчик — в A
 dtb_loop:
 	DTB16			; развёрнуто вдвое: счётчик в памяти стоил 56 тактов на 16 байт при 352
 	DTB16			; тактах работы; A в теле не жив, счётчик переехал в него. Четыре копии
 	sub 2			; стоили ещё 80 Б ROM ради 40 тактов на тайл — они ушли под заливку
 	jp nz,dtb_loop		; чёрного тайла (dt_black), которая экономит 1.7 тыс. на стайл
+	jp dt_end
+; Одна колонка из двух: слот — [плоскость][колонка][16 строк], порции по 16 Б чередуются
+; левая/правая. Ненужную пропускаем и в источнике (SP), и в слоте (HL): +16 к обоим.
+dtb_left:
+	ld a,4 - C8
+dtbl_loop:
+	DTB16
+	ex de,hl
+	ld hl,16
+	add hl,sp
+	ld sp,hl
+	ld hl,16
+	add hl,de
+	dec a
+	jp nz,dtbl_loop
+	jp dt_end
+dtb_right:
+	ld a,4 - C8
+dtbr_loop:
+	ex de,hl
+	ld hl,16
+	add hl,sp
+	ld sp,hl
+	ld hl,16
+	add hl,de
+	DTB16
+	dec a
+	jp nz,dtbr_loop
 	jp dt_end
     endif
 dt_direct:
@@ -737,6 +915,11 @@ dt_blk_v:
 	ei
 	ret
 dt_blk_go:
+	ld d,a
+	ld h,vec_col_tab/256	; L — индекс стайла (vec_slot_for_bc)
+	ld a,(hl)
+	ld (vec_col_f),a
+	ld a,d
 	call vec_pool_addr	; HL = POOL_BASE + слот*128
 	ld de,128
 	add hl,de		; push идёт вниз — начинаем с конца слота
@@ -752,6 +935,11 @@ dt_blk_go:
 	ld a,KV_STK_P3
 	out (KV_PORT),a
 	ld bc,0
+	ld a,(vec_col_f)
+	dec a
+	jp z,dt_blk_left
+	dec a
+	jp z,dt_blk_right
 	ld a,8
 dt_blk_l:
 	push bc
@@ -764,6 +952,42 @@ dt_blk_l:
 	push bc
 	dec a
 	jp nz,dt_blk_l
+	jp vec_stk_leave
+; Одна колонка: push идёт с конца слота, порции по 16 Б — правая, левая, правая... Ненужную
+; перешагиваем указателем стека.
+dt_blk_left:
+	ld a,4
+dt_blkl_l:
+	ld hl,-16
+	add hl,sp
+	ld sp,hl
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	dec a
+	jp nz,dt_blkl_l
+	jp vec_stk_leave
+dt_blk_right:
+	ld a,4
+dt_blkr_l:
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	ld hl,-16
+	add hl,sp
+	ld sp,hl
+	dec a
+	jp nz,dt_blkr_l
 	jp vec_stk_leave
     endif
 
@@ -820,6 +1044,11 @@ dft_found:
 	call vec_slot_for_bc
 	cp POOL_SLOTS
 	jp nc,dft_direct
+	ld d,a
+	ld h,vec_col_tab/256	; L — индекс стайла (vec_slot_for_bc)
+	ld a,(hl)
+	ld (vec_col_f),a
+	ld a,d
 	call vec_pool_addr
 	ex de,hl
 	di
@@ -833,59 +1062,51 @@ dft_found:
 	ex de,hl
 	ld a,16 - C8*4		; C8: 192 Б = 12 итераций
 	ld (vec_row_cnt),a
+	ld a,(vec_col_f)	; грязное по колонкам: маскированный передний тайл — самый дорогой блит в слот
+	dec a			; (6,5 тыс. тактов), а половина его колонок под спрайтом не нужна
+	jp z,dftb_left
+	dec a
+	jp z,dftb_right
 dftb_loop:
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc hl
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc hl
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc hl
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc hl
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc hl
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc hl
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc hl
-	pop bc
-	ld a,(hl)
-	and b
-	or c
-	ld (hl),a
-	inc hl
+	DFTB8
 	ld a,(vec_row_cnt)
 	dec a
 	ld (vec_row_cnt),a
 	jp nz,dftb_loop
+	jp dft_end
+dftb_left:
+	ld a,4 - C8
+	ld (vec_row_cnt),a
+dftbl_loop:
+	DFTB8
+	DFTB8
+	ex de,hl		; ненужная колонка: 16 Б слота и 32 Б источника (данные+маска) перешагиваем
+	ld hl,32
+	add hl,sp
+	ld sp,hl
+	ld hl,16
+	add hl,de
+	ld a,(vec_row_cnt)
+	dec a
+	ld (vec_row_cnt),a
+	jp nz,dftbl_loop
+	jp dft_end
+dftb_right:
+	ld a,4 - C8
+	ld (vec_row_cnt),a
+dftbr_loop:
+	ex de,hl		; ненужная колонка: 16 Б слота и 32 Б источника (данные+маска) перешагиваем
+	ld hl,32
+	add hl,sp
+	ld sp,hl
+	ld hl,16
+	add hl,de
+	DFTB8
+	DFTB8
+	ld a,(vec_row_cnt)
+	dec a
+	ld (vec_row_cnt),a
+	jp nz,dftbr_loop
 	jp dft_end
     endif
 dft_direct:
@@ -2050,6 +2271,14 @@ b2pm_cont:
 ; vec_slot_init: карта грязных стайлов = $FF (чисто), метки строк ($A0..$A9 и выше) = 0.
 ; Зовётся при старте и из сброса, когда пул был выключен (переполнение / стендовый прямой режим).
 vec_slot_init:
+	ld hl,vec_col_tab
+	ld b,160
+	xor a
+vpb_clrc:
+	ld (hl),a
+	inc l
+	dec b
+	jp nz,vpb_clrc
 	ld hl,vec_slot_tab
 	ld b,160
 	ld a,$ff
@@ -2082,13 +2311,17 @@ vpb_ban_no:
 	ld c,a
 	ld de,tiles_dirty
 vpb_rect:
-	ld a,(de)		; xs
+	ld a,(de)		; xs; бит 7 — левая колонка первого стайла не нужна
+	ld (vec_col_l),a
+	and $7f
 	ld (vec_tmp_sx),a
 	inc de
 	ld a,(de)		; ys
 	ld (vec_tmp_sy),a
 	inc de
-	ld a,(de)		; nx
+	ld a,(de)		; nx; бит 7 — правая колонка последнего стайла не нужна
+	ld (vec_col_r),a
+	and $7f
 	ld (vec_tmp_nx),a
 	inc de
 	ld a,(de)		; ny
@@ -2151,6 +2384,31 @@ vpb_x:
 	ld a,e			; H уже стоит на таблице слотов (метка строки выше)
 	or c
 	ld l,a
+	; нужные колонки этого стайла: обе, кроме краёв прямоугольника с битом 7
+	ld d,3
+	ld a,(vec_tmp_sx)
+	cp c
+	jp nz,vpb_cl_ok
+	ld a,(vec_col_l)
+	rlca
+	jp nc,vpb_cl_ok
+	ld d,2			; первый стайл, левая колонка не нужна
+vpb_cl_ok:
+	ld a,b
+	dec a
+	jp nz,vpb_cr_ok
+	ld a,(vec_col_r)
+	rlca
+	jp nc,vpb_cr_ok
+	ld a,d
+	and 1			; последний стайл, правая колонка не нужна
+	ld d,a
+vpb_cr_ok:
+	ld h,vec_col_tab/256
+	ld a,(hl)
+	or d
+	ld (hl),a
+	ld h,vec_slot_tab/256
 	; Под стайлом есть передний тайл? Тогда слот: прямой путь клал бы фон и FG в VRAM порознь, и луч
 	; между ними видел фон без воды/тумана (мерцание воды под мечом у голема, Emu80 2026-09-04).
 	; Индекс L = sy*16+sx — тот же, что у карты переднего слоя.
@@ -2474,6 +2732,8 @@ vpf_x:
 	cp POOL_SLOTS
 	jp c,vpf_slot_chk
 	ld (hl),$ff		; прямой ($FE) или уже выведен — вернуть «пусто» (таблица не чистится)
+	ld h,vec_col_tab/256
+	ld (hl),0
 	jp vpf_x_next
 vpf_slot_chk:
 	; ГЕРОЙ — ПОЗАДИ ЛУЧА. Сброс дольше кадра, луч обгоняет его раз за круг и показывал героя
@@ -2495,6 +2755,12 @@ vpf_slot_go:
 	ld a,d
 vpf_slot:
 	ld (hl),$ff		; слот выведен — больше не выводить (пересечения прямоугольников)
+	ld e,a
+	ld h,vec_col_tab/256
+	ld a,(hl)
+	ld (hl),0		; карта колонок чистится здесь же
+	ld (vec_col_f),a
+	ld a,e
 	ld l,a			; адрес слота: $A000 + slot*128 (inline vec_pool_addr)
 	rrca
 	and $7f
@@ -2521,6 +2787,11 @@ vpf_slot:
 vpf_bud_ok:
 	ld (vec_bud_used),a
     endif			; ВИ53: фаза всегда реальная, самоучёт сброса не нужен
+	ld a,(vec_col_f)
+	dec a
+	jp z,vec_blit64l	; 1 — только левая колонка
+	dec a
+	jp z,vec_blit64r	; 2 — только правая
 	jp vec_blit128_vram
 vpf_x_next:
 	ld a,(vec_hr_lp)	; герой не выведен: новый круг луча — герой вперёд, пока влезает, потом обратно сюда

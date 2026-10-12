@@ -27,7 +27,18 @@
 """
 import sys, os, pathlib, hashlib
 
+FIGHT = [['fire','right'],[],['fire','up'],[],['fire','down'],[],['fire','left'],[],['right'],['right'],['left'],['left'],['up'],['down']] if '--fight' in sys.argv else None
+_e0 = [None]
+def IMM(cpu, sym):
+    """Герой неуязвим (здоровье возвращается каждый тик): иначе на сценах с великанами он гибнет,
+    игра уходит в экран гибели, тики кончаются и сверка стоит до тайм-аута."""
+    a = sym['ENTITY_PLAYER_POINTER'] + 4
+    if _e0[0] is None: _e0[0] = cpu.mem[a]
+    elif cpu.mem[a] < _e0[0]: cpu.mem[a] = _e0[0]
+    return True
+
 def run(rom, lst, edd, start, nticks, settle, pitscale=100):
+    _e0[0] = None
     os.environ['IANNA_EDD'] = edd
     os.environ['IANNA_PITSCALE'] = str(pitscale)
     for m in ('run_vec',):
@@ -40,7 +51,7 @@ def run(rom, lst, edd, start, nticks, settle, pitscale=100):
     sym = rv.load_syms(pathlib.Path(lst))
     keys = []; cpu = rv.make_cpu(keys)
     data = pathlib.Path(rom).read_bytes(); cpu.mem[0x100:0x100 + len(data)] = data
-    cpu.pc = 0x100; rv.patch_menu(cpu)
+    cpu.pc = 0x100; rv.patch_menu(cpu, lst)
     a = sym['random']; rd = sym['randData']       # --norand: ГПСЧ без чтения байтов кода
     cpu.mem[a:a + 9] = bytes((0x3A, rd & 0xFF, rd >> 8, 0xC6, 0x4D, 0x32, rd & 0xFF, rd >> 8, 0xC9))
     rv.START = start; rv._start_done[0] = False
@@ -54,18 +65,26 @@ def run(rom, lst, edd, start, nticks, settle, pitscale=100):
                 cpu.mem[sym['current_levelx']] = start[0]; cpu.mem[sym['current_levely']] = start[1]
                 rv._start_done[0] = True
             if w.step(pc, fr): done = True
-            if pc == RS: ticks += 1; cpu.mem[FC] = ticks & 0xFF
+            if pc == RS and (IMM(cpu, sym) or True): ticks += 1; cpu.mem[FC] = ticks & 0xFF
             cpu.step(); c += 1
         cpu.halted = False
         if cpu.ie: cpu.ie = False; cpu.push(cpu.pc); cpu.pc = 0x38
         if done: break
     assert done, 'игра не стартовала'
     keys.clear(); out = []
+    WT = sym.get('wait_till_read', -1); wait = False
     while ticks < settle + nticks:
-        while not cpu.halted:
+        c = 0
+        while not cpu.halted and c < rv.STEP_BUDGET:      # без предела кадр в busy-loop текста не кончался вовсе
+            c += 1
+            if cpu.pc == WT and not wait: wait = True; saved = list(keys); keys[:] = ['fire']   # текст скрипта снять
             if cpu.pc == RS:
+                IMM(cpu, sym)
+                if wait: wait = False; keys[:] = saved
                 ticks += 1; cpu.mem[FC] = ticks & 0xFF
-                if ticks == settle: keys.append('right')   # бег вправо — с фиксированного тика
+                if FIGHT:                                  # --fight: удары во все стороны и шаги, по тикам
+                    if ticks >= settle: keys[:] = FIGHT[(ticks - settle) // 2 % len(FIGHT)]
+                elif ticks == settle: keys.append('right')   # бег вправо — с фиксированного тика
                 if ticks > settle:
                     m = cpu.mem
                     fld = b''.join(bytes(m[b + c*256 + 64: b + c*256 + 224])

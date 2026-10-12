@@ -10,7 +10,7 @@ ROM,LST,EDD,ST=A[:4]; os.environ['IANNA_EDD']=EDD
 ROUTE=next((o[8:] for o in OPTS if o.startswith('--route=')),'pace'); NT=int(next((o[8:] for o in OPTS if o.startswith('--ticks=')),'60'))
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 sym=rv.load_syms(pathlib.Path(LST)); keys=[]; cpu=rv.make_cpu(keys)
-rom=open(ROM,'rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom; cpu.pc=0x100; rv.patch_menu(cpu)
+rom=open(ROM,'rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom; cpu.pc=0x100; rv.patch_menu(cpu, LST)
 rv.START=tuple(int(v) for v in ST.split(',')); rv.STEP_BUDGET=400000; rv.start_game(cpu,keys,sym)
 mem=cpu.mem; RS=sym['RunScripts']; IT=sym['InvalidateTiles']; IS=sym['InvalidateSTiles']; MOS=sym['MarkOverlappingSprites']; EPP=sym['ENTITY_PLAYER_POINTER']
 SCEN={'fight':[(['fire','right'],10),([],6),(['fire','up'],10),([],6),(['fire','down'],10),([],6),(['fire','left'],10),([],6),(['right'],12),(['left'],12)],

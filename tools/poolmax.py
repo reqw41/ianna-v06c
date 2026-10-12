@@ -7,7 +7,7 @@ ROM,LST,EDD,ST=A[:4]; os.environ['IANNA_EDD']=EDD
 FR=int(next((o[9:] for o in OPTS if o.startswith('--frames=')),'4000')); SEED=int(next((o[7:] for o in OPTS if o.startswith('--seed=')),'1'))
 sys.argv=[sys.argv[0]]; sys.path.insert(0,'tools'); import run_vec as rv
 sym=rv.load_syms(pathlib.Path(LST)); keys=[]; cpu=rv.make_cpu(keys)
-rom=open(ROM,'rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom; cpu.pc=0x100; rv.patch_menu(cpu)
+rom=open(ROM,'rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom; cpu.pc=0x100; rv.patch_menu(cpu, LST)
 if ST!='-': rv.START=tuple(int(v) for v in ST.split(','))
 rv.STEP_BUDGET=400000; rv.start_game(cpu,keys,sym)
 mem=cpu.mem; PF=sym['vec_pool_flush']; SN=sym['vec_slot_next']; WT=sym.get('wait_till_read',-1); RS=sym['RunScripts']; EPP=sym['ENTITY_PLAYER_POINTER']

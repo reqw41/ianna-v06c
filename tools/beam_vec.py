@@ -30,7 +30,7 @@ def fn(pc):
     k=bisect.bisect_right(addrs,pc)-1; return names[k] if k>=0 else '?'
 keys=[]; cpu=rv.make_cpu(keys)
 rom=open(ROM,'rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom; cpu.pc=0x100
-rv.patch_menu(cpu); rv.STEP_BUDGET=400000
+rv.patch_menu(cpu, LST); rv.STEP_BUDGET=400000
 mem=cpu.mem
 # ВИ53 счётчик 0 (как в measure_vec)
 pit={'reload_cyc':0,'latched':None,'wr':0,'rd':0,'lo':0}
