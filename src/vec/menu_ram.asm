@@ -23,6 +23,8 @@ mb_mchr:	jp mb_mchr_w	; A = код, B = кол., C = строка, D = 1 -> дв
 mb_wave:	jp mb_wave_w	; B = первая строка (px), C = сколько строк, A = фаза: волна на воде
 mb_stripes:	jp mb_stripes_w	; B = колонка, D = колонок, C = строка, E = строк, HL = таблица полос
 mb_scroll:	jp mb_scroll_w	; окно титров (колонки 10..24, строки экрана 120..239) вверх на 1 точку
+mb_slrd:	jp mb_slrd_w	; A = 0..6: только ПРОЧИТАТЬ дорожку слайда в буфер (экран не трогает); NZ = дисковода нет
+mb_unp:		jp mb_unp_w	; распаковать прочитанную картинку из буфера в VRAM
 
 ; обёртки: после работы ВЕРНУТЬ окно оверлея (возврат идёт в код, живущий в окне!)
 mb_chr_w:
@@ -51,6 +53,12 @@ mb_screen_w:
 	jp mb_reopen
 mb_slide_w:
 	call mb_slide_i
+	jp mb_reopen
+mb_slrd_w:
+	call mb_slrd_i
+	jp mb_reopen
+mb_unp_w:
+	call mb_pic_unp
 	jp mb_reopen
 mb_song_w:
 	call mb_song_i
@@ -359,10 +367,22 @@ mb_screen_i:			; экран меню лежит в хвосте дорожек R
 	ld a,MB_SEC_MENU
 	jp mb_pic_go
 mb_slide_i:
+	call mb_sltrk
+mb_pic_go:
+	call mb_pic_rd
+	ret nz
+	jp mb_pic_unp
+; Чтение отдельно от распаковки (интро): дорожка читается в буфер квазидиска, пока на экране ещё прошлый
+; слайд, и экран гаснет только на время распаковки.
+mb_slrd_i:
+	call mb_sltrk
+	jp mb_pic_rd
+mb_sltrk:
 	add a,MB_TRK_SLIDES
 	ld (mb_track),a
 	ld a,1
-mb_pic_go:
+	ret
+mb_pic_rd:
 	ld (mb_sec),a
 	call mb_fdc_ok
 	ret nz
@@ -382,7 +402,8 @@ mb_pic_go:
 	push af
 	call mb_kv_off
 	pop af
-	ret nz
+	ret
+mb_pic_unp:
 	ld a,1			; плоскость 1 -> $8000, копия в $A000
 	ld de,$8000
 	call mb_pic_pl
@@ -636,6 +657,32 @@ mbc_m3:
 	inc hl
 	dec b
 	jp nz,mbc_msk
+	; --- маска гашения фона. У шрифта меню она шире тела на точку вправо и на строку вниз: получается
+	; чёрная тень, и белые буквы читаются на жёлтом валике (2026-10-13: «шрифт блёклый») ---
+	ld hl,mb_mask
+	ld de,mb_mask+8
+	ld bc,$0800		; B = строк, C = тень от строки выше
+mbc_sh:
+	ld a,(mb_mfont)
+	or a
+	ld a,(hl)
+	jp z,mbc_sh1		; обычный шрифт: гасим ровно под телом
+	or a
+	rra
+	or (hl)			; тело и точка справа
+	push af
+	or c			; плюс то же от строки выше
+	ld (de),a
+	pop af
+	ld c,a
+	jp mbc_sh2
+mbc_sh1:
+	ld (de),a
+mbc_sh2:
+	inc hl
+	inc de
+	dec b
+	jp nz,mbc_sh
 	; --- запись 4 плоскостей ---
 	pop bc			; B = колонка, C = строка
 	ld a,c
@@ -671,12 +718,16 @@ mbc_row:
 	ld (mb_mval),a
 	inc hl
 	ld (mb_mp),hl
+	ld de,7
+	add hl,de
+	ld a,(hl)
+	ld (mb_mval2),a		; маска гашения (с тенью) — второй массив сразу за первым
 	ld a,(mb_row)
 	ld l,a
 	ld h,b			; HL = адрес в VRAM (плоскость B, строка L)
-	ld a,(mb_mval)
+	ld a,(mb_mval2)
 	cpl
-	and (hl)		; оставить фон вне тела символа
+	and (hl)		; оставить фон вне тела символа и его тени
 	ld d,a
 	ld a,(mb_mval)
 	ld e,a
@@ -841,6 +892,7 @@ mb_mp:		dw 0
 mb_bgp:		dw 0
 mb_gval:	db 0
 mb_mval:	db 0
+mb_mval2:	db 0
 mb_row:		db 0
 mb_rcnt:	db 0
 mb_pcnt:	db 0
@@ -857,7 +909,7 @@ mb_dblf:	db 0
 mb_dbl:		db 0
 mb_rep:		db 0
 mb_gbuf:	ds 32
-mb_mask:	ds 8
+mb_mask:	ds 16		; 8 Б маска тела + 8 Б маска гашения
 
 ; ================= волна на отражении (как waveeffect оригинала) =================
 ; Строки VRAM сдвигаются на -1/0/+1 пикселя по бегущей фазе. Сумма таблицы = 0,

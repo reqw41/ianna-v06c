@@ -15,6 +15,8 @@ MB_MCHR		equ MB_ORG+27
 MB_WAVE		equ MB_ORG+30
 MB_STRIPES	equ MB_ORG+33
 MB_SCROLL	equ MB_ORG+36
+MB_SLRD		equ MB_ORG+39
+MB_UNP		equ MB_ORG+42
 	org $8440
 
 ovl_entry:
@@ -136,12 +138,11 @@ ovl_start:
 	ld (ovl_slide),a
 ovl_sl:
 	ld a,(ovl_slide)
-	call ovl_dark
-	call MB_SLIDE
-	push af			; ovl_light портит флаги — результат загрузки сохраняем
-	call ovl_light
-	pop af
+	call MB_SLRD		; дорожку читаем, пока на экране ещё прошлый слайд (или меню)
 	jp nz,ovl_go		; дисковода нет — без слайдов
+	call ovl_dark		; экран гаснет только на распаковку
+	call MB_UNP
+	call ovl_light
 	; текст слайда (по языку)
 	ld a,(ovl_slide)
 	ld hl,ovl_txt_en

@@ -39,9 +39,9 @@ if '--strict' in OPTS:
 # make_cpu глушит вызов меню (в пустом квазидиске оверлея нет) — возвращаем ROM из образа как есть:
 # на железе фаза меню исполняется, и проверять надо именно её
 _img=open(os.environ['IANNA_FDD'],'rb').read(); mem[0x100:0x100+32512]=_img[0x80:0x80+32512]
-SHOTDIR=next((o[7:] for o in OPTS if o.startswith('--shot=')),None); SHOTS=set(range(2000,FR,150)) if SHOTDIR else set(); vr={}
+SHOTDIR=next((o[7:] for o in OPTS if o.startswith('--shot=')),None); SHOTS=(set(range(2000,FR,150))|{2300,2700,3100,3500}) if SHOTDIR else set(); vr={}
 if SHOTDIR: os.makedirs(SHOTDIR,exist_ok=True)
-CHEAT='--cheat' in OPTS; st=[]
+INTRO='--intro' in OPTS; dark=[]; CHEAT='--cheat' in OPTS or INTRO; st=[]
 FRAME=59904; cyc=0; nxt=FRAME; fr=0; ev=[]; lost=0; hist=collections.Counter()
 names={sym[k]:k for k in ('vec_to_menu','vec_start','vfl_done','vec_menu_phase','MUSIC_Load','MUSIC_Stop','vec_reload_set','RunScripts','vec_begin_level','vfl_go') if k in sym}
 seen=collections.Counter()
@@ -64,7 +64,11 @@ while fr<FR:
                   3600:['i'],3610:[],3700:['g'],3710:[],3800:['right'],4500:['l'],4510:[],4520:['fire'],4540:[]}
             if fr>4600 and fr%200==0: keys[:]=['fire']
             if fr>4600 and fr%200==20: keys[:]=[]
-            if fr in plan: keys[:]=plan[fr]
+            if fr in plan and not INTRO: keys[:]=plan[fr]
+            if INTRO:
+                ip={2350:['fire'],2370:[],2750:['fire'],2770:[],3150:['fire'],3170:[]}
+                if fr in ip: keys[:]=ip[fr]
+                if fr>=2340: dark.append(not any(mem[sym['vec_palette']:sym['vec_palette']+16]))
             if fr in (2330,3590,3620,3695,3720,4490,4560,FR-1):
                 st.append((fr,'чит=%d бог=%d уровень=%d экран=%d,%d здоровье=%d тиков=%d'%(mem[sym['vec_cheat']],mem[sym['vec_god']],mem[sym['current_level']]+1,mem[sym['current_levelx']],mem[sym['current_levely']],mem[sym['ENTITY_PLAYER_POINTER']+4],seen['RunScripts']), bytes(mem[0x8000:0x10000])))
         else:
@@ -80,7 +84,13 @@ if SHOTDIR:
     import hashlib, json
     json.dump({str(k):hashlib.md5(v).hexdigest() for k,v in vr.items()}, open(f'{SHOTDIR}/vram.json','w'))
 
-if CHEAT:
+if INTRO:
+    runs=[]; n=0
+    for i,d in enumerate(dark+[False]):
+        if d: n+=1
+        elif n: runs.append((2340+i-n,n)); n=0
+    print('  экран погашен: (с кадра, кадров):',runs)
+elif CHEAT:
     for f,s,_ in st: print('  кадр',f,s)
     a=next(v for f,_,v in st if f==3590); b=next(v for f,_,v in st if f==3620)
     d=[i for i in range(32768) if a[i]!=b[i]]
