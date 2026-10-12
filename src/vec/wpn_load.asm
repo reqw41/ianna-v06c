@@ -24,7 +24,7 @@
 ; служит буфером, так что плоскость 3 под код и под спасённые строки — самое дешёвое место.
 	include "menu_syms.asm"
 KV_PORT		equ $10
-KV_WIN_BANKS	equ $43		; окно $8000-$9FFF -> страница 3 набора: там лежит fdd_banks
+KV_WIN_BANKS	equ $63		; окно $8000-$9FFF -> страница 3 набора: там лежит fdd_banks
 FDD_REC		equ FDD_TAB + 64	; рецепт банков; в хвосте — шаблон записи страницы героя
 FDD_WTMPL	equ FDD_REC + 120
 SAVE_SRC	equ MB_ORG		; string_area: буфер сектора, таблицы, рецепт и сам fdd_banks

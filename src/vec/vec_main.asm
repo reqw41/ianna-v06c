@@ -195,7 +195,7 @@ vir_b:
 ; там строки уровня, поэтому переходник к функциям движка живёт здесь, в ROM.
 vec_pause_phase:
 	di
-	ld a,$43
+	ld a,$63
 	out ($10),a
 	ld (vec_kv_shadow),a
 	ei
@@ -220,7 +220,7 @@ vec_ovl_call:
 	call vec_ovl_go
 	push af
 	di
-	ld a,$43
+	ld a,$63
 	out ($10),a
 	ld (vec_kv_shadow),a
 	ei
@@ -235,7 +235,7 @@ vec_ovl_go:
 ; Фаза меню: блоб порт-примитивов из стр.3 $9800 -> string_area, оверлей $8440 в окне b6 (порт $43)
 vec_menu_phase:
 	di
-	ld a,$43
+	ld a,$63
 	out ($10),a
 	ld (vec_kv_shadow),a
 	ei

@@ -22,7 +22,13 @@ C8 = '--colors8' in sys.argv        # 8 цветов: 3 плоскости; да
 SPR3 = os.environ.get('IANNA_SPR3') == '1'
 SPR3CLR = os.environ.get('IANNA_SPR3CLR') == '1'
 NOMIRROR = os.environ.get('IANNA_NOMIRROR') == '1'  # замер: зеркальные спрайты рисуются прямым путём  # плоскость 3 у спрайтов только чистится (законный вариант для 3-плоскостного спрайта)   # верхняя оценка выигрыша от отказа от 4-й плоскости у спрайтов
-ARK_ADDR, ARK_END = 0xBD00, 0xC800   # плеер Arkos: стр.3 квазидиска, хвост пула слотов (POOL_SLOTS = 58)
+# Плеер Arkos в стр.3 квазидиска. Код — $C000-$C7FF (хвост прежнего пула), таблицы периодов и состояние —
+# $DE00-$DFFF (за эффектами). В $A000-$BFFF плееру нельзя: фаза меню читает туда сжатую картинку с дискеты
+# (menu_ram MB_PICBUF, 8 КБ) — первая раскладка ($BD00) затиралась, и MUSIC_Stop из меню уходил в пустоту.
+# Код начинается с $C010, а не с $C000: читатель сектора в меню (mb_read, «трюк ПЗУ» без счётчика байтов)
+# кладёт один лишний байт сразу за буфером — ровно в $C000.
+ARK_ADDR, ARK_END = 0xC010, 0xC800
+ARK_DAT, ARK_DAT_END = 0xDE00, 0xE000
 VI53 = '--softbudget' not in sys.argv  # бюджет по счётчику 0 ВИ53 (каналы 1-2 свободны под музыку); --softbudget = старый программный
 sys.path.insert(0, str(ROOT / 'tools/data'))
 from build_edd import STRING_AREA_KVAZ, STRING_AREA_DEMO, STRING_AREA_C8
@@ -197,11 +203,19 @@ def make_music():
         'atSfxInit\tequ ARK_ADDR+9\n'
         'atSfxPlay\tequ ARK_ADDR+12\n'
         + (VEC / 'pool_hr.asm').read_text(encoding='utf-8'))
-    # Оверлей: таблица переходов + плеер целиком (код, таблицы периодов, состояние). Символов ROM не берёт.
+    # Оверлей из двух кусков: код (таблица переходов + плеер) и данные (таблицы периодов, состояние).
+    # Данные собираются первыми — их метки уходят коду списком equ. Символов ROM плеер не берёт.
     (ROOT / 'build').mkdir(exist_ok=True)
+    src = (VEC / 'arkos_hot.asm').read_text(encoding='utf-8')
+    cut = src.index(';;; ============================== данные')
+    code, dat = src[:cut], src[cut:]
+    (ROOT / 'build/arkos_dat.asm').write_text(
+        '; сгенерировано build_vec из src/vec/arkos_hot.asm: таблицы и состояние плеера Arkos (стр.3 квазидиска)\n'
+        f'\torg ${ARK_DAT:04X}\n' + dat)
     (ROOT / 'build/arkos_ovl.asm').write_text(
-        '; сгенерировано build_vec из src/vec/arkos_hot.asm: плеер Arkos в странице 3 квазидиска.\n'
+        '; сгенерировано build_vec из src/vec/arkos_hot.asm: код плеера Arkos в странице 3 квазидиска.\n'
         '; Окно $A000-$DFFF на страницу 3 открывают вызывающие: прерывание (vec_isr), MUSIC_Load, MUSIC_Stop, FX_Play.\n'
+        '\tinclude "arkos_dat_syms.asm"\n'
         f'\torg ${ARK_ADDR:04X}\n'
         '\tjp ark_init\n\tjp atPlay\n\tjp ark_stop\n\tjp atSfxInit\n\tjp atSfxPlay\n'
         'ark_init:\t; плеер выводит все 14 регистров AY из теневых ячеек, а песня уровня шум и огибающую не\n'
@@ -210,7 +224,7 @@ def make_music():
         '\tjp nc,atInit\n\txor a\n'
         '\tld (_atVAR_Reg6),a\n\tld (_atVAR_Reg11),a\n\tld (_atVAR_Reg12),a\n\tjp atInit\n'
         'ark_stop:\n\tcall atStop\n\tjp atSfxStopAll\n'
-        + (VEC / 'arkos_hot.asm').read_text(encoding='utf-8'))
+        + code)
 
 def make_vars():
     text = (SRC / 'vars.asm').read_text(encoding='utf-8', errors='replace')
@@ -254,7 +268,7 @@ def check_overlays_in_edd():
         return
     data = edd.read_bytes()
     stale = []
-    for name, addr in (('menu_ovl.bin', 0x8440), ('pause_ovl.bin', 0x9000), ('menu_ram.bin', 0x9800), ('arkos.bin', ARK_ADDR)):
+    for name, addr in (('menu_ovl.bin', 0x8440), ('pause_ovl.bin', 0x9000), ('menu_ram.bin', 0x9800), ('arkos.bin', ARK_ADDR)):   # (arkos_dat.bin от адресов ROM не зависит)
         f = ROOT / 'build' / name
         if not f.exists():
             continue
@@ -617,6 +631,7 @@ def build_menu_bins(lst):
                                 (VEC / 'fdd_banks.asm', 'fdd_banks.bin', FDD_BANKCODE_END - FDD_BANKCODE),
                                 (VEC / 'wpn_load.asm', 'wpn_load.bin', WPN_SRC_END - WPN_SRC),
                                 (VEC / 'zp_blit2m.asm', 'zp.bin', 0x100 - 0x3B),
+                                (ROOT / 'build/arkos_dat.asm', 'arkos_dat.bin', ARK_DAT_END - ARK_DAT),
                                 (ROOT / 'build/arkos_ovl.asm', 'arkos.bin', ARK_END - ARK_ADDR)):
         work = ROOT / f'build/{src.name}'
         if src != work: work.write_text(src.read_text())
@@ -624,6 +639,10 @@ def build_menu_bins(lst):
                            capture_output=True, text=True, cwd=str(ROOT / 'build'))
         if r.returncode != 0:
             print(f'МЕНЮ: ошибка сборки {src.name}:'); print((r.stdout + r.stderr)[-1200:]); sys.exit(1)
+        if binout == 'arkos_dat.bin':            # метки данных плеера — его коду
+            dl = (ROOT / 'build/arkos_dat.bin.lst').read_text(encoding='utf-8', errors='replace')
+            eq = sorted({(m.group(1), m.group(2)) for m in re.finditer(r'^([A-Za-z_][A-Za-z_0-9]*)\s+= \$([0-9A-F]{4}) =', dl, re.M) if m.group(1) not in ('_end', '_size')})
+            (ROOT / 'build/arkos_dat_syms.asm').write_text('; сгенерировано build_vec: метки данных плеера\n' + ''.join(f'{n}\tequ ${a}\n' for n, a in eq))
         blen = (ROOT / f'build/{binout}').stat().st_size
         assert blen <= maxlen, f'{binout}: {blen} > {maxlen}'
         print(f'меню: {binout} {blen} Б (лимит {maxlen})')

@@ -591,7 +591,8 @@ LEVELTAB_PAGE = 2
 # строятся заново кодом). Копия берётся из собранного ROM, поэтому после его правки нужен второй
 # проход build_edd — за этим следит сторож в build_vec.
 FDDCOPY_ADDR = 0xBD00
-ARK_ADDR = 0xBD00         # стр.3: плеер Arkos в хвосте пула слотов (build_vec.ARK_ADDR, vec_vdp POOL_SLOTS = 58)
+ARK_ADDR = 0xC010         # стр.3: код плеера Arkos $C000-$C7FF (build_vec.ARK_ADDR); пул слотов — до него (vec_vdp POOL_SLOTS = 64)
+ARK_DAT = 0xDE00          # стр.3: таблицы и состояние плеера, за эффектами
 BLIT2_ADDR = 0xBF00     # раньше здесь лежал вынесенный двухплоскостной блит; теперь он в образе
                         # ($7F00 отдан таблице слотов — пул работает на всех уровнях), место свободно
 # Палитра, своя для каждого экрана: три байта (слоты 1..3), которые занимает четырёхцветный спрайт
@@ -714,10 +715,12 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
     r += [(3, PAUSE_ADDR, PAUSE_END, 'оверлей паузы'),
           (3, FDD_BANKCODE, FDD_BANKCODE_END, 'загрузчик банков'),
           (3, WPN_SRC, WPN_SRC_END, 'подкачка страницы героя'),
-          (3, ARK_ADDR, 0xC800, 'плеер Arkos (arkos.bin)'),
+          (3, ARK_ADDR, 0xC800, 'плеер Arkos: код (arkos.bin)'),
+          (3, ARK_DAT, 0xE000, 'плеер Arkos: таблицы и состояние (arkos_dat.bin)'),
           (3, 0xC800, 0xC980, 'маркер набора'),
           (3, 0xC980, 0xC980 + upto(flen(f'music-level{LEVEL_MUSIC[level_no-1]}.mus', SRC)), 'музыка уровня'),
-          (3, 0xD980, 0xD980 + upto(flen('iannafx.mus', SRC)), 'эффекты')]
+          (3, 0xD980, ARK_DAT, 'эффекты')]
+    assert 0xD980 + flen('iannafx.mus', SRC) <= ARK_DAT, 'эффекты доросли до данных плеера'
     assert flen('pause_ovl.bin') <= PAUSE_END - PAUSE_ADDR, 'оверлей паузы перерос свой блок'
     assert flen('fdd_banks.bin') <= FDD_BANKCODE_END - FDD_BANKCODE, 'загрузчик банков перерос свой блок'
     assert flen('wpn_load.bin') <= WPN_SRC_END - WPN_SRC, 'подкачка страницы героя переросла свой блок'
@@ -739,8 +742,8 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
     # Области, которые в ОБРАЗЕ нулевые, но в ИГРЕ по ним пишут. Их не проверяем на пересечение с
     # объявленными: на уровне 3 готовые тайлы фон+FG и так лежат поверх места под песню уровня.
     r.append((2, 0xE000, 0xF000, 'песня уровня: сюда её сохраняет меню (menu_ram.mb_savelvl)'))
-    if pool_on:                       # буфер супертайлов: 58 слотов (vec_vdp POOL_SLOTS)
-        r.append((3, 0xA000, ARK_ADDR, 'пул'))
+    if pool_on:                       # буфер супертайлов: 64 слота (vec_vdp POOL_SLOTS); в меню — буфер картинки
+        r.append((3, 0xA000, 0xC010, 'пул (и байт за буфером картинки меню)'))
     return r
 
 def free_chunks(pages, layout, align=256):
@@ -1133,6 +1136,11 @@ def build_kvaz(level_no=1, start=None):
             ab = ark.read_bytes(); assert len(ab) <= 0xC800 - ARK_ADDR, len(ab)
             assert all(v == 0 for v in pages[3][ARK_ADDR:ARK_ADDR+len(ab)]), 'место под arkos.bin занято'
             pages[3][ARK_ADDR:ARK_ADDR+len(ab)] = ab
+        ark = BUILD / 'arkos_dat.bin'
+        if ark.exists():
+            ab = ark.read_bytes(); assert len(ab) <= 0xE000 - ARK_DAT, len(ab)
+            assert all(v == 0 for v in pages[3][ARK_DAT:ARK_DAT+len(ab)]), 'место под arkos_dat.bin занято'
+            pages[3][ARK_DAT:ARK_DAT+len(ab)] = ab
         zp = BUILD / 'zp.bin'                     # зеркальный двухплоскостной блит для нулевой страницы
         if zp.exists():
             zb = zp.read_bytes(); assert len(zb) <= 0x100 - 0x3B
