@@ -19,6 +19,7 @@ FRAMES=int(next((o[9:] for o in OPTS if o.startswith('--frames=')),'600'))
 ROUTE=next((o[8:] for o in OPTS if o.startswith('--route=')),'none:300,right:300')
 START=next((tuple(int(v) for v in o[8:].split(',')) for o in OPTS if o.startswith('--start=')),None)
 FIXRAND='--fixrand' in OPTS
+SLOWN=float(next((o[7:] for o in OPTS if o.startswith('--slow=')),'0'))   # --slow=N: отдельный профиль тиков длиннее N кадров
 PROF=any(o.startswith('--prof') for o in OPTS); PROFN=int(next((o[7:] for o in OPTS if o.startswith('--prof=')),'40'))
 SHOT=next((o[7:] for o in OPTS if o.startswith('--shot=')),None)
 POS=next((tuple(int(v) for v in o[6:].split(',')) for o in OPTS if o.startswith('--pos=')),None)   # место героя на стартовом экране, px
@@ -165,7 +166,7 @@ for seg in ROUTE.split(','):
     if k not in SCEN:
         for kk in k.split('+'):
             if kk!='none': keys.append(kk)
-    prof=collections.Counter(); n_ext=0; hits[0]=0; where=collections.Counter();  route_keys=list(keys); seg_fr=0; in_wait=False; seen_msg=False; nmsg=0
+    tickprof=collections.Counter(); slowprof=collections.Counter(); nslow=[0]; slowinfo=[]; prof=collections.Counter(); n_ext=0; hits[0]=0; where=collections.Counter();  route_keys=list(keys); seg_fr=0; in_wait=False; seen_msg=False; nmsg=0
     if k in SCEN: keys[:]=scen_keys(k,0)
     d0,l0=delivered,lost
     # тики считаем по входам в RunScripts; тики со сменой экрана (LoadScreen внутри) — отдельно
@@ -183,6 +184,9 @@ for seg in ROUTE.split(','):
                 elif mem[ep+4]<energy0[0]: hits[0]+=1; mem[ep+4]=energy0[0]
             if in_wait: in_wait=False; keys[:]=scen_keys(k,seg_fr) if k in SCEN else route_keys
             nmsg+=seen_msg
+            if PROF:
+                if SLOWN and (cyc[0]-tstart)/FRAME>=SLOWN and not seen_load and not seen_msg: slowprof.update(tickprof); nslow[0]+=1; slowinfo.append((len(tick_frames),round((cyc[0]-tstart)/FRAME,1),mem[sym['vec_slot_next']] if 'vec_slot_next' in sym else -1,mem[sym['ndirtyrects']]))
+                tickprof.clear()
             if seen_msg: end+=cyc[0]-tstart; n_ext+=(cyc[0]-tstart)/FRAME   # печать текста (~200 кадров) в длину отрезка не входит
             tick_frames.append(((cyc[0]-tstart)/FRAME, 'M' if seen_msg else seen_load)); tstart=cyc[0]; seen_load=False; seen_msg=False
             if HOLD: hold_ticks[0]+=1; hold_slow[0]+=1 if mem[HOLD]>=8 else 0   # темп анимации: сколько тиков в замедленном режиме
@@ -207,7 +211,7 @@ for seg in ROUTE.split(','):
                 if BHIST:
                     cost=cpu.l; phase=(cpu.a-cost)&0xFF
                     bh_cost[cost]+=1; bh_phase[phase//16*16]+=1; bh_lost[0]+=max(0,234-phase)
-            if PROF: prof[fn(cpu.pc)]+=CYC[mem[cpu.pc]]
+            if PROF: prof[fn(cpu.pc)]+=CYC[mem[cpu.pc]]; tickprof[fn(cpu.pc)]+=CYC[mem[cpu.pc]]
             cyc[0]+=CYC[mem[cpu.pc]]
             try: cpu.step()
             except RuntimeError:
@@ -232,6 +236,10 @@ for seg in ROUTE.split(','):
         nt=max(len(tick_frames),1); tot=sum(prof.values())
         print(f'    профиль, тактов на тик (кадр = {FRAME}); всего работы {tot/nt/FRAME:.2f} кадра/тик, простой {idle/nt/FRAME:.2f}:')
         for name,c in prof.most_common(PROFN): print(f'      {name:28s} {c/nt:8.0f}  {c/tot*100:5.1f} %')
+    if PROF and SLOWN and nslow[0]:
+        tot=sum(slowprof.values())
+        print(f'    медленные тики (>= {SLOWN} кадров): {nslow[0]}; работа {tot/nslow[0]/FRAME:.2f} кадра/тик; (номер тика, кадров, слотов, прямоугольников): {slowinfo[:12]}')
+        for name,c in slowprof.most_common(PROFN): print(f'      ~{name:27s} {c/nslow[0]:8.0f}  {c/tot*100:5.1f} %')
     if '--where' in OPTS: print('    PC на прерывании:', dict(where.most_common(6)), 'клавиши в конце:', keys, 'ожидание текста:', in_wait)
     if norm:
         import collections as _c
