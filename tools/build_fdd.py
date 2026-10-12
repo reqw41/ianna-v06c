@@ -35,7 +35,7 @@ def check_overlays(n, pak):
     Отпечаток пишет build_levels.py рядом с набором."""
     meta = pak.with_suffix('.ovl')
     now = {}
-    for name in ('menu_ovl.bin', 'pause_ovl.bin', 'menu_ram.bin'):
+    for name in ('menu_ovl.bin', 'pause_ovl.bin', 'menu_ram.bin', 'arkos.bin'):
         f = ROOT / 'build' / name
         if f.exists():
             now[name] = hashlib.md5(f.read_bytes()).hexdigest()

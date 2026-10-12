@@ -28,6 +28,9 @@ KV_WIN_LEVEL	equ $61		; окна $8000-$DFFF -> страница 1 (карта �
 KV_POOL_WIN	equ $23		; окно $A000-$DFFF -> страница 3 (пул)
 KV_WIN_MUSIC	equ $23		; окно $A000-$DFFF -> страница 3 (музыка по $C980, эффекты по $D980)
 POOL_BASE	equ $A000
+POOL_SLOTS	equ 58		; слотов в пуле: $A000-$BCFF. Было 80 (до $C7FF); в обычной игре занято до 46
+				; (tools/poolmax.py, 9 уровней), больше — только в тик смены экрана на уровнях 3 и 7,
+				; там лишние стайлы идут прямым путём. Хвост $BD00-$C7FF отдан плееру Arkos (ARK_ADDR).
 MIRRBUF		equ POOL_BASE + 80*128	; $C800, страница 3: буфер развёрнутой колонки спрайта (192 Б).
 				; Это же место — площадка стека vec_pool_flush, но сброс идёт в другой
 				; фазе тика, во время рисования спрайтов оно свободно (см. ds_dir4m).
@@ -592,7 +595,7 @@ dt_blit:				; вход с готовым vec_blit_src (drawFGTile: непроз�
 	or a
 	jp z,dt_direct
 	call vec_slot_for_bc
-	cp 80
+	cp POOL_SLOTS
 	jp nc,dt_direct		; $FE (грязный без слота) и $FF — прямо в VRAM
 	call vec_pool_addr
 	ld a,16 - C8*2		; бюджет DI: тайл в слот. calib по ОКНУ DI (blitcalib): было 14.0 ед. при
@@ -689,7 +692,7 @@ dt_black:
 	or a
 	jp z,dt_blk_plain
 	call vec_slot_for_bc
-	cp 80
+	cp POOL_SLOTS
 	jp c,dt_blk_go
 dt_blk_plain:
 	; Слота нет (пул выключен, переполнение, панель): раньше отсюда уходили в dt_norm и блитили
@@ -815,7 +818,7 @@ dft_found:
 	or a
 	jp z,dft_direct
 	call vec_slot_for_bc
-	cp 80
+	cp POOL_SLOTS
 	jp nc,dft_direct
 	call vec_pool_addr
 	ex de,hl
@@ -1417,7 +1420,7 @@ vss_x:
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
-	cp 80
+	cp POOL_SLOTS
 	jp nc,vss_no
 	ld a,l
 	and $0f
@@ -2070,7 +2073,7 @@ vec_pool_begin:
 	or a			; «пул против прямого». Карту грязных стайлов строим и в нём (по ней
 	ld a,0			; идёт RedrawInvTiles), а слотов не раздаём: vec_slot_next = 80 сразу,
 	jp z,vpb_ban_no		; каждому стайлу достаётся $FE
-	ld a,80
+	ld a,POOL_SLOTS
 vpb_ban_no:
 	ld (vec_slot_next),a
 	ld a,(ndirtyrects)
@@ -2163,7 +2166,7 @@ vpb_x:
 	or a
 	jp z,vpb_fe
 	ld a,(vec_slot_next)
-	cp 80
+	cp POOL_SLOTS
 	jp nc,vpb_fe
 	ld (hl),a
 	inc a
@@ -2354,7 +2357,7 @@ vpb_sxl:
 	cp $fe
 	jp nz,vpb_sx_next	; не грязный (или уже со слотом)
 	ld a,(vec_slot_next)
-	cp 80			; слоты 0..79 = $A000-$C7FF; выше $C980 — музыка
+	cp POOL_SLOTS			; слоты 0..79 = $A000-$C7FF; выше $C980 — музыка
 	jp nc,vpb_ovf
 	ld (hl),a
 	inc a
@@ -2468,7 +2471,7 @@ vpf_x:
 	and $0f
 	ld c,a			; C = колонка — vpf_slot берёт её оттуда
 	ld a,(hl)
-	cp 80
+	cp POOL_SLOTS
 	jp c,vpf_slot_chk
 	ld (hl),$ff		; прямой ($FE) или уже выведен — вернуть «пусто» (таблица не чистится)
 	jp vpf_x_next

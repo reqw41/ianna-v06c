@@ -22,6 +22,7 @@ C8 = '--colors8' in sys.argv        # 8 цветов: 3 плоскости; да
 SPR3 = os.environ.get('IANNA_SPR3') == '1'
 SPR3CLR = os.environ.get('IANNA_SPR3CLR') == '1'
 NOMIRROR = os.environ.get('IANNA_NOMIRROR') == '1'  # замер: зеркальные спрайты рисуются прямым путём  # плоскость 3 у спрайтов только чистится (законный вариант для 3-плоскостного спрайта)   # верхняя оценка выигрыша от отказа от 4-й плоскости у спрайтов
+ARK_ADDR, ARK_END = 0xBD00, 0xC800   # плеер Arkos: стр.3 квазидиска, хвост пула слотов (POOL_SLOTS = 58)
 VI53 = '--softbudget' not in sys.argv  # бюджет по счётчику 0 ВИ53 (каналы 1-2 свободны под музыку); --softbudget = старый программный
 sys.path.insert(0, str(ROOT / 'tools/data'))
 from build_edd import STRING_AREA_KVAZ, STRING_AREA_DEMO, STRING_AREA_C8
@@ -110,10 +111,11 @@ def slice_ianna():
         text = text.replace(old, 'LEVEL_OFFSET: dw DEMO_LEVEL_ADDR, $8000')
     # ВЕКТОР: плеер выводит все 14 регистров AY из теневых ячеек, а песня уровня шум и огибающую
     # не задаёт — после меню/интро их значения тянулись бы в игру (шипение). Гасим сразу после MUSIC_Load.
+    # (с 2026-10-12 это делает сам вход плеера ark_init: плеер и его ячейки живут в квазидиске, из игры
+    # при закрытом окне до них не достать)
     old = '\tld a, (current_level)\n\tcall MUSIC_Load\n'
     assert old in text, 'MUSIC_Load в game'
-    text = text.replace(old, old + '\txor a\t; ВЕКТОР: сбросить шум и огибающую от песни меню/интро\n'
-                                   '\tld (_atVAR_Reg6), a\n\tld (_atVAR_Reg11), a\n\tld (_atVAR_Reg12), a\n')
+    text = text.replace(old, old + ';\n;\n;\n;\n')     # четыре строки прежней вставки: tools/overrides.py привязан к номерам строк
     (TR / 'ianna_main_src.asm').write_text(text)
 
 def make_score_font():
@@ -162,9 +164,16 @@ def make_music():
 \tcall atInit\t\t; ВЕКТОР: без распаковки — песня уже в квазидиске
 \tld de, SFX_WIN
 \tcall atSfxInit''')
+    old = 'MUSIC_Load_nomusic:\n\tpush af\n'; assert mu.count(old) == 1, 'MUSIC_Load_nomusic'
+    mu = mu.replace(old, 'MUSIC_Load_nomusic:\n\tld b, a\t\t; ВЕКТОР: номер песни — входу плеера ark_init (B доживает до call atInit)\n\tpush af\n')
     mu = mu.replace('atInit: equ MUSIC_CODE\natPlay: equ MUSIC_CODE + 3\natStop: equ MUSIC_CODE + 6\natSfxInit: equ MUSIC_CODE + 9\natSfxPlay: equ MUSIC_CODE + 12\natSfxStop: equ MUSIC_CODE + 15',
                     '; ВЕКТОР: плеер ассемблируется на месте, точки входа — его метки (atInit/atPlay/atStop/atSfxInit/atSfxPlay/atSfxStopAll)')
-    mu = mu.replace('\tcall atSfxStop\n', '\tcall atSfxStopAll\n')
+    # ВЕКТОР: плеер живёт в квазидиске (оверлей arkos.bin, стр.3 ARK_ADDR, окно $A000-$DFFF — то же, что у
+    # песни). MUSIC_Load, FX_Play и прерывание окно уже открывают; MUSIC_Stop — нет, поэтому здесь оно
+    # открывается и возвращается так же, как в MUSIC_Load.
+    old = 'MUSIC_Stop:\n\tcall atStop\n\tcall atSfxStop\n'
+    assert mu.count(old) == 1, 'MUSIC_Stop'
+    mu = mu.replace(old, 'MUSIC_Stop:\n\tcall MUSIC_setbank\n\tcall ark_stop\n\tcall MUSIC_restorebank\n')
     # ВЕКТОР: данные эффектов лежат в окне квазидиска ($D980, страница 3); atSfxPlay читает оттуда таблицу
     # инструментов — из игровой логики окно закрыто, поэтому открыть на время вызова и вернуть прежнюю страницу
     # (через setROM2, чтобы тень окна для ISR была согласована).
@@ -176,7 +185,32 @@ def make_music():
     # ВЕКТОР: плеер Arkos — НЕ перевод Z80-исходника, а нативный i8080 (src/vec/arkos_hot.asm),
     # написанный по спецификации tools/arkos_model.py. Оригинал ref/msx2/src/ArkosTrackerPlayer_CPC_MSX.asm
     # остался только эталоном: по нему сверяются гейты tests/music/check_all.py и сама модель.
-    (TR / 'arkos.asm').write_text((VEC / 'arkos_hot.asm').read_text(encoding='utf-8'))
+    (TR / 'arkos.asm').write_text((VEC / 'arkos_hot.asm').read_text(encoding='utf-8'))   # для гейтов tests/music
+    # В ROM от плеера остались только адреса входов (таблица переходов в начале оверлея) и процедуры
+    # сброса пула, которые раньше лежали в его зазоре.
+    (TR / 'arkos_rom.asm').write_text(
+        '; сгенерировано build_vec: плеер Arkos — оверлей arkos.bin в странице 3 квазидиска\n'
+        f'ARK_ADDR\tequ ${ARK_ADDR:04X}\n'
+        'atInit\t\tequ ARK_ADDR\t; ark_init: гасит шум/огибающую и зовёт atInit (DE = песня)\n'
+        'atPlay\t\tequ ARK_ADDR+3\n'
+        'ark_stop\tequ ARK_ADDR+6\t; atStop + atSfxStopAll\n'
+        'atSfxInit\tequ ARK_ADDR+9\n'
+        'atSfxPlay\tequ ARK_ADDR+12\n'
+        + (VEC / 'pool_hr.asm').read_text(encoding='utf-8'))
+    # Оверлей: таблица переходов + плеер целиком (код, таблицы периодов, состояние). Символов ROM не берёт.
+    (ROOT / 'build').mkdir(exist_ok=True)
+    (ROOT / 'build/arkos_ovl.asm').write_text(
+        '; сгенерировано build_vec из src/vec/arkos_hot.asm: плеер Arkos в странице 3 квазидиска.\n'
+        '; Окно $A000-$DFFF на страницу 3 открывают вызывающие: прерывание (vec_isr), MUSIC_Load, MUSIC_Stop, FX_Play.\n'
+        f'\torg ${ARK_ADDR:04X}\n'
+        '\tjp ark_init\n\tjp atPlay\n\tjp ark_stop\n\tjp atSfxInit\n\tjp atSfxPlay\n'
+        'ark_init:\t; плеер выводит все 14 регистров AY из теневых ячеек, а песня уровня шум и огибающую не\n'
+        '\tld a,b\t\t; задаёт — после меню/интро их значения тянулись бы в игру (шипение). B = номер песни\n'
+        '\tcp 9\t\t; (MUSIC_Load): гасим только для песен уровней 0..8, как раньше делала игра после загрузки\n'
+        '\tjp nc,atInit\n\txor a\n'
+        '\tld (_atVAR_Reg6),a\n\tld (_atVAR_Reg11),a\n\tld (_atVAR_Reg12),a\n\tjp atInit\n'
+        'ark_stop:\n\tcall atStop\n\tjp atSfxStopAll\n'
+        + (VEC / 'arkos_hot.asm').read_text(encoding='utf-8'))
 
 def make_vars():
     text = (SRC / 'vars.asm').read_text(encoding='utf-8', errors='replace')
@@ -220,7 +254,7 @@ def check_overlays_in_edd():
         return
     data = edd.read_bytes()
     stale = []
-    for name, addr in (('menu_ovl.bin', 0x8440), ('pause_ovl.bin', 0x9000), ('menu_ram.bin', 0x9800)):
+    for name, addr in (('menu_ovl.bin', 0x8440), ('pause_ovl.bin', 0x9000), ('menu_ram.bin', 0x9800), ('arkos.bin', ARK_ADDR)):
         f = ROOT / 'build' / name
         if not f.exists():
             continue
@@ -398,7 +432,7 @@ def main():
         order.append(data)              # org $0200
     order += [VEC / 'vec_main.asm', TR / 'ianna_main.asm', TR / 'tiles.asm', TR / 'drawsprite.asm',
               TR / 'entities.asm', TR / 'scripts.asm', TR / 'objects.asm', TR / 'depack.asm',
-              TR / 'score.asm', TR / 'font.asm'] + ([TR / 'music.asm', TR / 'arkos.asm'] if not DEMO else []) + [
+              TR / 'score.asm', TR / 'font.asm'] + ([TR / 'music.asm', TR / 'arkos_rom.asm'] if not DEMO else []) + [
               VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm'] + ([VEC / 'vec_fdd.asm'] if C8 else []) + [VEC / 'vec_stubs.asm']
     if not DEMO:
         order.append(data)
@@ -467,7 +501,7 @@ def main():
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
     need = ['depack', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl',
-            'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', '_atVAR_Reg6', '_atVAR_Reg11', '_atVAR_Reg12', 'language', 'joystick_state', 'music_playing',
+            'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
             'get_player_max_exp',
@@ -566,9 +600,10 @@ def build_menu_bins(lst):
                                 (VEC / 'pause_ovl.asm', 'pause_ovl.bin', PAUSE_END - PAUSE_ADDR),
                                 (VEC / 'fdd_banks.asm', 'fdd_banks.bin', FDD_BANKCODE_END - FDD_BANKCODE),
                                 (VEC / 'wpn_load.asm', 'wpn_load.bin', WPN_SRC_END - WPN_SRC),
-                                (VEC / 'zp_blit2m.asm', 'zp.bin', 0x100 - 0x3B)):
+                                (VEC / 'zp_blit2m.asm', 'zp.bin', 0x100 - 0x3B),
+                                (ROOT / 'build/arkos_ovl.asm', 'arkos.bin', ARK_END - ARK_ADDR)):
         work = ROOT / f'build/{src.name}'
-        work.write_text(src.read_text())
+        if src != work: work.write_text(src.read_text())
         r = subprocess.run([str(ZASM), '--8080', '-uwy', work.name, f'{binout}.lst', binout],
                            capture_output=True, text=True, cwd=str(ROOT / 'build'))
         if r.returncode != 0:

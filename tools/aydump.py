@@ -92,8 +92,11 @@ MP = sym['MUSIC_Play']
 FXP = sym['FX_Play']
 MLD = sym['MUSIC_Load']
 MST = sym['MUSIC_Stop']
-R6 = sym['_atVAR_Reg6']
-PLO, PHI = sym['atPlay'], sym['atSfxStop'] + 64      # диапазон кода плеера
+# С 2026-10-12 плеер — оверлей в квазидиске (ARK_ADDR): его ячеек в листинге ROM нет, а шум и огибающую
+# гасит сам вход плеера на каждом MUSIC_Load. Тогда событие Z пишем сразу за L — для модели это то же самое.
+OVL = '_atVAR_Reg6' not in sym
+R6 = sym.get('_atVAR_Reg6', 0)
+PLO, PHI = (sym['atPlay'], sym['atSfxStop'] + 64) if not OVL else (sym['ARK_ADDR'], 0xC7FF)      # диапазон кода плеера
 _r6 = [cpu.mem[R6]]
 fxlog = []          # (номер вызова, 'L'|'F'|'S', параметр)
 tot_cyc = [0]
@@ -110,9 +113,10 @@ def watch(pc):
         fxlog.append((state['call'], 'F', cpu.a))
     elif pc == MLD:
         fxlog.append((state['call'], 'L', cpu.a))
+        if OVL: fxlog.append((state['call'], 'Z', 0))
     elif pc == MST:
         fxlog.append((state['call'], 'S', 0))
-    v = cpu.mem[R6]
+    v = cpu.mem[R6] if not OVL else _r6[0]
     if v != _r6[0]:
         if not (PLO <= pc <= PHI):
             fxlog.append((state['call'], 'Z', v))

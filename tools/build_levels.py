@@ -93,7 +93,7 @@ def lib_write(key, blob):
 
 def overlay_digest():
     d = {}
-    for name in ('menu_ovl.bin', 'pause_ovl.bin', 'menu_ram.bin'):
+    for name in ('menu_ovl.bin', 'pause_ovl.bin', 'menu_ram.bin', 'arkos.bin'):
         f = ROOT / 'build' / name
         if f.exists():
             d[name] = hashlib.md5(f.read_bytes()).hexdigest()

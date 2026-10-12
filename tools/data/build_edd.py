@@ -591,6 +591,7 @@ LEVELTAB_PAGE = 2
 # строятся заново кодом). Копия берётся из собранного ROM, поэтому после его правки нужен второй
 # проход build_edd — за этим следит сторож в build_vec.
 FDDCOPY_ADDR = 0xBD00
+ARK_ADDR = 0xBD00         # стр.3: плеер Arkos в хвосте пула слотов (build_vec.ARK_ADDR, vec_vdp POOL_SLOTS = 58)
 BLIT2_ADDR = 0xBF00     # раньше здесь лежал вынесенный двухплоскостной блит; теперь он в образе
                         # ($7F00 отдан таблице слотов — пул работает на всех уровнях), место свободно
 # Палитра, своя для каждого экрана: три байта (слоты 1..3), которые занимает четырёхцветный спрайт
@@ -713,6 +714,7 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
     r += [(3, PAUSE_ADDR, PAUSE_END, 'оверлей паузы'),
           (3, FDD_BANKCODE, FDD_BANKCODE_END, 'загрузчик банков'),
           (3, WPN_SRC, WPN_SRC_END, 'подкачка страницы героя'),
+          (3, ARK_ADDR, 0xC800, 'плеер Arkos (arkos.bin)'),
           (3, 0xC800, 0xC980, 'маркер набора'),
           (3, 0xC980, 0xC980 + upto(flen(f'music-level{LEVEL_MUSIC[level_no-1]}.mus', SRC)), 'музыка уровня'),
           (3, 0xD980, 0xD980 + upto(flen('iannafx.mus', SRC)), 'эффекты')]
@@ -737,8 +739,8 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
     # Области, которые в ОБРАЗЕ нулевые, но в ИГРЕ по ним пишут. Их не проверяем на пересечение с
     # объявленными: на уровне 3 готовые тайлы фон+FG и так лежат поверх места под песню уровня.
     r.append((2, 0xE000, 0xF000, 'песня уровня: сюда её сохраняет меню (menu_ram.mb_savelvl)'))
-    if pool_on:                       # буфер супертайлов
-        r.append((3, 0xA000, 0xC800, 'пул'))
+    if pool_on:                       # буфер супертайлов: 58 слотов (vec_vdp POOL_SLOTS)
+        r.append((3, 0xA000, ARK_ADDR, 'пул'))
     return r
 
 def free_chunks(pages, layout, align=256):
@@ -1122,6 +1124,11 @@ def build_kvaz(level_no=1, start=None):
             r = rom.read_bytes()
             off = 0x7E00 - 0x100               # ROM грузится с $0100
             pages[LEVELTAB_PAGE][FDDCOPY_ADDR:FDDCOPY_ADDR+512] = r[off:off+512]
+        ark = BUILD / 'arkos.bin'                 # плеер Arkos: исполняется из окна $A000-$DFFF (стр.3)
+        if ark.exists():
+            ab = ark.read_bytes(); assert len(ab) <= 0xC800 - ARK_ADDR, len(ab)
+            assert all(v == 0 for v in pages[3][ARK_ADDR:ARK_ADDR+len(ab)]), 'место под arkos.bin занято'
+            pages[3][ARK_ADDR:ARK_ADDR+len(ab)] = ab
         zp = BUILD / 'zp.bin'                     # зеркальный двухплоскостной блит для нулевой страницы
         if zp.exists():
             zb = zp.read_bytes(); assert len(zb) <= 0x100 - 0x3B
