@@ -76,7 +76,14 @@ def slice_ianna():
     # waitforVBlank выходит только сразу после halt (при тике > 5 кадров иначе вышли бы посреди кадра)
     old = '\tld a, (frames_noredraw)\n    ld hl, frames_lock\n\tcp (hl)\t\t\t; wait until we have spent at least 5 (PÂL) or 6 (NTSC) frames without redrawing\n\tjr nc, vblank_done\n'
     assert old in text, 'waitforVBlank_loop'
-    text = text.replace(old, '\tld a, (frames_noredraw)\n    ld hl, frames_lock\n\tcp (hl)\n\tld a, (vec_wait_halted)\t; ВЕКТОР: и выход, и куски панели — только после halt (известная фаза кадра)\n\tjr c, waitforVBlank_vec_score\n\tand a\n\tjr nz, vblank_done\n\tjr waitforvblank_halt_go\nwaitforVBlank_vec_score:\n\tand a\n\tjr z, waitforvblank_halt_go\n')
+    if VI53:
+        # Бюджет по ВИ53 знает РЕАЛЬНУЮ фазу кадра, поэтому опоздавшему тику (уже >= frames_lock кадров без
+        # вывода) ждать начала кадра незачем: обязательный halt здесь был нужен программному бюджету и стоил
+        # в тяжёлых сценах 0,4-0,7 кадра на тик (tools/bench_scenes.py, 2026-10-12). Куски панели, как и
+        # раньше, рисуются только после halt — когда до срока ещё есть целые кадры.
+        text = text.replace(old, '\tld a, (frames_noredraw)\n    ld hl, frames_lock\n\tcp (hl)\n\tjr nc, vblank_done\t; ВЕКТОР: тик опоздал — вывод сразу, с любой фазы кадра\n\tld a, (vec_wait_halted)\t; куски панели — только после halt\n\tand a\n\tjr z, waitforvblank_halt_go\n')
+    else:
+        text = text.replace(old, '\tld a, (frames_noredraw)\n    ld hl, frames_lock\n\tcp (hl)\n\tld a, (vec_wait_halted)\t; ВЕКТОР: и выход, и куски панели — только после halt (известная фаза кадра)\n\tjr c, waitforVBlank_vec_score\n\tand a\n\tjr nz, vblank_done\n\tjr waitforvblank_halt_go\nwaitforVBlank_vec_score:\n\tand a\n\tjr z, waitforvblank_halt_go\n')
     old = 'waitforvblank_halt_go:\t\n\thalt\n'
     assert old in text, 'halt_go'
     text = text.replace(old, 'waitforvblank_halt_go:\t\n\thalt\n\tld a, 1\t; ВЕКТОР\n\tld (vec_wait_halted), a\n')
