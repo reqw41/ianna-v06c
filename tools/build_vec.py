@@ -331,7 +331,17 @@ def main():
     # Высоту тоже режем до ряда 9: LoadScreen инвалидирует 16x12, а карты RedrawInvTiles (overlap_hot.asm,
     # 16x10 бит) на рядах 10-11 переполняют младший байт адреса — карта фона писала в карту переднего слоя
     # (туман в рядах 0-1 пропадал после смены экрана), карта переднего слоя — в код по $6A00 (вход vec_blit2).
-    (TR / 'tiles.asm').write_text(t.replace(old, 'InvalidateSTiles:\n\tld a,c\t; ВЕКТОР: ряды панели не рисуются — прямоугольник не нужен\n\tcp 10\n\tret nc\n\tadd a,e\n\tcp 11\n\tjp c,ist_hok\n\tld a,10\n\tsub c\n\tld e,a\t; ряды 10-11 не копим: карты RedrawInvTiles на 10 рядов\nist_hok:\n\tpush de'))
+    (TR / 'tiles.asm').write_text(t.replace(old, 'InvalidateSTiles:\n\tld a,c\t; ВЕКТОР: ряды панели не рисуются — прямоугольник не нужен\n\tcp 10\n\tret nc\n\tadd a,e\n\tcp 11\n\tjp c,ist_hok\n\tld a,10\n\tsub c\n\tld e,a\t; ряды 10-11 не копим: карты RedrawInvTiles на 10 рядов\nist_hok:\n\tld a,(ndirtyrects)\t; ВЕКТОР: список на 48 записей, дальше лежит SPDATA\n\tcp 48\n\tret nc\n\tpush de'))
+    # Граница списка грязных прямоугольников. У оригинала её нет (tiles_dirty: ds 192 = 48 записей, сразу
+    # за ним SPDATA): 49-я запись затирала спрайты, счётчик рос дальше и раздача слотов шла по мусору.
+    # В обычной игре пик — 17 записей (tools/spwatch.py, 9 уровней со штатного старта), переполнение
+    # поймано только на долгом падении героя, поставленного стендом в пустоту. Полный список — запись
+    # отбрасывается: худшее, что будет, — не перерисованный в этом тике стайл. Счётчик уже в A, поэтому
+    # повторное чтение из тела оригинала убираем (правка стоит 3 Б ROM).
+    t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
+    old = 'ret nc\n\tpush de\n\tld a, (ndirtyrects)\n'
+    assert t.count(old) == 1, 'InvalidateSTiles: тело после транслятора изменилось'
+    (TR / 'tiles.asm').write_text(t.replace(old, 'ret nc\n\tpush de\n'))
     # (хук готовых тайлов фон+FG в DrawTile снят 2026-09-07 вместе с fgc_ovl: с пулом он был мёртв)
     # накладные обхода грязных тайлов в RedrawInvTiles_FG (z_exx x2 на тайл, EI) — зарядить в бюджет DI
     t = (TR / 'tiles.asm').read_text(encoding='utf-8', errors='replace')
