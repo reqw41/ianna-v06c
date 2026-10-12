@@ -31,7 +31,7 @@ _a=sorted(_s); _n=[_s[a] for a in _a]
 def fn(pc):
     k=bisect.bisect_right(_a,pc)-1; return _n[k] if k>=0 else '?'
 callers=collections.Counter()
-det=[]; VPB=sym['vec_pool_begin']; SPD=sym['SPDATA']; prev={}; same=[]; red=[]; area_same=[]; area=[]
+gran=[]; HC=set(); Q=set(); det=[]; VPB=sym['vec_pool_begin']; SPD=sym['SPDATA']; prev={}; same=[]; red=[]; area_same=[]; area=[]
 ticks=0; fr=0; mos_sp=None; P=set(); T=set(); rows=[]; e0=None; spr_n=[]
 while ticks<NT:
     keys[:]=skeys(fr)
@@ -41,8 +41,8 @@ while ticks<NT:
         if pc==RS:
             if e0 is None: e0=mem[EPP+4]
             elif mem[EPP+4]<e0: mem[EPP+4]=e0
-            if ticks: rows.append((len(P),len(T)))
-            P=set(); T=set(); ticks+=1; mem[sym['FrameCounter']]=ticks&0xFF; mem[sym['FrameCounter']+1]=0
+            if ticks: rows.append((len(P),len(T))); gran.append((len(T),len(HC),len(Q)))
+            HC=set(); Q=set(); P=set(); T=set(); ticks+=1; mem[sym['FrameCounter']]=ticks&0xFF; mem[sym['FrameCounter']+1]=0
         elif pc==VPB:
             ns=0; nr=0; a_s=0; a_r=0
             for i in range(16):
@@ -60,6 +60,8 @@ while ticks<NT:
         elif pc==IT:
             ra=mem[cpu.sp]|mem[cpu.sp+1]<<8; callers[(fn(ra),mos_sp is not None)]+=1
             s=stiles(cpu.b,cpu.c,cpu.d,cpu.e); T|=s
+            HC|={(x,y) for x in range(cpu.b,min(32,cpu.b+cpu.d)) for y in range(cpu.c//2,min(10,(cpu.c+cpu.e+1)//2))}
+            Q|={(x,y) for x in range(cpu.b,min(32,cpu.b+cpu.d)) for y in range(cpu.c,min(20,cpu.c+cpu.e))}
             if mos_sp is None: P|=s
         elif pc==IS and mos_sp is None:
             s={(x,y) for x in range(cpu.b,min(16,cpu.b+cpu.d)) for y in range(cpu.c,min(10,cpu.c+cpu.e))}; T|=s; P|=s
@@ -80,3 +82,6 @@ print('  неизменившиеся перерисованные: (спрай�
 if det: print('  в среднем стайлов под таким спрайтом %.1f, из них первично грязных %.1f'%(sum(d[5] for d in det)/len(det), sum(d[6] for d in det)/len(det)))
 all_spr=collections.Counter()
 print('  кто зовёт InvalidateTiles (функция, внутри цепочки): раз', dict(callers.most_common(12)))
+
+g=gran[2:]; s=sum(a for a,_,_ in g); h=sum(b for _,b,_ in g); q=sum(c for _,_,c in g)
+print(f'  гранулярность: стайлов 16x16 на тик {s/len(g):.1f}; колонок 8x16 нужно {h/len(g):.1f} из {2*s/len(g):.1f} ({h/(2*s)*100:.0f} %); клеток 8x8 нужно {q/len(g):.1f} из {4*s/len(g):.1f} ({q/(4*s)*100:.0f} %)')
