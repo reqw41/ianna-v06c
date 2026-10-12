@@ -80,6 +80,28 @@ an_loop:
 	cp 240
 	jp c,an_skip		; и FG < 240 — нечего анимировать
 an_do:
+	; в полосе (та же строка, X подряд) держим ОДИНАКОВУЮ фазу — иначе серийный блит
+	; не находит N≥2 (карта воды специально сдвинута 244..247). Первый тайл полосы
+	; анимируется как раньше; продолжение копирует уже обновлённого левого соседа.
+	ld a,(vec_an_run)
+	or a
+	jp z,an_indep
+	ld a,(vec_an_y)
+	cp c
+	jp nz,an_indep
+	ld a,(vec_an_x)
+	ld d,a
+	ld a,(vec_an_run)
+	add a,d
+	cp b
+	jp nz,an_indep
+	dec hl			; левый сосед в той же карте (BG или FG)
+	ld a,(hl)
+	inc hl
+	ld (hl),a
+	jp an_inv
+an_indep:
+	ld a,(hl)
 	and $fc			; старшие 6 бит + следующий кадр анимации
 	ld e,a
 	ld a,(hl)
@@ -87,6 +109,7 @@ an_do:
 	and 3
 	or e
 	ld (hl),a
+an_inv:
 	push bc
 	ld de,$0101
 	call InvalidateSTiles	; как UpdateSuperTile: тайл — в грязные
@@ -151,11 +174,14 @@ an_check:			; AnimStile_CheckSprites(B = x0, C = y, D = 2*длина симво�
 ; строке перебирается только полоса [xmin..xmax] — её границы кладёт туда же vpb_y.
 RedrawInvTiles:
 	ld hl,dt_rit		; вход с готовыми координатами (vec_vdp.asm)
+	xor a			; rit_fg = 0: фон
 	jp rit_common
 RedrawInvTiles_FG:
 	ld hl,dft_rit
+	ld a,1			; rit_fg = 1: передний слой
 rit_common:
-	ld (rit_call+1),hl	; самомодификация: какой рисовальщик звать
+	ld (rit_drawer),hl
+	ld (rit_fg),a
 	ld a,(ndirtyrects)
 	or a
 	ret z
@@ -189,25 +215,58 @@ rit_row:
 rit_x:
 	ld a,(hl)
 	inc a
-	jp z,rit_xnext		; $FF — стайл не грязный
+	jp z,rit_xnext		; $FF — чист
 	ld (rit_ptr),hl
 	ld a,b
 	ld (rit_cx),a
+	; серия только для аним. тайлов (>=240): иначе out+call на каждый
+	; грязный стайл съедает больше, чем даёт блит короткой полосы
 	ld a,l
-	and $f0
-	ld c,a			; C = Y px (стайл 16x16: y = (idx>>4)*16 = idx & $F0)
-	ld a,l
-	rlca
-	rlca
-	rlca
-	rlca
-	and $f0
-	ld b,a			; B = X px
-	ld h,0			; HL = &CURRENT_SCREEN_MAP[idx] (L = idx уже стоит)
+	ld h,0
+	ld l,a
 	ld de,CURRENT_SCREEN_MAP
 	add hl,de
-rit_call:
-	call 0
+	ld a,(rit_fg)
+	or a
+	jp z,rit_qs
+	ld de,160
+	add hl,de
+rit_qs:	ld a,(hl)
+	cp 240
+	ld hl,(rit_ptr)
+	ld a,(rit_cx)
+	ld b,a
+	jp c,rit_one
+	ld a,SERIES_PORT
+	ld (vec_kv_shadow),a	; ISR вернёт это окно, иначе сорвёт код в квазидиске
+	out (KV_PORT),a
+	call SERIES_ADDR	; se_try: CY+A=N если серия положена
+	ld c,a
+	xor a
+	ld (vec_kv_shadow),a
+	out (KV_PORT),a
+	ld a,c
+	jp c,rit_skipn
+rit_one:
+	ld hl,(rit_ptr)
+	ld a,l
+	and $f0
+	ld c,a
+	ld a,l
+	rlca
+	rlca
+	rlca
+	rlca
+	and $f0
+	ld b,a
+	ld h,0
+	ld de,CURRENT_SCREEN_MAP
+	add hl,de
+	push hl
+	ld hl,(rit_drawer)
+	ld (rit_jp+1),hl
+	pop hl
+rit_jp:	call 0
 	ld hl,(rit_ptr)
 	ld a,(rit_cx)
 	ld b,a
@@ -221,6 +280,17 @@ rit_rownext:
 	cp 10
 	jp nz,rit_row
 	ret
+rit_skipn:
+	ld hl,(rit_ptr)
+	ld a,l
+	add a,c
+	ld l,a
+	ld a,(rit_cx)
+	sub c
+	ld b,a
+	jp nz,rit_x
+	ld a,(rit_y)
+	jp rit_rownext
 
 ;;;SPLIT;;;
 ;;; overlap_hot.asm, часть drawsprite — MarkOverlappingSprites / check_sprite_overlap

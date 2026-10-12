@@ -593,6 +593,13 @@ LEVELTAB_PAGE = 2
 FDDCOPY_ADDR = 0xBD00
 BLIT2_ADDR = 0xBF00     # раньше здесь лежал вынесенный двухплоскостной блит; теперь он в образе
                         # ($7F00 отдан таблице слотов — пул работает на всех уровнях), место свободно
+# Серийный блит: стр.3 сразу за эффектами ($D980 + 1049 Б, бронь до $DE80), окно $23. Раньше лежал
+# по $C802 — а $C800-$C980 в ИГРЕ занято: MIRRBUF ($C800, 192 Б, разворот колонки прямого зеркального
+# спрайта) и стек сброса пула (вниз от $C980). Первый же такой спрайт затирал код серии, следующий
+# вызов исполнял мусор (tools/spwatch.py: ур.3 1,2 seed 4 — запись в $0361 и распаковка по переменным).
+SERIES_ADDR = 0xDE80
+SERIES_MAX = 0x180      # до $E000 (конец окна)
+SERIES_PORT = 0x23      # KV_POOL_WIN / KV_WIN_MUSIC: $A000-$DFFF -> стр.3
 # Палитра, своя для каждого экрана: три байта (слоты 1..3), которые занимает четырёхцветный спрайт
 # этого экрана. Фон в эти слоты не заглядывает — перестановка уровня увела его в 0 и 4..15.
 # Адрес таблицы палитр экранов свой у каждого уровня: она обязана лежать В ОКНЕ $A000-$DFFF
@@ -713,7 +720,8 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
     r += [(3, PAUSE_ADDR, PAUSE_END, 'оверлей паузы'),
           (3, FDD_BANKCODE, FDD_BANKCODE_END, 'загрузчик банков'),
           (3, WPN_SRC, WPN_SRC_END, 'подкачка страницы героя'),
-          (3, 0xC800, 0xC980, 'маркер набора'),
+          (3, 0xC800, 0xC980, 'маркер набора; в игре — MIRRBUF и стек сброса пула'),
+          (3, SERIES_ADDR, SERIES_ADDR + SERIES_MAX, 'серийный блит аним. тайлов'),
           (3, 0xC980, 0xC980 + upto(flen(f'music-level{LEVEL_MUSIC[level_no-1]}.mus', SRC)), 'музыка уровня'),
           (3, 0xD980, 0xD980 + upto(flen('iannafx.mus', SRC)), 'эффекты')]
     assert flen('pause_ovl.bin') <= PAUSE_END - PAUSE_ADDR, 'оверлей паузы перерос свой блок'
@@ -1127,6 +1135,11 @@ def build_kvaz(level_no=1, start=None):
             zb = zp.read_bytes(); assert len(zb) <= 0x100 - 0x3B
             assert all(v == 0 for v in pages[LEVELTAB_PAGE][BLIT2_ADDR:BLIT2_ADDR+len(zb)]), 'место под zp.bin занято'
             pages[LEVELTAB_PAGE][BLIT2_ADDR:BLIT2_ADDR+len(zb)] = zb
+        ser = BUILD / 'series.bin'                # серийный блит воды/огня/лавы (series_ovl.asm)
+        if ser.exists():
+            sb = ser.read_bytes(); assert len(sb) <= SERIES_MAX, len(sb)
+            assert all(v == 0 for v in pages[3][SERIES_ADDR:SERIES_ADDR+len(sb)]), 'место под series.bin занято'
+            pages[3][SERIES_ADDR:SERIES_ADDR+len(sb)] = sb
     assert all(len(p) == 65536 for p in pages), [len(p) for p in pages]
     edd = b''.join(bytes(p) for p in pages)
     (BUILD / 'ianna.edd').write_bytes(edd)
@@ -1164,6 +1177,8 @@ def build_kvaz(level_no=1, start=None):
                   f'ZP_BLIT2M\tequ $003B\t; зеркальный двухплоскостной блит в нулевой странице (zp_blit2m.asm)',
                   f'ZPSRC\tequ ${BLIT2_ADDR:04X}\t; его копия в наборе, стр.2 (LEVELTAB_PORT)',
                   'ZP_LEN\tequ $C5\t; копируем всю нулевую страницу от $3B: лишнее — нули',
+                  f'SERIES_ADDR\tequ ${SERIES_ADDR:04X}\t; серийный блит аним. тайлов (series_ovl.asm), стр.3',
+                  f'SERIES_PORT\tequ ${SERIES_PORT:02X}\t; окно $A000-$DFFF -> стр.3',
                   '; адрес таблицы палитр экранов приходит из блока таблиц уровня (vec_scrpal_addr)',
                   f'LEVEL_W\tequ {info["w"]}\t; ширина уровня в экранах — для адреса в таблице палитр',
                   f'LEVELTAB_LEN\tequ {len(level_table_blob(level_palette(), banks, fg))}']

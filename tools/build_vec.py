@@ -475,6 +475,11 @@ def build_menu_bins(lst):
             # для оверлея готовых тайлов (fgc_ovl.asm):
             'drawTile', 'drawTile_nosave', 'vec_pool_on', 'SPDATA', 'fg_tile_pairs', 'fg_lut_n', 'vec_budget', 'vec_blit_src',
             'vec_blit_ret', 'vec_blit128_vram', 'vec_slot_tab',
+            # для серийного блита аним. тайлов (series_ovl.asm):
+            'rit_ptr', 'rit_cx', 'rit_drawer', 'rit_fg', 'CURRENT_SCREEN_MAP', 'vec_sp_save',
+            'vec_stack_top', 'vec_bud_used', 'dt_rit', 'dft_rit',
+            'vec_tmp_sx', 'vec_tmp_sx1', 'vec_tmp_sy', 'vec_tmp_nx', 'vec_tmp_ny', 'vec_tmp_ovf',
+            'vec_plane_cnt', 'vec_col_cnt', 'vec_row_cnt',
             # для зеркального двухплоскостного блита в нулевой странице (zp_blit2m.asm):
             'vec_spr_hcol', 'vec_spr_dst', 'vec_col_cnt', 'vec_row_cnt', 'vec_spr_src', 'vec_spr_skip2',
             'vec_spr_port', 'vec_spr_ny', 'vec_spr_lbot', 'vec_spr_curport', 'vec_stk_leave']
@@ -487,8 +492,14 @@ def build_menu_bins(lst):
     assert not missing, f'нет символов для меню: {missing}'
     out = ['; сгенерировано build_vec (символы игры для оверлея меню)']
     for line in lst.split('\n'):                      # константы набора уровня (SCRPAL, LEVELTAB_PORT...)
-        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|FDDCOPY|FDD_TAB|FDD_BANKCODE|WPN_SRC|WPN_ORG|WPN_LEN|FGC_CODE|FGC_PTRS|FGC_TILES|ZP_BLIT2M|ZPSRC)\s+=\s+\$([0-9A-F]{2,4})', line)
+        m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|FDDCOPY|FDD_TAB|FDD_BANKCODE|WPN_SRC|WPN_ORG|WPN_LEN|FGC_CODE|FGC_PTRS|FGC_TILES|ZP_BLIT2M|ZPSRC|SERIES_ADDR|SERIES_PORT)\s+=\s+\$([0-9A-F]{2,4})', line)
         if m: out.append(f'{m.group(1)}\tequ ${m.group(2)}')
+    if not any(l.startswith('SERIES_ADDR') for l in out):
+        out.append('SERIES_ADDR\tequ $DE80\t; серийный блит (build_edd ещё не прошил equ)')
+    if not any(l.startswith('SERIES_PORT') for l in out):
+        out.append('SERIES_PORT\tequ $23')
+    if not any(l.startswith('LEVELTAB_PORT') for l in out):
+        out.append('LEVELTAB_PORT\tequ $22')
     for n, v in syms.items():
         out.append(f'{n}\tequ ${v:04X}')
     out += [f'FB_ORG\tequ ${syms["string_area"] + 1216:04X}'   # загрузчик банков: за буфером сектора,
@@ -559,7 +570,8 @@ def build_menu_bins(lst):
                                 (VEC / 'pause_ovl.asm', 'pause_ovl.bin', PAUSE_END - PAUSE_ADDR),
                                 (VEC / 'fdd_banks.asm', 'fdd_banks.bin', FDD_BANKCODE_END - FDD_BANKCODE),
                                 (VEC / 'wpn_load.asm', 'wpn_load.bin', WPN_SRC_END - WPN_SRC),
-                                (VEC / 'zp_blit2m.asm', 'zp.bin', 0x100 - 0x3B)):
+                                (VEC / 'zp_blit2m.asm', 'zp.bin', 0x100 - 0x3B),
+                                (VEC / 'series_ovl.asm', 'series.bin', 0x180)):
         work = ROOT / f'build/{src.name}'
         work.write_text(src.read_text())
         r = subprocess.run([str(ZASM), '--8080', '-uwy', work.name, f'{binout}.lst', binout],
