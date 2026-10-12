@@ -13,7 +13,9 @@ from emu_kvaz import I8080Kvaz as I8080
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 KEY_ROW0 = {'down': 0x80, 'right': 0x40, 'up': 0x20, 'left': 0x10}
 KEY_ROW7 = {'fire': 0x80, 'z': 0x04, 'action': 0x01}
-KEY_ROW5 = {'h': 0x01, 'j': 0x04}   # H — пауза, J — джукбокс меню
+KEY_ROW5 = {'h': 0x01, 'j': 0x04, 'i': 0x02, 'l': 0x10}   # H — пауза, J — джукбокс меню; I, L — читы
+KEY_ROW1 = {'f1': 0x08, 'f3': 0x20, 'stop': 0x04}     # F1+F3 в меню — режим читов
+KEY_ROW4 = {'g': 0x80}                                # G — неуязвимость (чит)
 
 def load_syms(lst):
     sym = {}
@@ -144,6 +146,12 @@ def make_cpu(keys):
             if cur[0] == 0xDF:
                 for k in keys:
                     if k in KEY_ROW5: v &= ~KEY_ROW5[k] & 0xFF
+            if cur[0] == 0xFD:
+                for k in keys:
+                    if k in KEY_ROW1: v &= ~KEY_ROW1[k] & 0xFF
+            if cur[0] == 0xEF:
+                for k in keys:
+                    if k in KEY_ROW4: v &= ~KEY_ROW4[k] & 0xFF
             if cur[0] == 0x7F:
                 for k in keys:
                     if k in KEY_ROW7: v &= ~KEY_ROW7[k] & 0xFF

@@ -122,6 +122,11 @@ def slice_ianna():
     old = '\tld a, (current_level)\n\tcall MUSIC_Load\n'
     assert old in text, 'MUSIC_Load в game'
     text = text.replace(old, old + ';\n;\n;\n;\n')     # четыре строки прежней вставки: tools/overrides.py привязан к номерам строк
+    # РЕЖИМ ЧИТОВ (vec_main.vec_cheat_tick): вызов раз в тик. Ставим ВМЕСТО строки-комментария перед проверкой
+    # паузы — число строк не меняется (tools/overrides.py привязан к номерам строк).
+    old = '\t; Press H for pause menu\n'
+    assert text.count(old) == 1, 'mainloop: комментарий перед проверкой паузы'
+    text = text.replace(old, '\tcall vec_cheat_tick\t; ВЕКТОР: читы для проверки (F1+F3 в меню)\n')
     (TR / 'ianna_main_src.asm').write_text(text)
 
 def make_score_font():

@@ -20,6 +20,10 @@ vec_start:
 	xor a
 	out (KV_PORT),a		; квазидиск выкл
 	ld (current_level),a	; уровень 1: загрузчик читает эту ячейку (инициализация ниже — уже поздно)
+	ld (vec_cheat),a	; читы выключены (ячейки в зазоре ROM, начальное значение не задано)
+	ld (vec_god),a
+	ld (vec_ckprev),a
+	ld (vec_ckeys),a
 	ld (music_playing),a	; в образе здесь $FF (ds): прерывание звало плеер всю загрузку набора, ещё до
 				; MUSIC_Init. Пока плеер жил в ROM, он «играл» незагруженную страницу 3 (в эмуляторах
 				; там нули, на MiSTer — остатки прошлой игры); плеер-оверлей при этом ещё не загружен
@@ -233,6 +237,72 @@ vec_ovl_go:
 	ret
 
 ; Фаза меню: блоб порт-примитивов из стр.3 $9800 -> string_area, оверлей $8440 в окне b6 (порт $43)
+; Читы: раз в тик из mainloop (build_vec ставит вызов перед проверкой паузы). Клавиши сняты в прерывании.
+vec_cheat_tick:
+	ld a,(vec_cheat)
+	or a
+	ret z
+	di
+	ld a,(vec_ckeys)	; нажатия, защёлкнутые прерыванием
+	ld b,a
+	xor a
+	ld (vec_ckeys),a
+	ei
+	ld a,b
+	rrca			; G: неуязвимость вкл/выкл
+	jp nc,vct_god
+	ld a,(vec_god)
+	xor 1
+	ld (vec_god),a
+	push bc			; отметка на панели: «G» горит, пока неуязвимость включена
+	ld bc,$0716
+	ld a,' '
+	jp z,vct_gm
+	ld a,'G'
+vct_gm:
+	call drawChar
+	pop bc
+vct_god:
+	ld a,(vec_god)
+	or a
+	jp z,vct_l
+	ld a,(player_level)	; здоровье — к максимуму уровня героя (как InitPlayer)
+	ld e,a
+	ld d,0
+	ld hl,barbarian_max_energy
+	add hl,de
+	ld a,(hl)
+	ld (ENTITY_PLAYER_POINTER+4),a
+vct_l:
+	ld a,b
+	and $10			; L: следующий уровень
+	jp z,vct_i
+	ld a,(current_level)
+	cp 8			; дальше девятого некуда
+	jp nc,vct_i
+	inc a
+	ld (current_level),a
+	ld a,3
+	ld (player_dead),a	; как скрипт finish_level: vec_main перечитает набор с дискеты
+vct_i:
+	ld a,b
+	and $02			; I: «уровень X,Y» на панели
+	ret z
+	ld bc,$0116		; колонка 1, строка 22
+	ld a,(current_level)
+	add a,'1'
+	call drawChar
+	ld b,3
+	ld a,(current_levelx)
+	add a,'0'
+	call drawChar
+	inc b
+	ld a,','
+	call drawChar
+	inc b
+	ld a,(current_levely)
+	add a,'0'
+	jp drawChar
 vec_menu_phase:
 	di
 	ld a,$63

@@ -41,6 +41,7 @@ if '--strict' in OPTS:
 _img=open(os.environ['IANNA_FDD'],'rb').read(); mem[0x100:0x100+32512]=_img[0x80:0x80+32512]
 SHOTDIR=next((o[7:] for o in OPTS if o.startswith('--shot=')),None); SHOTS=set(range(2000,FR,150)) if SHOTDIR else set(); vr={}
 if SHOTDIR: os.makedirs(SHOTDIR,exist_ok=True)
+CHEAT='--cheat' in OPTS; st=[]
 FRAME=59904; cyc=0; nxt=FRAME; fr=0; ev=[]; lost=0; hist=collections.Counter()
 names={sym[k]:k for k in ('vec_to_menu','vec_start','vfl_done','vec_menu_phase','MUSIC_Load','MUSIC_Stop','vec_reload_set','RunScripts','vec_begin_level','vfl_go') if k in sym}
 seen=collections.Counter()
@@ -57,8 +58,18 @@ while fr<FR:
         except RuntimeError as e: ev.append((fr,'КРАХ pc=%04X %s'%(pc,str(e)[:60]))); break
     if cyc>=nxt:
         nxt+=FRAME; fr+=1
-        if fr in range(2000,FR,200): keys[:]=['fire']
-        if fr in range(2020,FR,200): keys[:]=[]
+        if CHEAT:
+            # сценарий проверки читов: F1+F3 в меню, старт, затем I, G, L
+            plan={2300:['f1','f3'],2320:[],2400:['fire'],2420:[],2600:['fire'],2620:[],2800:['fire'],2820:[],3000:['fire'],3020:[],3250:['fire'],3270:[],3400:['fire'],3420:[],
+                  3600:['i'],3610:[],3700:['g'],3710:[],3800:['right'],4500:['l'],4510:[],4520:['fire'],4540:[]}
+            if fr>4600 and fr%200==0: keys[:]=['fire']
+            if fr>4600 and fr%200==20: keys[:]=[]
+            if fr in plan: keys[:]=plan[fr]
+            if fr in (2330,3590,3620,3695,3720,4490,4560,FR-1):
+                st.append((fr,'чит=%d бог=%d уровень=%d экран=%d,%d здоровье=%d тиков=%d'%(mem[sym['vec_cheat']],mem[sym['vec_god']],mem[sym['current_level']]+1,mem[sym['current_levelx']],mem[sym['current_levely']],mem[sym['ENTITY_PLAYER_POINTER']+4],seen['RunScripts']), bytes(mem[0x8000:0x10000])))
+        else:
+            if fr in range(2000,FR,200): keys[:]=['fire']
+            if fr in range(2020,FR,200): keys[:]=[]
         if fr in SHOTS: rv.render(bytes(mem[0x8000:0x10000]), list(mem[sym['vec_palette']:sym['vec_palette']+16]), f'{SHOTDIR}/fdd_{fr}.png'); vr[fr]=bytes(mem[0x8000:0x10000])
         if cpu.ie: cpu.ie=False; cpu.halted=False; cpu.push(cpu.pc); cpu.pc=0x38
         else: lost+=1
@@ -68,3 +79,10 @@ print('где сидит в последние 200 кадров:',hist.most_comm
 if SHOTDIR:
     import hashlib, json
     json.dump({str(k):hashlib.md5(v).hexdigest() for k,v in vr.items()}, open(f'{SHOTDIR}/vram.json','w'))
+
+if CHEAT:
+    for f,s,_ in st: print('  кадр',f,s)
+    a=next(v for f,_,v in st if f==3590); b=next(v for f,_,v in st if f==3620)
+    d=[i for i in range(32768) if a[i]!=b[i]]
+    print('  после I изменилось байт экрана:',len(d), 'колонки', sorted({(i>>8)&31 for i in d})[:10], 'строки L', sorted({i&255 for i in d})[:4], '..', sorted({i&255 for i in d})[-2:] if d else '')
+    rv.render(b, list(mem[sym['vec_palette']:sym['vec_palette']+16]), str(ROOT/'build/cmp/cheat_i.png'))

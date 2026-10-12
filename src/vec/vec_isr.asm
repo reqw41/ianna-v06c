@@ -49,12 +49,32 @@ isr_nopal:
 	; из mainloop — проверка паузы). Теперь get_keyboard только читает vec_keys.
 	ld a,$82		; порт B ППИ -> вход
 	out ($00),a
-	ld a,$DF		; ряд 5: H = бит 0, J = бит 2
+	ld a,$DF		; ряд 5: H = бит 0, J = бит 2; читы: I = бит 1, L = бит 4
 	out ($03),a
 	in a,($02)
 	cpl
+	ld b,a
 	and $05
 	ld c,a
+	ld a,b
+	and $12
+	ld b,a
+	ld a,$EF		; ряд 4: G = бит 7 -> бит 0
+	out ($03),a
+	in a,($02)
+	cpl
+	rlca
+	and 1
+	or b
+	ld b,a			; B = клавиши читов сейчас
+	ld hl,vec_ckprev	; срабатывание по НАЖАТИЮ считаем здесь, а не в тике: тик бывает длиннее
+	ld a,(hl)		; короткого нажатия, и клавиша терялась бы
+	ld (hl),b
+	cpl
+	and b
+	ld hl,vec_ckeys
+	or (hl)
+	ld (hl),a		; защёлка: тик заберёт и обнулит
 	ld a,$7F		; ряд 7: X = бит 0 -> кладём в бит 3
 	out ($03),a
 	in a,($02)
@@ -171,6 +191,17 @@ gj_4:
 	out ($03),a
 	in a,($02)
 	cpl
+	ld b,a			; (направления уже собраны в C)
+	and $28			; F1 (бит 3) + F3 (бит 5) вместе, вне игры — включить режим читов
+	cp $28
+	jp nz,gj_nocheat
+	ld a,(vec_in_game)
+	or a
+	jp nz,gj_nocheat
+	inc a
+	ld (vec_cheat),a
+gj_nocheat:
+	ld a,b
 	and $04
 	jp z,gj_r7
 	ld a,(vec_in_game)	; вне игры (меню/интро) клавишу игнорируем
