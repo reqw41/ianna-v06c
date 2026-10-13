@@ -49,7 +49,8 @@ ovl_noend:
 	call MB_CALL
 	call MB_SCREEN		; экран меню с дискеты
 	push af
-	call ovl_light
+	ld hl,vec_fade_in	; картинка проявляется плавно
+	call MB_CALL
 	pop af
 	jp nz,ovl_start		; дисковода нет (стенд) — сразу в игру
 	xor a
@@ -140,9 +141,23 @@ ovl_sl:
 	ld a,(ovl_slide)
 	call MB_SLRD		; дорожку читаем, пока на экране ещё прошлый слайд (или меню)
 	jp nz,ovl_go		; дисковода нет — без слайдов
-	call ovl_dark		; экран гаснет только на распаковку
+	ld a,(ovl_slide)
+	or a
+	jp nz,ovl_sl_c
+	ld hl,vec_fade_out	; первый слайд: меню плавно гаснет, картинка целиком, плавно проявляется
+	call MB_CALL
 	call MB_UNP
-	call ovl_light
+	ld hl,vec_fade_in
+	call MB_CALL
+	jp ovl_sl_t
+ovl_sl_c:			; следующие: рамка и подложка текста те же — меняем только середину
+	ld hl,vec_slc_clear
+	call MB_CALL
+	ld hl,vec_slc_unp
+	call MB_CALL
+	ld hl,vec_txt_clear
+	call MB_CALL
+ovl_sl_t:
 	; текст слайда (по языку)
 	ld a,(ovl_slide)
 	ld hl,ovl_txt_en
@@ -164,6 +179,8 @@ ovl_sl1:
 	cp 3
 	jp nz,ovl_sl
 ovl_go:
+	ld hl,vec_fade_out	; перед игрой экран плавно гаснет целиком
+	call MB_CALL
 	ld hl,MUSIC_Stop	; заглушить AY
 	call MB_CALL
 	ld hl,MUSIC_Init
@@ -172,7 +189,7 @@ ovl_go:
 	call MB_SONG		; вернуть песню уровня
 	ld hl,cls
 	call MB_CALL		; VRAM вне игрового поля чистой (рамка слайда/меню)
-	ret			; в vec_menu_phase -> begin_level
+	jp ovl_light		; экран чист — палитру вернуть (уровень рисуется ею же); дальше begin_level
 
 ; --- пункты меню: 4 строки на синей полосе (11..14), стрелка у выбранного ---
 ovl_options:
@@ -262,7 +279,7 @@ ovl_wph:	db 0
 ; --- гашение экрана на время загрузки с дискеты (иначе видно, как картинка рисуется) ---
 ovl_dark:
 	ld hl,vec_palette
-	ld de,ovl_palsave
+	ld de,vec_palsave
 	ld b,16
 ovl_dk1:
 	ld a,(hl)
@@ -275,7 +292,7 @@ ovl_dk1:
 	jp nz,ovl_dk1
 	jp ovl_palapply
 ovl_light:
-	ld hl,ovl_palsave
+	ld hl,vec_palsave
 	ld de,vec_palette
 	ld b,16
 ovl_lt1:
@@ -292,7 +309,6 @@ ovl_palapply:
 	halt
 	halt
 	ret
-ovl_palsave:	ds 16
 
 ovl_credit:			; строка титров (23): три записи по 16 знаков с колонки 8 — как в оригинале,
 	push af			; они одинаковой длины и затирают друг друга сами, очистка не нужна

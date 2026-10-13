@@ -176,6 +176,31 @@ def pack_picture(vrm):
     assert len(out) <= TRACK, f'картинка не влезла в дорожку: {len(out)} Б'
     return out
 
+# Слайды интро 1 и 2 отличаются от нулевого только серединой: рамка с колоннами и подложка текста те же.
+# На дискете от них лежит одна середина, а игра меняет её, не трогая остального (vec_intro.asm).
+CENTER_SLIDES = (1, 2)
+C_COL0, C_NCOL, C_ROW0, C_NROW = 8, 16, 32, 128      # колонки 8..23, строки экрана 32..159
+
+def pack_center(vrm, base):
+    """Середина слайда -> [4 смещения][4 сжатые плоскости по 2048 Б]: по колонкам, в колонке сверху вниз
+    (L = 255 - строка экрана, убывает). Вне середины слайд обязан совпадать с нулевым."""
+    import subprocess
+    inside = lambda k: C_COL0 <= ((k >> 8) & 31) < C_COL0 + C_NCOL and C_ROW0 <= 255 - (k & 255) < C_ROW0 + C_NROW
+    bad = [k for k in range(32768) if vrm[k] != base[k] and not inside(k)]
+    assert not bad, f'слайд отличается от нулевого вне середины: {len(bad)} Б, первый ${0x8000 + bad[0]:04X}'
+    tin, tout = ROOT / 'build/_pic.bin', ROOT / 'build/_pic.ap'
+    head, body = bytearray(), bytearray()
+    for pl in range(4):
+        raw = bytes(vrm[pl*8192 + c*256 + (255 - y)] for c in range(C_COL0, C_COL0 + C_NCOL) for y in range(C_ROW0, C_ROW0 + C_NROW))
+        tin.write_bytes(raw)
+        r = subprocess.run([str(ROOT / 'tools/bin/apack'), str(tin), str(tout)], capture_output=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        head += bytes(((8 + len(body)) & 0xFF, (8 + len(body)) >> 8))
+        body += tout.read_bytes()
+    out = bytes(head) + bytes(body)
+    assert len(out) <= 0x1800, f'середина слайда не влезла в 6 КБ перед буфером распаковки: {len(out)} Б'
+    return out
+
 placed_pics = []
 menu = ROOT / 'build/menu_screen.vrm'
 if menu.exists():
@@ -186,7 +211,8 @@ if menu.exists():
     img[at:at + len(blob)] = blob
     placed_pics.append((0, MENU_TRACK, len(blob)))
     for i in range(7):
-        blob = pack_picture((ROOT / f'build/slide{i}.vrm').read_bytes())
+        vrm = (ROOT / f'build/slide{i}.vrm').read_bytes()
+        blob = pack_center(vrm, (ROOT / 'build/slide0.vrm').read_bytes()) if i in CENTER_SLIDES else pack_picture(vrm)
         img[(PIC_TRACK + i)*TRACK:(PIC_TRACK + i)*TRACK + len(blob)] = blob
         placed_pics.append((i + 1, PIC_TRACK + i, len(blob)))
 

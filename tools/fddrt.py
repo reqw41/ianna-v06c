@@ -39,7 +39,7 @@ if '--strict' in OPTS:
 # make_cpu глушит вызов меню (в пустом квазидиске оверлея нет) — возвращаем ROM из образа как есть:
 # на железе фаза меню исполняется, и проверять надо именно её
 _img=open(os.environ['IANNA_FDD'],'rb').read(); mem[0x100:0x100+32512]=_img[0x80:0x80+32512]
-SHOTDIR=next((o[7:] for o in OPTS if o.startswith('--shot=')),None); SHOTS=(set(range(2000,FR,150))|{2300,2700,3100,3500}) if SHOTDIR else set(); vr={}
+SHOTDIR=next((o[7:] for o in OPTS if o.startswith('--shot=')),None); SHOTS=(set(range(2000,FR,150))|{2300,2700,2800,2815,2830,3100,3500,3580,4200}) if SHOTDIR else set(); vr={}
 if SHOTDIR: os.makedirs(SHOTDIR,exist_ok=True)
 INTRO='--intro' in OPTS; dark=[]; CHEAT='--cheat' in OPTS or INTRO; st=[]
 FRAME=59904; cyc=0; nxt=FRAME; fr=0; ev=[]; lost=0; hist=collections.Counter()
@@ -66,7 +66,7 @@ while fr<FR:
             if fr>4600 and fr%200==20: keys[:]=[]
             if fr in plan and not INTRO: keys[:]=plan[fr]
             if INTRO:
-                ip={2350:['fire'],2370:[],2750:['fire'],2770:[],3150:['fire'],3170:[]}
+                ip={2350:['fire'],2370:[],2750:['fire'],2770:[],3150:['fire'],3170:[],3550:['fire'],3570:[],3900:['fire'],3920:[]}
                 if fr in ip: keys[:]=ip[fr]
                 if fr>=2340: dark.append(not any(mem[sym['vec_palette']:sym['vec_palette']+16]))
             if fr in (2330,3590,3620,3695,3720,4490,4560,FR-1):

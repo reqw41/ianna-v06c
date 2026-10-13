@@ -467,7 +467,7 @@ def main():
     order += [VEC / 'vec_main.asm', TR / 'ianna_main.asm', TR / 'tiles.asm', TR / 'drawsprite.asm',
               TR / 'entities.asm', TR / 'scripts.asm', TR / 'objects.asm', TR / 'depack.asm',
               TR / 'score.asm', TR / 'font.asm'] + ([TR / 'music.asm', TR / 'arkos_rom.asm'] if not DEMO else []) + [
-              VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm'] + ([VEC / 'vec_fdd.asm'] if C8 else []) + [VEC / 'vec_stubs.asm']
+              VEC / 'vec_vdp.asm', VEC / 'vec_isr.asm'] + ([] if DEMO else [VEC / 'vec_intro.asm']) + ([VEC / 'vec_fdd.asm'] if C8 else []) + [VEC / 'vec_stubs.asm']
     if not DEMO:
         order.append(data)
     gen_rt = per_offset_helpers(order)
@@ -536,7 +536,7 @@ def main():
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
     need = ['depack', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl',
-            'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', 'language', 'joystick_state', 'music_playing',
+            'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', 'vec_fade_out', 'vec_fade_in', 'vec_slc_clear', 'vec_slc_unp', 'vec_txt_clear', 'vec_palsave', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
             'get_player_max_exp',
