@@ -93,7 +93,7 @@ def in_h(p):
 cpu.out_handler=out_h; cpu.in_handler=in_h
 FC=sym['FrameCounter']; AT=sym['animate_tile']; SC=sym['SaveCheckpoint']
 DSCR=sym.get('DrawScreen',-1); VBW=sym.get('vbg_wait',-1); DTW=sym.get('dtd_wait',-2);   # ожидания кадра: общий vec_budget и вписанный в dt_direct bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
-bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]
+bh_cost=collections.Counter(); bh_phase=collections.Counter(); bh_lost=[0]; bh_who=collections.Counter()   # кто просил бюджет и не влез
 # --tail=spr|all — ОЦЕНКА идеи «не терять хвост кадра»: запрос бюджета, не влезший до конца кадра, делает
 # сейчас столько, сколько влезает, а остаток — после прерывания. Кода в ROM для этого нет: стенд просто
 # возвращает время влезшей части (минус накладные второго входа TAIL_OVH; меньше TAIL_MIN не режем).
@@ -210,6 +210,7 @@ for seg in ROUTE.split(','):
                         if cr>=TAIL_MIN: tail_credit[0]=int(cr*256)
                 if BHIST:
                     cost=cpu.l; phase=(cpu.a-cost)&0xFF
+                    _r=mem[cpu.sp+2]|mem[cpu.sp+3]<<8; bh_who[fn(_r) if cpu.pc==VBW else 'dt_direct']+=1
                     bh_cost[cost]+=1; bh_phase[phase//16*16]+=1; bh_lost[0]+=max(0,234-phase)
             if PROF: prof[fn(cpu.pc)]+=CYC[mem[cpu.pc]]; tickprof[fn(cpu.pc)]+=CYC[mem[cpu.pc]]
             cyc[0]+=CYC[mem[cpu.pc]]
@@ -249,6 +250,7 @@ if BHIST and sum(bh_cost.values()):
     n=sum(bh_cost.values())
     print(f'  отказы бюджета: {n}; цена запроса (ед. 256 тактов): {sorted(bh_cost.items())}')
     print(f'  фаза кадра при отказе (ед.): {sorted(bh_phase.items())}')
+    print(f'  кто ждал (вызвавший vec_budget): {bh_who.most_common()}')
     print(f'  потеряно хвостов: {bh_lost[0]} ед. = {bh_lost[0]/234:.1f} кадра, в среднем {bh_lost[0]/n:.0f} ед. на отказ')
 print(f'  ожиданий кадра бюджетом (vbg_wait) за прогон: {bh_n[0]}' + (f'; пропущено ожиданий опоздавшего тика: {nolate_n[0]}' if NOLATE else '') + (f'; модель хвостов ({TAIL}): возвращено {tail_sum[0]/FRAME:.1f} кадра' if TAIL else ''))
 if lost: print('  потери по функциям:', dict(lost_at.most_common(8)))
