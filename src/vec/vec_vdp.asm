@@ -1180,7 +1180,7 @@ dftb_loop:
 	dec a
 	ld (vec_row_cnt),a
 	jp nz,dftb_loop
-	jp dfb_leave
+	jp dtb_leave
 ; Ненужная колонка: 16 Б слота и 32 Б источника (данные+маска) перешагиваем, источник — pop'ами
 ; (см. dtb_left).
 dftb_left:
@@ -1197,7 +1197,7 @@ dftbl_loop:
 	dec a
 	ld (vec_row_cnt),a
 	jp nz,dftbl_loop
-	jp dfb_leave
+	jp dtb_leave
 dftb_right:
 	ld a,4 - C8
 	ld (vec_row_cnt),a
@@ -1212,11 +1212,7 @@ dftbr_loop:
 	dec a
 	ld (vec_row_cnt),a
 	jp nz,dftbr_loop
-dfb_leave:
-	ld h,b
-	ld l,c
-	ld (isr_pair),hl
-	jp dsp_leave
+	jp dtb_leave		; выход общий с тайлом фона (пара тоже в BC)
 dfb_ei_end:
     endif
 dft_direct:
