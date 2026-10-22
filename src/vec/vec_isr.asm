@@ -267,36 +267,7 @@ isrb_go:
 isr_ret:
 	jp 0			; самомодификация: адрес возврата
 
-; A = код источника (биты 0-1 регистр, бит 2 — развёрнут) -> A = байт пары. Портит HL.
-isrs_byte:
-	ld h,a
-	and 3
-	ld l,b
-	jp z,isb_r
-	ld l,c
-	dec a
-	jp z,isb_r
-	ld l,d
-	dec a
-	jp z,isb_r
-	ld l,e
-isb_r:
-	ld a,h
-	and 8
-	jp z,isb_r4
-	ld a,(isr_a)
-	ld l,a
-isb_r4:
-	ld a,h
-	and 4
-	ld a,l
-	ret z
-	push de
-	ld e,l
-	ld d,rev256/256
-	ld a,(de)
-	pop de
-	ret
+; isrs_byte (декодер байта пары) живёт в окне $6AB0 — vec_hi.asm
 
 isr_hl:		dw 0
 isr_sp:		dw 0

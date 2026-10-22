@@ -2277,10 +2277,7 @@ dspm_seg_end_h:
 	ld (isr_pair),hl
 ; ---- [isr_pair] до выхода; сюда же приходят сегменты двухплоскостного тела (b2pm_endB_m)
 dspm_seg_end_m:
-	ld a,(vec_rows_left)
-	or a
-	jp nz,dsp_seg
-	jp dsp_tail		; хвост колонки общий с прямым путём, возврат — dsp_tail_j
+	jp dsp_seg_end_m	; следующий сегмент или хвост колонки — общие с прямым путём, возврат — dsp_tail_j
 ; ---- [isr_pair]
 dspm_tail_done:
 	ld a,(dsp_coff+1)	; cx-1: смещение переключается, слот по x падает на чётной cx
@@ -2775,6 +2772,8 @@ vpb_rect_done:
 	ld (vec_hr_want),a
 	ld hl,vec_hr_list
 	ld (vec_hr_lp),hl
+	ld hl,vec_gr_list
+	ld (vec_gr_lp),hl
 	ld de,SPDATA
 	ld c,MAX_SPRITES
 	ld hl,vec_spr_prev
@@ -2937,7 +2936,7 @@ vpb_sxl:
 	ld (vec_slot_next),a
 	ld a,(vec_hr_want)	; слот героя — в список (сброс выводит их отдельно, позади луча)
 	or a
-	jp z,vpb_sx_next
+	jp z,vpb_gr_add		; не героя — в список группы (vec_hi.asm)
 	; Список — 20 Б, а граница не проверялась: при смене экрана под героем (текущее и прошлое место
 	; на разных краях, грязно всё поле) слотов набиралось до 30, и запись шла дальше списка — по
 	; vec_hr_dl0..vec_tmp_ny и в vec_tmp_rp. Тот становился адресом из номеров слотов ($2324, $7Bxx,
@@ -3061,7 +3060,7 @@ vpf_slot_chk:
 	ld a,(vec_hr_s0)	; выведенные слоты героя уже $FF — сюда не доходят
 	cp d
 	jp z,vpf_ge0
-	jp nc,vpf_slot_go	; slot < s0
+	jp nc,vpf_slot_d	; slot < s0: раздан до спрайтов (под передним тайлом) — ни героя, ни группы
 vpf_ge0:
 	ld a,(vec_hr_s1)
 	cp d
@@ -3069,6 +3068,10 @@ vpf_ge0:
 	jp c,vpf_slot_go
 	jp vpf_x_next		; слот героя — позже
 vpf_slot_go:
+	ld a,(vec_gr_lp)	; первый слот врагов в обходе — выводим их всех подряд (vpf_grp)
+	cp vec_gr_list & $ff
+	jp nz,vpf_grp
+vpf_slot_d:
 	ld a,d
 vpf_slot:
 	ld (hl),$ff		; слот выведен — больше не выводить (пересечения прямоугольников)

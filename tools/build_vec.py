@@ -488,6 +488,7 @@ def main():
     order.append(TR / 'z80rt_used.asm')
     order.append(VEC / 'vec_mirr.asm')
     order.append(VEC / 'vec_blit2.asm')   # прямой блит двухплоскостных банков
+    order.append(VEC / 'vec_hi.asm')        # org $6AB0 (окно в vec_col_tab), кроме демо
     order += [TR / 'vars.asm', VEC / 'vec_vars.asm']   # org VARS_ADDR
     parts = [f'DEMO\tequ {1 if DEMO else 0}\n']
     for f in order:
@@ -520,9 +521,15 @@ def main():
         for line in lst.split('\n'):
             if 'vars наверху ОЗУ' in line: break
             mm = re.match(r'^([0-9A-F]{4}): ([0-9A-F]+)\s', line)     # байты в листинге без пробелов
+            if mm and not DEMO and 0x6AB0 <= int(mm.group(1), 16) < 0x6AF9: continue   # окно vec_hi.asm
             if mm: code_end = max(code_end, int(mm.group(1), 16) + len(mm.group(2)) // 2)
         assert code_end <= VARS_ADDR, f'код до ${code_end:04X} НАЕХАЛ на переменные ${VARS_ADDR:04X}'
         assert code_end <= 0x6A00, f'код дошёл до ${code_end:04X}: в $6A00-$6AFF лежит vec_col_tab (vec_vdp.asm)'
+        mh = re.search(r'^vec_hi_end\s+=\s+\$([0-9A-F]{4})', lst, re.M)
+        assert mh, 'нет vec_hi_end'
+        if not DEMO:
+            assert int(mh.group(1), 16) <= 0x6AF9, f'окно vec_hi.asm дошло до ${mh.group(1)}: с $6AF9 — ячейки читов (vec_vdp.asm)'
+            print(f'окно $6AB0: до ${int(mh.group(1), 16)-1:04X} (свободно {0x6AF9-int(mh.group(1), 16)} Б)')
         print(f'код до ${code_end-1:04X} включительно, переменные с ${VARS_ADDR:04X} (зазор {VARS_ADDR-code_end} Б)')
         m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'

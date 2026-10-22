@@ -4,7 +4,13 @@
 13824 + 192*y от прерывания, как дедлайны героя в pool_hr.asm). Между двумя тиками (RunScripts) меняется
 множество байтов поля; показанный кадр «рваный», если в нём часть этих байтов уже новая, а часть ещё
 старая, и «промежуточный», если байт ни старый, ни новый (видна недорисовка: фон без спрайта и т.п.).
-  python3 tools/teartest.py <rom> <lst> <edd> X,Y [--ticks=120] [--route=fight|pace] [--pos=x,y]"""
+По спрайтам (--sprites): то же, но только в прямоугольнике каждого спрайта (старое место + новое), спрайт
+узнаётся по банку (vec_sprite_bank на входе drawSprite). Для него же — окно, пока он выведен наполовину:
+от первого до конца последнего его слота в сбросе (vpf_slot, L = индекс стайла), и окно «если бы его
+слоты шли подряд» (число слотов * средняя цена слота). Разрыв возможен, если луч проходит прямоугольник
+за это окно: P ~ (окно + 0.75*высота)/234 — оценка выигрыша от вывода слотов спрайта группой.
+  python3 tools/teartest.py <rom> <lst> <edd> X,Y [--ticks=120] [--route=fight|pace] [--pos=x,y] [--sprites [--join=14,15]]
+  --join — банки одного существа (голем — два спрайта) считаются одним прямоугольником."""
 import sys, os, pathlib, collections
 OPTS=[a for a in sys.argv[1:] if a.startswith('--')]; A=[a for a in sys.argv[1:] if not a.startswith('--')]
 ROM,LST,EDD,ST=A[:4]; os.environ['IANNA_EDD']=EDD
@@ -52,6 +58,8 @@ def beam_to(t):
         if tl>t: return
         shown[ln]=line(mem, Y_TOP_L-ln); ln+=1
 snaps={}
+SPR='--sprites' in OPTS; JOIN={int(b):'+'.join(g.split(',')) for g in [next((o[7:] for o in OPTS if o.startswith('--join=')),'')] if g for b in g.split(',')}; DS=sym['drawSprite']; VS=sym['vpf_slot']; SB=sym['vec_sprite_bank']
+sprs=collections.defaultdict(list); slots=collections.defaultdict(list)   # тик -> [(банк,x,y)], [(такт, индекс стайла)]
 while ticks<NT+40:
     pc=cpu.pc
     if pc==SCP and not patched:
@@ -65,6 +73,9 @@ while ticks<NT+40:
         elif mem[EPP+4]<e0: mem[EPP+4]=e0
         if ticks>40:
             keys[:]=SC[(ticks-40)%len(SC)]; snaps[ticks]=field(mem)
+    if SPR and ticks>40:
+        if pc==DS: sprs[ticks].append((mem[SB], cpu.b, cpu.c))
+        elif pc==VS: slots[ticks].append((cyc[0], cpu.l))
     irq=False
     if cpu.halted:
         beam_to(nxt); cyc[0]=nxt; irq=True
@@ -94,3 +105,41 @@ ticked=len([k for k in snaps if k+1 in snaps])
 print(f'{ROM} {ST} {ROUTE}: тиков {ticked}, кадров {total}; рваных кадров {torn} (тиков с разрывом {len(tt)}, '
       f'{100*len(tt)/max(ticked,1):.0f} %), в среднем старых строк в рваном кадре {sum(rows_t)/max(len(rows_t),1):.0f}; '
       f'кадров с недорисовкой {mid}')
+
+if SPR:
+    # сброс тика k (по нашим снимкам) выводит спрайты, нарисованные в тике k: ищем кадры между RS_k и RS_k+1
+    per=collections.defaultdict(lambda: [0,0,0,0.,0.,0])   # банк -> [тиков, рваных тиков, рваных кадров, окно, окно подряд, слотов]
+    prev={}
+    dur=[]
+    for k in sorted(slots):
+        sl=slots[k]; dur+= [b[0]-a[0] for a,b in zip(sl,sl[1:]) if b[0]-a[0]<6000]
+    sd=sum(dur)/max(len(dur),1)
+    for k in sorted(snaps):
+        if k+1 not in snaps: continue
+        old=snaps[k]; new=snaps[k+1]
+        cur=collections.defaultdict(list)
+        for bank,x,y in sprs.get(k,[]):
+            cur[JOIN.get(bank,bank)].append((x,y))
+        for bank,pts in cur.items():
+            rect=pts+prev.get(bank,[])
+            prev[bank]=pts
+            idx=set()
+            for (rx,ry) in rect:
+                for yy in range(max(ry,0),min(ry+32,NL)):
+                    for c in range(rx//8, min(rx//8+3,32)):
+                        for pl in range(4): idx.add(yy*128+pl*32+c)
+            ch=[i for i in idx if old[i]!=new[i]]
+            if not ch: continue
+            st={((i//128)//16)*16 + (i%32)//2 for i in ch}           # стайлы, где спрайт что-то поменял
+            ts=[t for t,l in slots.get(k,[]) if l in st]
+            r=per[bank]; r[0]+=1
+            nt=0
+            for t,img,*_ in frames:
+                if t!=k: continue
+                if any(img[i]==new[i] for i in ch) and any(img[i]==old[i] and img[i]!=new[i] for i in ch): nt+=1
+            r[2]+=nt; r[1]+=nt>0
+            if ts: r[3]+=(max(ts)-min(ts)+sd)/256; r[4]+=len(ts)*sd/256; r[5]+=len(ts)
+    print(f'  слот сброса в среднем {sd/256:.1f} ед.')
+    for bank,(n,tt_,tf,w,wg,ns) in sorted(per.items(), key=lambda kv: str(kv[0])):
+        print(f'  банк {str(bank):>5}: тиков {n}, рваных {tt_} ({100*tt_/max(n,1):.0f} %, кадров {tf}); слотов на тик {ns/max(n,1):.1f}, '
+              f'окно наполовину {w/max(n,1):.0f} ед., подряд было бы {wg/max(n,1):.0f} ед.')

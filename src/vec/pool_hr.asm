@@ -102,6 +102,9 @@ vpf_hr_next:
 	ld a,(hl)		; индекс таблицы слотов: row16|cx
 	inc hl
 	ld (vec_hr_i),hl
+; A = индекс таблицы слотов (row16|cx) -> слот в экран через vpf_slot; выведенный/прямой — сразу
+; дальше по vec_blit_ret. Общий для списка героя и группы врагов (vpf_grp).
+vpf_idx:
 	ld l,a
 	ld h,vec_slot_tab/256
 	and $f0
@@ -111,13 +114,39 @@ vpf_hr_next:
 	ld c,a
 	ld a,(hl)
 	cp POOL_SLOTS
-	jp nc,vpf_hr_next	; уже выведен/прямой
-	jp vpf_slot
-vpf_hr_done:
+	jp c,vpf_slot
+	ld hl,(vec_blit_ret)	; уже выведен/прямой
+	jp (hl)
+; Группа врагов (vec_gr_list, vec_hi.asm): все слоты подряд с конца списка. Враг рядом с героем делит с
+; ним стайлы (в бою голем стоит вплотную), а слоты героя ждут луча: выведенный при первой встрече в обходе,
+; голем дописывался бы куском героя позже — окно «наполовину новый» не сокращалось (teartest --sprites).
+; Поэтому, пока герой не выведен, слоты группы обход пропускает, а сама группа идёт сразу за героем
+; (vpf_hr_done). Потом — по vec_hr_ret; из обхода это та же клетка (vpf_x), она уже выведена ($FF).
+vpf_grp:
+	ld a,(vec_hr_lp)
+	cp vec_hr_list & $ff
+	jp nz,vpf_x_next	; герой ещё ждёт луча — группа пойдёт за ним
+	ld hl,vpf_x
+	ld (vec_hr_ret),hl
+vpf_grp_go:
+	ld hl,vpf_gr_next
+	ld (vec_blit_ret),hl
+vpf_gr_next:
+	ld hl,(vec_gr_lp)
+	ld a,l
+	cp vec_gr_list & $ff
+	jp z,vpf_gr_done
+	dec hl
+	ld (vec_gr_lp),hl
+	ld a,(hl)
+	jp vpf_idx
+vpf_gr_done:
 	ld hl,vpf_x_next
 	ld (vec_blit_ret),hl
-	ld hl,vec_hr_list	; список пуст = герой выведен
-	ld (vec_hr_lp),hl
 	ld hl,(vec_hr_ret)
 	jp (hl)
+vpf_hr_done:
+	ld hl,vec_hr_list	; список пуст = герой выведен
+	ld (vec_hr_lp),hl
+	jp vpf_grp_go		; группа врагов — сразу за героем (пустая — сразу по vec_hr_ret)
 
