@@ -153,6 +153,17 @@ def make_score_font():
     sc = sc.replace(old, 'draw_gameover_string:\n; РУССКОЕ ИЗДАНИЕ: ветки по language нет\n;\n;\n;\n;\n;\n')
     (TR / 'score_src.asm').write_text(sc)
     ft = (SRC / 'font.asm').read_text(encoding='utf-8', errors='replace')
+    # МЁРТВЫЙ КОД (tools/deadcode.py, 2026-10-22): меню и прозрачный шрифт живут в оверлее, из ROM эти
+    # процедуры никто не зовёт — 226 Б. Тела вырезаются, метки остаются (заглушки в vec_stubs не трогаем).
+    for name, nxt in (('LoadFONT_menu', 'print_string'), ('print_string_menu', 'print_string2'),
+                      ('print_string3', 'next_word'), ('print_word_menu', None)):
+        i = ft.index('\n' + name + ':') + 1
+        j = ft.index('\n' + nxt + ':') + 1 if nxt else len(ft)
+        # комментарий-шапку следующей процедуры оставляем: откатываемся от j к её последней строке кода
+        k = ft.rfind('\n', 0, j - 1)
+        while nxt and k > i and ft[k + 1:j].lstrip().startswith(';') or (nxt and k > i and not ft[k + 1:j].strip()):
+            j = k + 1; k = ft.rfind('\n', 0, j - 1)
+        ft = ft[:i] + name + ':\t; ВЕКТОР: мёртвый код вырезан (deadcode.py)\n' + ft[j:]
     (TR / 'font_src.asm').write_text(ft)
 
 def make_music():
