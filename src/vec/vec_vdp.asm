@@ -587,6 +587,23 @@ vbg_ok:
 	pop hl
 	ret
 
+; Вход блита с разрешёнными прерываниями (спрайт и тайлы в пул): у края кадра ждём прерывания, DI,
+; вектор $0039 -> isr_spr, vec_sp_save = SP вызывающего. Дальше вызывающий сам ставит SP в источник,
+; порт и снимает пару под SP. Портит A, HL и флаги.
+vec_ei_enter:
+	call vec_phase
+	cp VEC_PH_EDGE
+	jp c,vee_go
+	halt
+vee_go:
+	di
+	ld hl,isr_spr
+	ld ($0039),hl
+	ld hl,2			; SP без адреса возврата этого call
+	add hl,sp
+	ld (vec_sp_save),hl
+	ret
+
 ; A = реальная фаза кадра (ед. 256 тактов), обновляет vec_bud_used. Портит флаги.
 vec_phase:
 	xor a
@@ -789,17 +806,7 @@ dt_blit:				; вход с готовым vec_blit_src (drawFGTile: непроз�
 	; тело только снимает pop bc, ненужная колонка тоже перешагивается pop'ами, а не прыжком SP.
 	ld a,KV_POOL_WIN|KV_STK_P0
 	ld (vec_spr_curport),a
-	call vec_phase
-	cp VEC_PH_EDGE
-	jp c,dtb_enter
-	halt
-dtb_enter:
-	di
-	ld hl,isr_spr
-	ld ($0039),hl
-	ld hl,0
-	add hl,sp
-	ld (vec_sp_save),hl
+	call vec_ei_enter
 	ld hl,(vec_blit_src)
 	dec hl
 	dec hl
@@ -1053,32 +1060,17 @@ dt_blkr_l:
 ; началом слота (конец соседнего): её снимаем на входе в isr_pair, починка кладёт её под SP всегда —
 ; внутри слота это тоже лишь будущее место нулей. Одна колонка (под SP — нужная вторая) — под DI выше.
 dbk_full:
-	ld hl,-128
-	add hl,de
-	dec hl
-	dec hl			; HL = начало слота - 2
 	ld a,KV_STK_P3
 	ld (vec_spr_curport),a
-	call vec_phase
-	cp VEC_PH_EDGE
-	jp c,dbk_enter
-	halt
-dbk_enter:
-	di
-	ex de,hl
-	ld hl,isr_spr
-	ld ($0039),hl
-	ld hl,0
-	add hl,sp
-	ld (vec_sp_save),hl
-	ex de,hl
-	ld sp,hl
+	call vec_ei_enter	; DE цел
+	ld hl,-130
+	add hl,de
+	ld sp,hl		; начало слота - 2
 	ld a,KV_STK_P3
 	out (KV_PORT),a
 	pop hl
 	ld (isr_pair),hl
-	ld hl,128
-	add hl,sp
+	ex de,hl
 	ld sp,hl		; конец слота
 	ld bc,0
 	ld a,8
@@ -1161,19 +1153,9 @@ dft_found:
 	; Выход общий со спрайтом (dsp_leave -> vec_stk_leave), его ret приходит в dft_exit.
 	ld a,KV_POOL_WIN|KV_STK_P0	; FG-тайлы — страница 0 ($5D00)
 	ld (vec_spr_curport),a
-	call vec_phase
-	cp VEC_PH_EDGE
-	jp c,dfb_enter
-	halt
-dfb_enter:
-	di
 	ld hl,dft_exit
 	push hl
-	ld hl,isr_spr
-	ld ($0039),hl
-	ld hl,0
-	add hl,sp
-	ld (vec_sp_save),hl
+	call vec_ei_enter
 	ld hl,(vec_blit_src)
 	dec hl
 	dec hl
@@ -1804,24 +1786,27 @@ drawSprite_pool:
 	; цикл колонок, бюджет DI и разбор cx — общие, различается только разбор данных строки
 	; (четыре плоскости — 6 Б на строку, две — 3 Б на строку, читаются парами).
 	ld hl,dsp_row_e
-	ld de,dspm_row
+	ld de,dspm_row_e
 	ld a,(vec_spr_port)
 	rrca
 	jp nc,dsp_body
 	ld hl,b2p_row_e
-	ld de,b2pm_row
+	ld de,b2pm_row_e
 	ld a,(vec_spr_skip2)	; хвост колонки короче вдвое: (32-NY)*3
 	ld (vec_spr_skip),a
 dsp_body:
-	ld (dsp_go+1),hl
-	ex de,hl		; на i8080 нет ld (nn),de
-	ld (dspm_go+1),hl
 	ld a,(vec_spr_dir)
     if NOMIRROR
 	xor a			; ЗАМЕР: зеркало отключено — оценка потолка для кеша развёрнутых кадров
     endif
 	or a
+	jp z,dsp_body_d
+	ex de,hl		; зеркало: своё тело строки; пролог колонки и сегмента общий (dsp_col)
+dsp_body_d:
+	ld (dsp_go+1),hl	; флаги от or a живы
 	jp nz,dsp_mirror
+	ld hl,dsp_tail_done
+	ld (dsp_tail_j+1),hl
 	ld a,3
 	ld (vec_col_cnt),a
 	; Колонка спрайта меняется трижды, а сегментов на неё два: разбор vec_spr_cx (слот по x и
@@ -1849,17 +1834,7 @@ dsp_body:
 	; ниже: в каждой точке под SP лежит пара, которая есть в регистре или в isr_pair, и диапазоны в
 	; таблице описывают, где какая. Короткие DI остались на входе, выходе и прыжке SP через хвост
 	; колонки (там пару под новым SP не знает никто) — перед каждым проверяется фаза кадра.
-	call vec_phase
-	cp VEC_PH_EDGE
-	jp c,dsp_enter
-	halt
-dsp_enter:
-	di
-	ld hl,isr_spr
-	ld ($0039),hl
-	ld hl,0
-	add hl,sp
-	ld (vec_sp_save),hl
+	call vec_ei_enter
 	ld hl,(vec_spr_src)
 	dec hl
 	dec hl
@@ -1881,7 +1856,7 @@ dsp_seg:
 	ld d,a
 	and $f0
 dsp_sx:
-	or 0			; самомодификация (drawSprite_pool/dsp_tail_done): (cx>>1)&15
+	or 0			; самомодификация (drawSprite_pool, dsp_mirror / dsp_tail_done, dspm_tail_done): (cx>>1)&15
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
@@ -1916,6 +1891,10 @@ dsp_n_ok:
 	ld (dsp_rem+1),a
 	ld (b2p_endA+1),a	; двухплоскостное тело держит предел в двух `cp` (пара строк);
 	ld (b2p_endB+1),a	; писать всегда дешевле, чем самомодифицировать адреса записи
+	ld (dspm_end+1),a	; зеркальные тела — те же пределы (пролог у них общий с прямым путём)
+	ld (dspm_rem+1),a
+	ld (b2pm_endA+1),a
+	ld (b2pm_endB+1),a
 	ld a,(vec_rows_left)
 	sub b
 	ld (vec_rows_left),a
@@ -1924,7 +1903,8 @@ dsp_n_ok:
 	ld (vec_spr_row),a
 dsp_go:
 	jp dsp_row_e		; самомодификация (drawSprite_pool): dsp_row_e — четыре плоскости,
-				; b2p_row_e/b2p_cont — две (пара строк может разорваться сегментом)
+				; b2p_row_e/b2p_cont — две (пара строк может разорваться сегментом);
+				; зеркало — dspm_row_e / b2pm_row_e / b2pm_cont
 dsp_row_e:			; вход в тело: первая пара снимается здесь, дальше она в BC
 	pop bc
 ; ---- [BC]
@@ -2036,11 +2016,12 @@ dsp_seg_end_m:
 	ld a,(vec_rows_left)
 	or a
 	jp nz,dsp_seg
+dsp_tail:			; хвост колонки — общий с зеркалом (dspm_seg_end_m), возврат через dsp_tail_j
 	; следующая колонка: прыжок через хвост (32-NY строк). Пару под новым SP не знает никто, поэтому
 	; прыжок и чтение этой пары — под DI, не у края кадра.
 	ld a,(vec_spr_skip)
 	or a
-	jp z,dsp_tail_done
+	jp z,dsp_tail_j
 	ld l,a
 	ld h,0
 	add hl,sp
@@ -2065,6 +2046,8 @@ dsp_tg_ok:
 	pop hl
 	ld (isr_pair),hl
 	ei
+dsp_tail_j:
+	jp dsp_tail_done	; самомодификация (drawSprite_pool / dsp_mirror): dsp_tail_done / dspm_tail_done
 dsp_tail_done:
 	ld a,(dsp_coff+1)	; cx+1: смещение колонки переключается, слот по x растёт на нечётной cx
 	xor 16
@@ -2098,12 +2081,11 @@ dsp_leave_di:
 	ld ($0039),hl
 	jp vec_stk_leave
 dsp_mirror:
-	; Цена колонки в пуле СВОЯ: зеркальная строка пула стоит 381 такт (было 490), окно DI на NY=32
-	; — медиана 53.3 / p90 58.7 ед. (blitcalib, сцена 4,5), а ds_cost дал бы 2*NY + NY/4 + 5 = 77.
-	ld a,(vec_spr_ny)
-	add a,a
-	add a,8			; 2*NY + 8 (запас 22 % над p90)
-	ld (vec_spr_colcost),a
+	; ЗЕРКАЛЬНЫЙ СПРАЙТ В ПУЛ — тоже с разрешёнными прерываниями (см. dsp_enter). Тело разворачивает байты
+	; через rev256 прямо в регистрах, и пара под SP лежит в них РАЗВЁРНУТОЙ: режимы isr_fix_tab с флагом
+	; разворота говорят починке, какой байт развернуть обратно (разворот — инволюция). Правило для тела:
+	; каждый байт пары, сырой или развёрнутый, живёт в каком-то регистре (B, C, D, E или A) до следующего
+	; pop; разметка «---- [..]» ниже — где он лежит, метки — границы диапазонов таблицы.
 	ld a,(vec_spr_cx)
 	add a,2
 	ld (vec_spr_cx),a
@@ -2113,80 +2095,39 @@ dsp_mirror:
 	ld a,(vec_spr_cx)
 	rrca
 	and $0f
-	ld (dspm_sx+1),a
+	ld (dsp_sx+1),a
 	ld a,(vec_spr_cx)
 	and 1
 	rrca
 	rrca
 	rrca
 	rrca
-	ld (dspm_coff+1),a
-	di
-	ld hl,0
-	add hl,sp
-	ld (vec_sp_save),hl
-	ld hl,(vec_spr_src)
-	ld sp,hl
+	ld (dsp_coff+1),a
+	ld hl,dspm_tail_done
+	ld (dsp_tail_j+1),hl
 	ld a,(vec_spr_port)
 	or KV_POOL_WIN
 	ld (vec_spr_curport),a
+	call vec_ei_enter
+	ld hl,(vec_spr_src)
+	dec hl
+	dec hl
+	ld sp,hl
+	ld a,(vec_spr_curport)
 	out (KV_PORT),a
-dspm_col:			; бюджет DI — на колонку целиком (см. dsp_col)
-	ld hl,dspm_col_go
-	ld (vec_blit_ret),hl
-	jp vec_spr_colbud
-dspm_col_go:
-	ld a,(vec_spr_ny)
-	ld (vec_rows_left),a
-	ld a,(vec_spr_ybot)
-	ld (vec_spr_row),a
-dspm_seg:
-	ld a,(vec_spr_row)
-	ld d,a
-	and $f0
-dspm_sx:
-	or 0			; самомодификация (dsp_mirror/dspm_seg_end): (cx>>1)&15
-	ld l,a
-	ld h,vec_slot_tab/256
-	ld a,(hl)
-	ld l,a
-	rrca
-	and $7f
-	add a,POOL_BASE/256
-	ld h,a
-	ld a,l
-	and 1
-	rrca
-dspm_coff:
-	add a,0			; самомодификация: (cx&1)*16
-	ld e,a
-	ld a,d
-	and 15
-	ld c,a
-	add a,e
-	ld l,a			; HL = адрес плоскости 0 нижней строки сегмента
-	ld a,c
-	inc a
-	ld b,a
-	ld a,(vec_rows_left)
-	cp b
-	jp nc,dspm_n_ok
-	ld b,a
-dspm_n_ok:
-	ld a,l			; конец сегмента по L (в пуле строка = -1), см. dsp_n_ok
-	sub b
-	ld (dspm_end+1),a
-	ld (dspm_rem+1),a
-	ld (b2pm_endA+1),a	; двухплоскостное тело: два `cp` на пару строк
-	ld (b2pm_endB+1),a
-	ld a,(vec_rows_left)
-	sub b
-	ld (vec_rows_left),a
-	ld a,(vec_spr_row)
-	sub b
-	ld (vec_spr_row),a	; бюджет колонки взят в dspm_col (vec_spr_colcost из ds_cost + 3)
-dspm_go:
-	jp dspm_row		; самомодификация (drawSprite_pool): dspm_row / b2pm_row / b2pm_rowb
+	pop hl			; пара под началом источника
+	ld (isr_pair),hl
+dspm_ei:
+	ei
+	jp dsp_col		; пролог колонки и сегмента общий; dsp_go ведёт в зеркальное тело
+; ---- [isr_pair]
+dspm_row_e:			; вход в тело из пролога: первая пара снимается здесь, дальше она в регистрах
+	ld d,rev256/256
+	pop bc
+; ---- [BC]
+dspm_row_e1:
+	jp dspm_row_bc
+; ---- [rev E, C] — сюда (dspm_row) приходят из конца строки
 dspm_row:			; HL = адрес плоскости 0 текущей строки в пуле; таблица разворота — через DE
 	; Указатель НЕ прячется в память на время просмотра rev256 (было ld (vec_spr_dst),hl + ld hl,(nn)
 	; = 40 тактов на строку): rev256 выровнена на страницу, поэтому индекс кладём в E, страницу в D,
@@ -2194,30 +2135,46 @@ dspm_row:			; HL = адрес плоскости 0 текущей строки �
 	; (было 4 обращения к vec_spr_mask/vec_spr_p01 по 16 тактов), пропуск переезжает в C.
 	ld d,rev256/256
 	pop bc			; C = p0, B = маска
+; ---- [BC]
+dspm_row_bc:
 	ld e,c
 	ld a,(de)
 	ld c,a			; C = p0 развёрнутый
+; ---- [rev C, B]
+dspm_row_rc:
 	ld e,b
 	ld a,(de)
 	ld b,a			; B = маска развёрнутая (A уже равен ей)
+; ---- [rev C, rev B]
+dspm_row_rcb:
 	and (hl)		; плоскость 0 — сразу, пока маска в A
 	or c
 	ld (hl),a
 	pop de			; E = p1, D = p2
+; ---- [DE]
+dspm_row_de:
 	ld c,d			; C = p2 (сырой)
 	ld d,rev256/256
-	ld a,(de)		; E уже = p1
-	ld e,a			; E = p1 развёрнутый
+; ---- [E, C]
+dspm_row_ec:
+	ld a,(de)		; A = p1 развёрнутый
+	ld e,c			; E = p2 (сырой)
+; ---- [rev A, E]
+dspm_row_ae:
+	ld c,a			; C = p1 развёрнутый
+; ---- [rev C, E]
+dspm_row_ce:
+	ld a,(de)
+	ld e,a			; E = p2 развёрнутый
+; ---- [rev C, rev E]
+dspm_row_cre:
 	ld a,l
 	add a,32
 	ld l,a
 	ld a,b
 	and (hl)		; плоскость 1
-	or e
+	or c
 	ld (hl),a
-	ld e,c
-	ld a,(de)
-	ld e,a			; E = p2 развёрнутый
 	ld a,l
 	add a,32
 	ld l,a
@@ -2227,15 +2184,30 @@ dspm_row:			; HL = адрес плоскости 0 текущей строки �
 	ld (hl),a
     if C8+SPR3
 	pop de			; E = 0 (заполнитель), D = пропуск
+; ---- [DE]
+dspm_row_de2:
 	ld c,d			; C = пропуск
+	ld d,rev256/256
+; ---- [E, C]
+dspm_row_ec2:
+	ld a,(de)		; rev(0) = 0 — только ради общего с 16-цветной сборкой состояния пары
+	ld e,a
+; ---- [rev E, C]
+dspm_row_rec2:
 	ld a,l
 	sub 64+1		; указатель стоит на 3-й плоскости (+64) — назад на плоскость 0 и строкой выше
     else
 	pop de			; E = p3, D = пропуск
+; ---- [DE]
+dspm_row_de2:
 	ld c,d			; C = пропуск
 	ld d,rev256/256
+; ---- [E, C]
+dspm_row_ec2:
 	ld a,(de)
 	ld e,a			; E = p3 развёрнутый
+; ---- [rev E, C] до конца строки, проверок и прыжка SP пропуска включительно
+dspm_row_rec2:
 	ld a,l
 	add a,32
 	ld l,a
@@ -2264,55 +2236,83 @@ dspm_rem:
 	jp c,dspm_k
 	ld a,c
 dspm_k:
-	ld c,a
+	ld b,a			; B = k: маска строки отработана, B свободен; C (пропуск) — старший байт пары под SP
 	ld a,l
-	sub c
+	sub b
 	ld l,a			; k строк вверх (в пуле строка = -1)
 	ld (vec_spr_p01),hl
-	ld a,c
+	ld a,c			; пара под новым SP — последняя пара последней пропущенной строки: p3 пустой
+	sub b			; строки = 0, её пропуск = C-k, если он >= 2, иначе 0 (как в dsp_k2)
+	cp 2
+	jp nc,dspm_k2
+	xor a
+dspm_k2:
+	ld h,a
+	ld l,0
+	ld (isr_pair),hl
+	ld a,b
 	add a,a
-	ld e,a
+	ld l,a
 	add a,a
-	add a,e			; 6k байт источника
+	add a,l			; 6k байт источника — через L: в E лежит байт пары
 	ld l,a
 	ld h,0
 	add hl,sp
 	ld sp,hl
+; ---- [isr_pair]
+dspm_sk_m:
 	ld hl,(vec_spr_p01)
-	jp dspm_row
+	pop bc
+; ---- [BC]
+dspm_sk_b:
+	jp dspm_row_bc		; D — всё ещё страница rev256
+; ---- [rev E, C] -> isr_pair: пролог сегмента портит регистры
 dspm_seg_end:
+	ld a,(de)		; обратный разворот p3 (D — страница rev256)
+	ld e,a
+; ---- [E, C]
+dspm_seg_end_e:
+	ld d,c
+; ---- [DE]
+dspm_seg_end_d:
+	ex de,hl
+; ---- [HL]
+dspm_seg_end_h:
+	ld (isr_pair),hl
+; ---- [isr_pair] до выхода; сюда же приходят сегменты двухплоскостного тела (b2pm_endB_m)
+dspm_seg_end_m:
 	ld a,(vec_rows_left)
 	or a
-	jp nz,dspm_seg
-	ld a,(vec_spr_skip)
-	ld l,a
-	ld h,0
-	add hl,sp
-	ld sp,hl
-	ld a,(dspm_coff+1)	; cx-1: смещение переключается, слот по x падает на чётной cx
+	jp nz,dsp_seg
+	jp dsp_tail		; хвост колонки общий с прямым путём, возврат — dsp_tail_j
+; ---- [isr_pair]
+dspm_tail_done:
+	ld a,(dsp_coff+1)	; cx-1: смещение переключается, слот по x падает на чётной cx
 	xor 16
-	ld (dspm_coff+1),a
+	ld (dsp_coff+1),a
 	jp z,dspm_col_next
-	ld a,(dspm_sx+1)
+	ld a,(dsp_sx+1)
 	dec a
-	ld (dspm_sx+1),a
+	ld (dsp_sx+1),a
 dspm_col_next:
 	ld a,(vec_col_cnt)
 	dec a
 	ld (vec_col_cnt),a
-	jp nz,dspm_col
-	jp vec_stk_leave
+	jp nz,dsp_col
+	jp dsp_leave
+dspm_leave_end:
+; ---- [нет]
 
 ; ---------------------------------------------------------------------------
 ; ДВУХПЛОСКОСТНОЙ (четырёхцветный) спрайт в слот пула. Кадр 288 Б, строка — три байта
 ; [старший бит цвета, маска, младший бит]; значения 0..3 живут в двух младших битах, поэтому данные
 ; идут в плоскости 2 и 3, а плоскости 0 и 1 спрайт только ГАСИТ маской (фон уровня их использует).
 ; Пролог сегмента, цикл колонок, разбор cx и бюджет DI — общие с четырёхплоскостным путём
-; (dsp_seg/dspm_seg, вход через самомодифицируемый dsp_go/dspm_go).
+; (dsp_seg, вход через самомодифицируемый dsp_go).
 ;
 ; Три байта на строку читаются стеком по два, поэтому строки идут ПАРАМИ: тройка pop даёт строку A
 ; целиком плюс первый байт строки B. Сегмент (кусок колонки внутри одного супертайла) может кончиться
-; МЕЖДУ строками пары — тогда первый байт строки B уезжает в vec_b2_carry, пролог сегмента отрабатывает
+; МЕЖДУ строками пары — тогда первый байт строки B остаётся в isr_pair, пролог сегмента отрабатывает
 ; как обычно, и новый сегмент начинается сразу со строки B (b2p_cont -> b2p_rowb).
 ; Разрыв пары на границе КОЛОНКИ невозможен: NY у двухплоскостных кадров чётное (нечётное разъехалось
 ; бы и в прямом блите — там на строку A тратится четыре байта источника вместо трёх).
@@ -2416,9 +2416,7 @@ b2p_skipB:
 	ld a,l
 	jp b2p_endB
 ; ---- [DE]
-b2p_split:			; сегмент кончился МЕЖДУ строками пары
-	ld a,d
-	ld (vec_b2_carry),a
+b2p_split:			; сегмент кончился МЕЖДУ строками пары: первый байт строки B (D) уедет в isr_pair
 	ex de,hl
 ; ---- [HL]
 b2p_split_h:
@@ -2429,7 +2427,7 @@ b2p_split_m:
 	ld (dsp_go+1),hl
 	jp dsp_seg_end_m
 b2p_cont:			; вход из dsp_go
-	ld a,(vec_b2_carry)
+	ld a,(isr_pair+1)	; первый байт строки B, снятый до разрыва пары
 	ld d,a
 	pop bc
 ; ---- [BC]
@@ -2439,16 +2437,29 @@ b2p_cont_end:
 ; ---- [нет]
 
 ; ---- зеркальный вариант: те же три байта, но каждый разворачивается через rev256 (страница
-; выровнена, индекс в E, страница в D — как в dspm_row).
+; выровнена, индекс в E, страница в D — как в dspm_row). Пара под SP — в регистрах, см. dsp_mirror.
+b2pm_row_e:			; вход из пролога: пара под SP в isr_pair
+	ld d,rev256/256
+	pop bc
+; ---- [BC]
+b2pm_row_e1:
+	jp b2pm_row_bc
+; ---- [rev C, B] — из b2pm_endB
 b2pm_row:
 	ld d,rev256/256
 	pop bc			; C = плоскость 2 строки A, B = её маска (сырые)
+; ---- [BC]
+b2pm_row_bc:
 	ld e,c
 	ld a,(de)
 	ld c,a			; C = плоскость 2 развёрнутая
+; ---- [rev C, B]
+b2pm_row_rc:
 	ld e,b
 	ld a,(de)
 	ld b,a			; B = маска развёрнутая (A уже равен ей)
+; ---- [rev C, rev B]
+b2pm_row_rcb:
 	and (hl)
 	ld (hl),a		; плоскость 0 — только гасим
 	ld a,l
@@ -2465,10 +2476,16 @@ b2pm_row:
 	or c
 	ld (hl),a		; плоскость 2
 	pop de			; E = плоскость 3 строки A, D = плоскость 2 строки B (сырые)
+; ---- [DE]
+b2pm_row_de:
 	ld c,d			; C = плоскость 2 строки B (сырая) — переживёт остаток строки A
 	ld d,rev256/256
+; ---- [E, C]
+b2pm_row_ec:
 	ld a,(de)
 	ld e,a			; E = плоскость 3 строки A развёрнутая
+; ---- [rev E, C]
+b2pm_row_rec:
 	ld a,l
 	add a,32
 	ld l,a
@@ -2480,17 +2497,28 @@ b2pm_row:
 	sub 96+1
 	ld l,a
 b2pm_endA:
-	cp 0			; самомодификация (dspm_n_ok): L конца сегмента
+	cp 0			; самомодификация (dsp_n_ok): L конца сегмента
 	jp z,b2pm_split
-b2pm_rowb:			; C = плоскость 2 строки B (сырая), D = страница rev256
+b2pm_rowb:			; C = плоскость 2 строки B (сырая), E = плоскость 3 строки A развёрнутая, D = страница rev256
+	ld b,e			; маска строки A отработана, B свободен: байт пары переезжает в него
+; ---- [rev B, C]
+b2pm_rowb_b:
 	ld e,c
 	ld a,(de)
 	ld c,a			; C = плоскость 2 строки B развёрнутая
+; ---- [rev B, rev C]
+b2pm_rowb_rc:
 	pop de			; E = маска строки B, D = её плоскость 3 (сырые)
+; ---- [DE]
+b2pm_rowb_de:
 	ld b,d			; B = плоскость 3 (сырая)
 	ld d,rev256/256
+; ---- [E, B]
+b2pm_rowb_eb:
 	ld a,(de)
 	ld e,a			; E = маска развёрнутая (A уже равен ей)
+; ---- [rev E, B]
+b2pm_rowb_reb:
 	and (hl)
 	ld (hl),a		; плоскость 0
 	ld a,l
@@ -2508,6 +2536,8 @@ b2pm_rowb:			; C = плоскость 2 строки B (сырая), D = стр�
 	ld (hl),a		; плоскость 2
 	ld c,e			; маску — в C, E освобождаем под плоскость 3
 	ld e,b
+; ---- [rev C, B] до конца пары
+b2pm_rowb_rcb:
 	ld a,(de)
 	ld e,a			; E = плоскость 3 развёрнутая
 	ld a,l
@@ -2521,22 +2551,38 @@ b2pm_rowb:			; C = плоскость 2 строки B (сырая), D = стр�
 	sub 96+1
 	ld l,a
 b2pm_endB:
-	cp 0			; самомодификация (dspm_n_ok): L конца сегмента
+	cp 0			; самомодификация (dsp_n_ok): L конца сегмента
 	jp nz,b2pm_row
-	ld hl,b2pm_row		; сегмент кончился на границе пары
-	ld (dspm_go+1),hl
-	jp dspm_seg_end
-b2pm_split:			; сегмент кончился МЕЖДУ строками пары
-	ld a,c
-	ld (vec_b2_carry),a
+	ld e,c			; сегмент кончился на границе пары: пара -> isr_pair, маска — обратным разворотом
+	ld a,(de)
+	ld l,a
+	ld h,b
+; ---- [HL]
+b2pm_endB_h:
+	ld (isr_pair),hl
+; ---- [isr_pair]
+b2pm_endB_m:
+	ld hl,b2pm_row_e
+	ld (dsp_go+1),hl
+	jp dspm_seg_end_m
+; ---- [rev E, C]
+b2pm_split:			; сегмент кончился МЕЖДУ строками пары: пара (плоскость 3 строки A, плоскость 2
+				; строки B) уедет в isr_pair (dspm_seg_end), оттуда её возьмёт b2pm_cont
 	ld hl,b2pm_cont
-	ld (dspm_go+1),hl
+	ld (dsp_go+1),hl
 	jp dspm_seg_end
-b2pm_cont:
-	ld a,(vec_b2_carry)
-	ld c,a
+; ---- [isr_pair]
+b2pm_cont:			; вход из dsp_go
+	ld a,(isr_pair+1)
+	ld c,a			; C = плоскость 2 строки B (сырая)
+	ld a,(isr_pair)
+	ld e,a
 	ld d,rev256/256
-	jp b2pm_rowb
+	ld a,(de)
+	ld b,a			; B = плоскость 3 строки A развёрнутая — как после ld b,e в b2pm_rowb
+	jp b2pm_rowb_b
+b2pm_cont_end:
+; ---- [нет]
 
 ; ---------------------------------------------------------------------------
 ; vec_pool_begin — вызывается в начале RedrawScreen_part1 / RedrawScreen:

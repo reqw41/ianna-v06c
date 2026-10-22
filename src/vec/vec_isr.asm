@@ -154,13 +154,27 @@ isr_nomusic:
 ; до dsp_leave_di). Порт в стековом режиме, SP — указатель в кадре: RST уже положил адрес возврата в два
 ; байта кадра под SP. Забираем его, уходим на настоящий стек (vec_sp_save) и зовём обычную ISR, на
 ; выходе возвращаем на место затёртую пару: по адресу возврата таблица isr_fix_tab говорит, где она
-; (BC/DE — только что снята pop, HL, ячейка isr_pair). Флаги прерванного кода живы: перенос — через
-; jp c/scf, остальное — команды без флагов.
-ISF_NONE	equ 0
-ISF_BC		equ 1
-ISF_DE		equ 2
-ISF_HL		equ 3
-ISF_MEM		equ 4
+; (регистры, HL, ячейка isr_pair). Флаги прерванного кода живы: перенос — через jp c/scf, остальное —
+; команды без флагов.
+; Режим — байт: $FF нет пары (DI), $FE isr_pair, $FD HL; иначе два полубайта — источник старшего и
+; младшего байта пары: 0 B, 1 C, 2 D, 3 E, 8 A (isr_a), +4 байт лежит РАЗВЁРНУТЫМ через rev256
+; (зеркальные тела разворачивают пару прямо в регистрах; разворот — инволюция, починка разворачивает обратно).
+ISF_NONE	equ $FF
+ISF_MEM		equ $FE
+ISF_HL		equ $FD
+ISF_BC		equ $01		; младший C, старший B
+ISF_DE		equ $23		; младший E, старший D
+ISF_rCB		equ $05		; младший rev(C), старший B
+ISF_rCrB	equ $45
+ISF_EC		equ $13
+ISF_rEC		equ $17
+ISF_rBrC	equ $54
+ISF_EB		equ $03
+ISF_rEB		equ $07
+ISF_rBC		equ $14
+ISF_rAE		equ $3C
+ISF_rCE		equ $35
+ISF_rCrE	equ $75
 isr_spr:
 	ld (isr_hl),hl
 	pop hl			; адрес возврата — из страницы квазидиска
@@ -203,7 +217,7 @@ isrs_find:
 	jp isrs_find
 isrs_hit:
 	ld a,(hl)
-	or a
+	cp ISF_NONE
 	jp z,isrs_none
 	ld hl,(isr_pair)
 	cp ISF_MEM
@@ -211,12 +225,18 @@ isrs_hit:
 	ld hl,(isr_hl)
 	cp ISF_HL
 	jp z,isrs_set
-	ld h,d
-	ld l,e
-	cp ISF_DE
-	jp z,isrs_set
-	ld h,b
-	ld l,c
+	push af			; полубайты: старший байт, потом младший (isrs_byte портит HL)
+	rrca
+	rrca
+	rrca
+	rrca
+	call isrs_byte
+	pop hl			; H = режим
+	push af			; старший байт пары — на стек
+	ld a,h
+	call isrs_byte
+	pop hl			; H = старший байт
+	ld l,a
 isrs_set:
 	ld (isr_pv),hl
 	ld hl,isrb_fix
@@ -246,6 +266,37 @@ isrb_go:
 	ei
 isr_ret:
 	jp 0			; самомодификация: адрес возврата
+
+; A = код источника (биты 0-1 регистр, бит 2 — развёрнут) -> A = байт пары. Портит HL.
+isrs_byte:
+	ld h,a
+	and 3
+	ld l,b
+	jp z,isb_r
+	ld l,c
+	dec a
+	jp z,isb_r
+	ld l,d
+	dec a
+	jp z,isb_r
+	ld l,e
+isb_r:
+	ld a,h
+	and 8
+	jp z,isb_r4
+	ld a,(isr_a)
+	ld l,a
+isb_r4:
+	ld a,h
+	and 4
+	ld a,l
+	ret z
+	push de
+	ld e,l
+	ld d,rev256/256
+	ld a,(de)
+	pop de
+	ret
 
 isr_hl:		dw 0
 isr_sp:		dw 0
@@ -290,7 +341,52 @@ isr_fix_tab:
 	db ISF_HL
 	dw dsp_leave_di+1	; конец сегмента, хвост колонки, выход до di включительно
 	db ISF_MEM
-	dw b2p_row_e		; зеркальный путь и прочее — DI
+	; зеркальный четырёхплоскостной путь (dsp_mirror)
+	dw dspm_ei+1		; пролог зеркала до ei — DI
+	db ISF_NONE
+	dw dspm_row_e1		; пролог колонки/сегмента и pop bc входа
+	db ISF_MEM
+	dw dspm_row		; jp входа
+	db ISF_BC
+	dw dspm_row_bc		; ld d / pop bc строки: пара прошлой строки
+	db ISF_rEC
+	dw dspm_row_rc
+	db ISF_BC
+	dw dspm_row_rcb
+	db ISF_rCB
+	dw dspm_row_de		; плоскость 0, pop de
+	db ISF_rCrB
+	dw dspm_row_ec
+	db ISF_DE
+	dw dspm_row_ae
+	db ISF_EC
+	dw dspm_row_ce
+	db ISF_rAE
+	dw dspm_row_cre
+	db ISF_rCE
+	dw dspm_row_de2		; плоскости 1-2, pop de
+	db ISF_rCrE
+	dw dspm_row_ec2
+	db ISF_DE
+	dw dspm_row_rec2
+	db ISF_EC
+	dw dspm_sk_m		; плоскость 3, конец строки, пропуск до ld sp,hl включительно
+	db ISF_rEC
+	dw dspm_sk_b		; после прыжка SP, pop bc
+	db ISF_MEM
+	dw dspm_seg_end		; jp после pop bc пропуска
+	db ISF_BC
+	dw dspm_seg_end_e
+	db ISF_rEC
+	dw dspm_seg_end_d
+	db ISF_EC
+	dw dspm_seg_end_h
+	db ISF_DE
+	dw dspm_seg_end_m
+	db ISF_HL
+	dw dspm_leave_end	; конец сегмента, хвост (через dsp_tail), выход
+	db ISF_MEM
+	dw b2p_row_e		; между путями кода нет
 	db ISF_NONE
 	dw b2p_row_e1		; pop bc входа
 	db ISF_MEM
@@ -312,6 +408,45 @@ isr_fix_tab:
 	db ISF_MEM
 	dw b2p_cont_end
 	db ISF_BC
+	; зеркальное двухплоскостное тело (b2pm_row_e): до него кода под EI нет
+	dw b2pm_row_e1		; pop bc входа
+	db ISF_MEM
+	dw b2pm_row		; jp входа
+	db ISF_BC
+	dw b2pm_row_bc		; ld d / pop bc строки A: пара от строки B
+	db ISF_rCB
+	dw b2pm_row_rc
+	db ISF_BC
+	dw b2pm_row_rcb
+	db ISF_rCB
+	dw b2pm_row_de		; плоскости 0-2 строки A, pop de
+	db ISF_rCrB
+	dw b2pm_row_ec
+	db ISF_DE
+	dw b2pm_row_rec
+	db ISF_EC
+	dw b2pm_rowb_b		; плоскость 3 строки A, cp, ld b,e
+	db ISF_rEC
+	dw b2pm_rowb_rc
+	db ISF_rBC
+	dw b2pm_rowb_de		; pop de строки B
+	db ISF_rBrC
+	dw b2pm_rowb_eb
+	db ISF_DE
+	dw b2pm_rowb_reb
+	db ISF_EB
+	dw b2pm_rowb_rcb	; плоскости 0-2 строки B, ld c,e / ld e,b
+	db ISF_rEB
+	dw b2pm_endB_h		; плоскость 3 строки B, cp, пара -> HL
+	db ISF_rCB
+	dw b2pm_endB_m
+	db ISF_HL
+	dw b2pm_split
+	db ISF_MEM
+	dw b2pm_cont		; разрыв пары
+	db ISF_rEC
+	dw b2pm_cont_end	; продолжение пары из isr_pair
+	db ISF_MEM
 	dw $FFFF
 	db ISF_NONE
 
