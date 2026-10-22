@@ -1010,7 +1010,10 @@ def build_kvaz(level_no=1, start=None):
     pages[3][0xC980:0xC980+len(mus)] = mus
     pages[3][0xD980:0xD980+len(sfx)] = sfx
     level = (SRC / f'level{level_no}.map').read_bytes()
-    fg = sorted(set().union(*(set(s[160:320]) for s in screens_of(level))) - {0})
+    # Порядок пар — по убыванию числа клеток на уровне: drawFGTile ищет тайл перебором пар
+    # (на уровне 3 — 7 тыс. тактов на тик при алфавитном порядке), частые — первыми.
+    fg_cnt = collections.Counter(t for s in screens_of(level) for t in s[160:320] if t)
+    fg = sorted(fg_cnt, key=lambda t: (-fg_cnt[t], t))
     # НЕПРОЗРАЧНЫЙ передний тайл (маска нулевая во всех строках — вода уровней 2/4/8, 29 тайлов из
     # 117 по всем уровням) кладётся в набор в формате ФОНОВОГО: 128 Б данных без маски. Движку он
     # достаётся обычным блитом тайла (128 Б стеком) вместо 256 Б «прочитать-и-или», и бюджет DI ему

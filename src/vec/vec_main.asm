@@ -38,6 +38,7 @@ vec_start:
 	call vec_init_rev256
     if !DEMO
 	call vec_slot_init	; таблица слотов пула = $FF (пул работает на всех уровнях)
+	call isr_idx_init
     endif
 	call initROMbanks
 	call initVDPBuffers
@@ -132,6 +133,7 @@ vec_reload_set:
 	call vfl_go		; загрузка без проверки маркера: набор в квазидиске уже чужой
 	call vec_init_rev256
 	call vec_slot_init
+	call isr_idx_init
 	call vec_load_leveltab
 	jp cls			; VRAM была буфером загрузки — иначе по краям поля остаётся мусор
 ; Игра пройдена: та же дорога, что и в меню (набор уровня 1 с оверлеем читается заново), но с
@@ -171,6 +173,41 @@ vec_load_leveltab:
 	ld (vec_pal_dirty),a
 	ei			; двухплоскостной блит и палитра экрана переехали в образ (vec_blit2.asm):
 	ret			; $7F00 нужен под таблицу слотов — пул работает на всех уровнях
+
+; Индекс таблицы починки (isr_fix_tab): для каждой половины страницы $50..$5B — адрес первой записи,
+; конец диапазона которой выше начала половины. Записи идут по адресам, последняя — $FFFF.
+isr_idx_init:
+	ld hl,isr_fix_tab
+	ld de,isr_idx
+	ld bc,ISR_IDX_PAGE0*256	; BC = граница половины страницы
+iii_next:
+	ld a,c			; граница - конец записи: перенос = конец выше границы
+	sub (hl)
+	inc hl
+	ld a,b
+	sbc a,(hl)
+	dec hl
+	jp c,iii_found
+	inc hl			; конец не выше — запись не нужна ни этой половине, ни следующим
+	inc hl
+	inc hl
+	jp iii_next
+iii_found:
+	ld a,l
+	ld (de),a
+	inc e
+	ld a,h
+	ld (de),a
+	inc e			; isr_idx не пересекает границу страницы (vec_slot_tab+192..+239)
+	ld a,c
+	xor $80
+	ld c,a
+	jp nz,iii_next
+	inc b
+	ld a,b
+	cp ISR_IDX_PAGE0+ISR_IDX_PAGES
+	jp nz,iii_next
+	ret
 
 vec_init_rev256:
 	ld hl,rev256
@@ -239,6 +276,8 @@ vec_ovl_go:
 ; Фаза меню: блоб порт-примитивов из стр.3 $9800 -> string_area, оверлей $8440 в окне b6 (порт $43)
 ; Читы: раз в тик из mainloop (build_vec ставит вызов перед проверкой паузы). Клавиши сняты в прерывании.
 vec_cheat_tick:
+	xor a
+	ld (vec_kb_ph),a	; новый тик: ISR опросит клавиатуру на ближайшем кадре
 	ld a,(vec_cheat)
 	or a
 	ret z

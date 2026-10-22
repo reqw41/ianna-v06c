@@ -541,6 +541,18 @@ def main():
         if not DEMO:
             assert int(mh.group(1), 16) <= 0x6AF9, f'окно vec_hi.asm дошло до ${mh.group(1)}: с $6AF9 — ячейки читов (vec_vdp.asm)'
             print(f'окно $6AB0: до ${int(mh.group(1), 16)-1:04X} (свободно {0x6AF9-int(mh.group(1), 16)} Б)')
+            # Индекс isr_fix_tab (vec_isr.asm ISR_IDX_PAGE0/PAGES, isr_idx_init): записи таблицы обязаны лежать в
+            # страницах индекса, иначе поиск идёт с начала таблицы — верно, но в разы медленнее (сторож, не ошибка)
+            mi = re.search(r'^ISR_IDX_PAGE0\s+=\s+\$([0-9A-F]+)', lst, re.M); mn = re.search(r'^ISR_IDX_PAGES\s+=\s+\$([0-9A-F]+)', lst, re.M)
+            mt = re.search(r'^([0-9A-F]{4}):\s+isr_fix_tab:', lst, re.M)
+            if mi and mn and mt:
+                p0 = int(mi.group(1), 16) << 8; p1 = p0 + (int(mn.group(1), 16) << 8); ends = []
+                for line in lst[mt.end():].split('\n'):
+                    mm = re.match(r'^[0-9A-F]{4}: ([0-9A-F]{4})\s+(?:\[[^\]]*\]\s+)?\s*dw (\S+)', line)
+                    if mm: ends.append((int(mm.group(1)[2:] + mm.group(1)[:2], 16), mm.group(2)))
+                    if 'dw $FFFF' in line: break
+                out = [f'{n} ${a:04X}' for a, n in ends[:-1] if not p0 < a < p1]
+                if out: print(f'ВНИМАНИЕ: записи isr_fix_tab вне индекса ${p0:04X}-${p1-1:04X}: ' + ', '.join(out) + ' — поправьте ISR_IDX_PAGE0/PAGES (vec_isr.asm)')
         print(f'код до ${code_end-1:04X} включительно, переменные с ${VARS_ADDR:04X} (зазор {VARS_ADDR-code_end} Б)')
         m = re.search(r'^OBJECT_DATA\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert m and int(m.group(1), 16) & 0xFF == 0, 'OBJECT_DATA не выровнена на страницу!'

@@ -145,3 +145,6 @@ rev256:
 	ds 512 - ($ - rev256)
 vec_slot_tab equ rev256 + 256
     endif
+; хвост страницы таблицы слотов: индексы 0..159 — слоты стайлов, 160..191 — полосы грязного по строкам
+isr_idx		equ vec_slot_tab+192	; 48 Б: индекс isr_fix_tab по половинам страниц $50..$5B (isr_idx_init, vec_main.asm)
+vec_kb_ph	equ vec_slot_tab+240	; кадр тика для опроса клавиатуры (ISR опрашивает на нечётных; vec_cheat_tick обнуляет)

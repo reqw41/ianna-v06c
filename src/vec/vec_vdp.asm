@@ -2588,9 +2588,11 @@ vpb_clr:
 	dec b
 	jp nz,vpb_clr
 	xor a
+	ld b,32			; полосы грязного строк (160..191); хвост страницы — isr_idx и vec_kb_ph, не трогать
 vpb_clr2:
 	ld (hl),a
 	inc l
+	dec b
 	jp nz,vpb_clr2
 	ret
 vec_pool_begin:
@@ -2675,25 +2677,20 @@ vpb_mx_keep:
 	rlca
 	rlca
 	rlca
-	ld e,a			; E = sy*16 (в ячейке держать незачем — регистр свободен)
+	ld e,a			; sy*16
+	ld a,(vec_tmp_sx)
+	or e
+	ld l,a			; L = sy*16+sx: по строке идём inc l (H — страница таблицы слотов)
 	ld a,(vec_tmp_nx)
-	ld b,a
-	ld a,(vec_tmp_sx)
-	ld c,a
-vpb_x:
-	ld a,e			; H уже стоит на таблице слотов (метка строки выше)
-	or c
-	ld l,a
-	; нужные колонки этого стайла: обе, кроме краёв прямоугольника с битом 7
+	ld b,a			; B = стайлов в строке
+	; нужные колонки стайла: обе, кроме краёв прямоугольника с битом 7 — D для первого стайла
+	; ставится здесь, после каждого стайла D = 3, последний проверяется в vpb_x
 	ld d,3
-	ld a,(vec_tmp_sx)
-	cp c
-	jp nz,vpb_cl_ok
 	ld a,(vec_col_l)
 	rlca
-	jp nc,vpb_cl_ok
+	jp nc,vpb_x
 	ld d,2			; первый стайл, левая колонка не нужна
-vpb_cl_ok:
+vpb_x:
 	ld a,b
 	dec a
 	jp nz,vpb_cr_ok
@@ -2708,19 +2705,17 @@ vpb_cr_ok:
 	ld a,(hl)
 	or d
 	ld (hl),a
-	ld h,vec_slot_tab/256
 	; Под стайлом есть передний тайл? Тогда слот: прямой путь клал бы фон и FG в VRAM порознь, и луч
 	; между ними видел фон без воды/тумана (мерцание воды под мечом у голема, Emu80 2026-09-04).
-	; Индекс L = sy*16+sx — тот же, что у карты переднего слоя.
-	push hl
+	; Индекс L = sy*16+sx — тот же, что у карты переднего слоя (DE — её адрес, флаги D уже не нужны).
 	ld a,l
 	add a,CURRENT_SCREEN_MAP_FG & $FF
-	ld l,a
+	ld e,a
 	ld a,0
 	adc a,CURRENT_SCREEN_MAP_FG >> 8
-	ld h,a
-	ld a,(hl)
-	pop hl
+	ld d,a
+	ld a,(de)
+	ld h,vec_slot_tab/256
 	or a
 	jp z,vpb_fe
 	ld a,(vec_slot_next)
@@ -2733,7 +2728,8 @@ vpb_cr_ok:
 vpb_fe:
 	ld (hl),$fe		; грязный супертайл без слота: рисуется прямо в VRAM (и BG, и FG)
 vpb_x_next:
-	inc c
+	ld d,3
+	inc l
 	dec b
 	jp nz,vpb_x
 	ld a,(vec_tmp_sy)
@@ -2764,16 +2760,16 @@ vpb_rect_done:
 	ld (vec_gr_lp),hl
 	ld de,SPDATA
 	ld c,MAX_SPRITES
-	ld hl,vec_spr_prev
-	ld (vec_tmp_rp),hl
+	ld hl,vec_spr_prev	; HL = прошлый прямоугольник спрайта (64 Б в одной странице: inc l)
 vpb_spr:
-	ld a,(de)		; включён?
-	inc de
-	ld l,a
+	ld a,(de)		; включён? (записи SPDATA по 8 Б, выровнены: внутри записи — inc e)
+	inc e
+	ld b,a
 	ld a,(de)
-	dec de
-	or l
+	dec e
+	or b
 	jp z,vpb_spr_off
+	ld (vec_tmp_rp),hl
 	ld hl,7
 	add hl,de
 	ld a,(hl)		; перерисовывается?
@@ -2797,36 +2793,41 @@ vpb_spr:
 	ld (vec_hr_s1),a
 	call vpb_hr_calc	; цена и дедлайны луча для слотов героя (arkos_hot.asm, зазор)
 vpb_spr_copy:
-	ld hl,3			; prev := текущий (x,y,nx,ny)
-	add hl,de
-	push de
-	ex de,hl
-	ld hl,(vec_tmp_rp)
-	ld b,4
-vpb_cp:
+	ld hl,(vec_tmp_rp)	; prev := текущий (x,y,nx,ny) — байты записи +3..+6
+	inc e
+	inc e
+	inc e
 	ld a,(de)
 	ld (hl),a
-	inc hl
-	inc de
-	dec b
-	jp nz,vpb_cp
-	pop de
+	inc e
+	inc l
+	ld a,(de)
+	ld (hl),a
+	inc e
+	inc l
+	ld a,(de)
+	ld (hl),a
+	inc e
+	inc l
+	ld a,(de)
+	ld (hl),a
+	inc l			; HL = prev следующего спрайта
+	ld a,e			; DE = запись +6: следующая запись = +2
+	add a,2
 	jp vpb_spr_adv
 vpb_spr_off:
-	ld hl,(vec_tmp_rp)	; выключен: prev.nx = 0
-	inc hl
-	inc hl
+	inc l			; выключен: prev.nx = 0
+	inc l
 	ld (hl),0
+	inc l
+	inc l
+	ld a,e			; следующая запись SPDATA (+8)
+	add a,8
 vpb_spr_adv:
-	ld hl,(vec_tmp_rp)
-	inc hl
-	inc hl
-	inc hl
-	inc hl
-	ld (vec_tmp_rp),hl
-	ld hl,8
-	add hl,de
-	ex de,hl
+	ld e,a
+	ld a,d
+	adc a,0
+	ld d,a
 	dec c
 	jp nz,vpb_spr
 	ld a,(vec_tmp_ovf)
@@ -2844,7 +2845,7 @@ vpb_overflow2:
 ; vpb_rect_assign: HL -> [x px, y px, nx, ny (символы по 8)]; грязным ($FE) супертайлам под ним — слоты.
 ; nx = 0 — пропуск. Переполнение слотов -> vec_tmp_ovf = 1.
 vpb_rect_assign:
-	; Регистры вместо ячеек: C = sx0, E = sx1, B = текущая строка (sy*16), D = L конца строки,
+	; Регистры вместо ячеек: C = sx0, E = sx1, B = текущая строка (sy*16), D = счётчик стайлов строки,
 	; HL = указатель в таблицу слотов (по строке идём inc l — sx0 <= sx1 <= 15, за строку не выходим).
 	; Ширина/высота умножаются сдвигом вместо цикла «прибавить 8 nx раз» (nx, ny — размер спрайта
 	; в символах, <= 31: сдвиг даёт то же по модулю 256, а перенос — то же условие обрезки).
@@ -2906,16 +2907,29 @@ vpb_sy_ok:
 	ld (vec_tmp_ny),a	; sy1*16
 vpb_sy:
 	ld a,b
-	or e
-	ld d,a			; D = L конца строки
-	ld a,b
 	or c
 	ld l,a
 	ld h,vec_slot_tab/256
+	ld a,e
+	sub c
+	inc a
+	ld d,a			; D = стайлов в строке
 vpb_sxl:
 	ld a,(hl)
 	cp $fe
-	jp nz,vpb_sx_next	; не грязный (или уже со слотом)
+	jp z,vpb_sx_slot	; грязный без слота
+vpb_sx_next:
+	inc l
+	dec d
+	jp nz,vpb_sxl
+	ld a,(vec_tmp_ny)
+	cp b
+	ret z
+	ld a,b
+	add a,16
+	ld b,a
+	jp vpb_sy
+vpb_sx_slot:
 	ld a,(vec_slot_next)
 	cp POOL_SLOTS			; слоты 0..79 = $A000-$C7FF; выше $C980 — музыка
 	jp nc,vpb_ovf
@@ -2941,20 +2955,7 @@ vpb_sxl:
 	inc hl
 	ld (vec_hr_lp),hl
 	pop hl
-vpb_sx_next:
-	ld a,l
-	cp d
-	jp z,vpb_sy_next
-	inc l
-	jp vpb_sxl
-vpb_sy_next:
-	ld a,(vec_tmp_ny)
-	cp b
-	ret z
-	ld a,b
-	add a,16
-	ld b,a
-	jp vpb_sy
+	jp vpb_sx_next
 vpb_ovf:
 	ld a,1
 	ld (vec_tmp_ovf),a
