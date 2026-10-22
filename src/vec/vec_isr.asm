@@ -149,6 +149,172 @@ isr_nomusic:
 	ei
 	ret
 
+; ---------------------------------------------------------------------------
+; ПРЕРЫВАНИЕ ВО ВРЕМЯ СПРАЙТА В ПУЛ (drawSprite_pool, прямой кадр; вектор $0039 смотрит сюда от dsp_enter
+; до dsp_leave_di). Порт в стековом режиме, SP — указатель в кадре: RST уже положил адрес возврата в два
+; байта кадра под SP. Забираем его, уходим на настоящий стек (vec_sp_save) и зовём обычную ISR, на
+; выходе возвращаем на место затёртую пару: по адресу возврата таблица isr_fix_tab говорит, где она
+; (BC/DE — только что снята pop, HL, ячейка isr_pair). Флаги прерванного кода живы: перенос — через
+; jp c/scf, остальное — команды без флагов.
+ISF_NONE	equ 0
+ISF_BC		equ 1
+ISF_DE		equ 2
+ISF_HL		equ 3
+ISF_MEM		equ 4
+isr_spr:
+	ld (isr_hl),hl
+	pop hl			; адрес возврата — из страницы квазидиска
+	ld (isr_ret+1),hl
+	ld (isr_a),a
+	ld a,0			; не xor: флаги ещё не сохранены
+	out (KV_PORT),a		; стековый режим выкл.: дальше настоящий стек
+	ld hl,0
+	jp c,isrs_c
+	add hl,sp		; add hl,sp трогает только перенос
+	jp isrs_sp
+isrs_c:
+	add hl,sp
+	scf
+isrs_sp:
+	ld (isr_sp),hl		; SP прерванного блита (адрес возврата уже снят)
+	ld hl,(vec_sp_save)
+	ld sp,hl
+	ld a,(isr_a)
+	push af			; флаги и регистры прерванного блита — до конца, починке нужны BC и DE
+	push bc
+	push de
+	ld hl,isr_spr_back
+	push hl
+	ld hl,(isr_hl)
+	jp vec_isr		; сразу: она перезаряжает счётчик фазы ВИ53, задержка сдвинула бы фазу кадра
+isr_spr_back:			; ret обычной ISR (после её ei — до следующего кадра прерываний не будет)
+	di
+	; режим починки: первая запись таблицы с концом диапазона больше адреса возврата
+	ld hl,isr_fix_tab
+isrs_find:
+	ld a,(isr_ret+1)
+	sub (hl)
+	inc hl
+	ld a,(isr_ret+2)
+	sbc a,(hl)
+	inc hl
+	jp c,isrs_hit
+	inc hl
+	jp isrs_find
+isrs_hit:
+	ld a,(hl)
+	or a
+	jp z,isrs_none
+	ld hl,(isr_pair)
+	cp ISF_MEM
+	jp z,isrs_set
+	ld hl,(isr_hl)
+	cp ISF_HL
+	jp z,isrs_set
+	ld h,d
+	ld l,e
+	cp ISF_DE
+	jp z,isrs_set
+	ld h,b
+	ld l,c
+isrs_set:
+	ld (isr_pv),hl
+	ld hl,isrb_fix
+	jp isrs_go
+isrs_none:
+	ld hl,isrb_go
+isrs_go:
+	ld (isrb_sw+1),hl
+	pop de
+	pop bc
+	pop af			; HL прерванного кода — в isr_hl (с входа)
+	ld (isr_a),a
+	ld hl,(isr_sp)
+	ld sp,hl
+	ld a,(vec_spr_curport)
+	out (KV_PORT),a		; снова стековый режим блита
+isrb_sw:
+	jp isrb_fix		; самомодификация: isrb_fix / isrb_go
+isrb_fix:
+	ld hl,(isr_pv)
+	push hl			; пара — на место адреса возврата
+	inc sp
+	inc sp
+isrb_go:
+	ld a,(isr_a)
+	ld hl,(isr_hl)
+	ei
+isr_ret:
+	jp 0			; самомодификация: адрес возврата
+
+isr_hl:		dw 0
+isr_sp:		dw 0
+isr_pv:		dw 0
+isr_pair:	dw 0		; пара под SP там, где её нет в регистрах (диапазоны [isr_pair] в коде блита)
+isr_a:		db 0
+
+; Диапазоны кода спрайта в пул: (конец диапазона, не включая; где пара под SP). Порядок — по адресам,
+; метки — из разметки «---- [..]» в vec_vdp.asm. Адрес возврата = команда, которая ещё не исполнена.
+isr_fix_tab:
+	dw dtb_ei		; до ei тайла в слот — DI
+	db ISF_NONE
+	dw dtb_ei_end		; тайл в слот: пара под SP всегда в BC
+	db ISF_BC
+	dw dbk_ei		; до ei чёрного тайла в слот — DI
+	db ISF_NONE
+	dw dbk_ei_end		; чёрный тайл в слот: пара под началом слота
+	db ISF_MEM
+	dw dfb_ei		; до ei переднего тайла в слот — DI
+	db ISF_NONE
+	dw dfb_ei_end		; передний тайл в слот: пара в BC
+	db ISF_BC
+	dw dsp_col		; до пролога первой колонки — DI
+	db ISF_NONE
+	dw dsp_row_e1		; пролог колонки/сегмента и pop bc входа
+	db ISF_MEM
+	dw dsp_row		; jp после pop bc входа
+	db ISF_BC
+	dw dsp_row_pd		; pop bc строки: пара от третьего pop de прошлой строки
+	db ISF_DE
+	dw dsp_row_de		; pop de
+	db ISF_BC
+	dw dsp_sk_m		; тело строки, конец сегмента, пропуск до ld sp,hl включительно
+	db ISF_DE
+	dw dsp_sk_b		; после прыжка SP пропуска
+	db ISF_MEM
+	dw dsp_seg_end		; jp после pop bc пропуска
+	db ISF_BC
+	dw dsp_seg_end_h	; ex de,hl
+	db ISF_DE
+	dw dsp_seg_end_m	; ld (isr_pair),hl
+	db ISF_HL
+	dw dsp_leave_di+1	; конец сегмента, хвост колонки, выход до di включительно
+	db ISF_MEM
+	dw b2p_row_e		; зеркальный путь и прочее — DI
+	db ISF_NONE
+	dw b2p_row_e1		; pop bc входа
+	db ISF_MEM
+	dw b2p_row_de		; jp входа, pop bc и pop de строки A
+	db ISF_BC
+	dw b2p_rowb_bc		; строка A, pop bc строки B
+	db ISF_DE
+	dw b2p_skipA		; строка B, конец сегмента на границе пары
+	db ISF_BC
+	dw b2p_skipB
+	db ISF_DE
+	dw b2p_split
+	db ISF_BC
+	dw b2p_split_h		; разрыв пары до ex de,hl включительно
+	db ISF_DE
+	dw b2p_split_m
+	db ISF_HL
+	dw b2p_cont_b		; переход и pop bc продолжения
+	db ISF_MEM
+	dw b2p_cont_end
+	db ISF_BC
+	dw $FFFF
+	db ISF_NONE
+
 ; get_joystick: A = состояние. Матрица Вектора: out(3)=~(1<<ряд), in(2) — активный 0.
 ; ряд 0: б7 вниз, б6 вправо, б5 вверх, б4 влево;  ряд 7: б7 пробел, б2 Z, б0 X.
 ; ПОРТ 3 = ТАКЖЕ ВЕРТИКАЛЬНЫЙ СКРОЛЛ — после опроса обязательно вернуть $FF.

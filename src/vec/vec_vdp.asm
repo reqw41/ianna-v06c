@@ -332,6 +332,16 @@ DTB16		macro		; 16 Б в слот пула по возрастанию
 	ld (hl),b
 	inc hl
 	endm
+DTSK16		macro		; 16 Б источника мимо (под SP остаётся пара из BC)
+	pop bc
+	pop bc
+	pop bc
+	pop bc
+	pop bc
+	pop bc
+	pop bc
+	pop bc
+	endm
 VBPLANE		macro		; после колонки 1 H = база+2, следующая плоскость = база+$20
 	ld a,h
 	add a,$1e
@@ -545,6 +555,11 @@ vsl_ok:
 ; панель cols*pops/2 + 2. Таймер ВИ53 не трогаем — он нужен под музыку.
 ; Вход: A = стоимость в единицах 256 тактов. Портит A и флаги.
 VEC_BUDGET_LIMIT equ 228	; кадр = 234 ед.; запас 6 на неучтённые накладные (стоимости откалиброваны стендом calib по реальным тактам)
+
+; Фаза кадра перед коротким DI внутри блита спрайта в пул (стековый режим: call нельзя) — проверка вписана
+; в код (dsp_tg/dsp_lg): ВИ53 как в vec_phase, у края кадра ждём прерывания. Окна DI за ней — до 60 тактов,
+; точность фазы 2 ед.: запас 4 ед.
+VEC_PH_EDGE	equ 230
 VEC_ISR_COST	equ 24		; ISR с музыкой: ур.2 медиана 20 / p90 24, ур.1 медиана 22 / макс 29 (calib)
 vec_budget:
     if VI53
@@ -768,18 +783,33 @@ dt_blit:				; вход с готовым vec_blit_src (drawFGTile: непроз�
 	ld (vec_col_f),a	; какие колонки слота заливать
 	ld a,d
 	call vec_pool_addr
-	ld a,16 - C8*2		; бюджет DI: тайл в слот. calib по ОКНУ DI (blitcalib): было 14.0 ед. при
-				; цене 18, стало 12.4 — цена 16 держит тот же запас 3.6 ед.
-	call vec_budget
 	ex de,hl		; DE = слот в окне
+	; ТАЙЛ В СЛОТ ИДЁТ С РАЗРЕШЁННЫМИ ПРЕРЫВАНИЯМИ, как спрайт в пул (см. dsp_enter): было окно DI
+	; на весь блит с бюджетом 16 ед. — у края кадра тайл ждал прерывания. Под SP всегда пара из BC:
+	; тело только снимает pop bc, ненужная колонка тоже перешагивается pop'ами, а не прыжком SP.
+	ld a,KV_POOL_WIN|KV_STK_P0
+	ld (vec_spr_curport),a
+	call vec_phase
+	cp VEC_PH_EDGE
+	jp c,dtb_enter
+	halt
+dtb_enter:
 	di
+	ld hl,isr_spr
+	ld ($0039),hl
 	ld hl,0
 	add hl,sp
 	ld (vec_sp_save),hl
 	ld hl,(vec_blit_src)
+	dec hl
+	dec hl
 	ld sp,hl
 	ld a,KV_POOL_WIN|KV_STK_P0
 	out (KV_PORT),a
+	pop bc			; пара под началом источника
+dtb_ei:
+	ei
+; ---- [BC] до dtb_ei_end
 	ex de,hl		; HL = dest
 	ld a,(vec_col_f)
 	dec a
@@ -792,35 +822,36 @@ dtb_loop:
 	DTB16			; тактах работы; A в теле не жив, счётчик переехал в него. Четыре копии
 	sub 2			; стоили ещё 80 Б ROM ради 40 тактов на тайл — они ушли под заливку
 	jp nz,dtb_loop		; чёрного тайла (dt_black), которая экономит 1.7 тыс. на стайл
-	jp dt_end
+	jp dtb_leave
 ; Одна колонка из двух: слот — [плоскость][колонка][16 строк], порции по 16 Б чередуются
-; левая/правая. Ненужную пропускаем и в источнике (SP), и в слоте (HL): +16 к обоим.
+; левая/правая. Ненужную пропускаем и в источнике, и в слоте (HL): +16 к обоим. В источнике —
+; восемью pop bc (80 тактов против 25 на прыжок SP): после прыжка под SP лежала бы пара, которой
+; нет в регистрах, и прерывание затёрло бы её в графике тайла навсегда.
 dtb_left:
 	ld a,4 - C8
 dtbl_loop:
 	DTB16
-	ex de,hl
-	ld hl,16
-	add hl,sp
-	ld sp,hl
-	ld hl,16
+	ld de,16
 	add hl,de
+	DTSK16
 	dec a
 	jp nz,dtbl_loop
-	jp dt_end
+	jp dtb_leave
 dtb_right:
 	ld a,4 - C8
 dtbr_loop:
-	ex de,hl
-	ld hl,16
-	add hl,sp
-	ld sp,hl
-	ld hl,16
+	ld de,16
 	add hl,de
+	DTSK16
 	DTB16
 	dec a
 	jp nz,dtbr_loop
-	jp dt_end
+dtb_leave:
+	ld h,b			; выход — общий со спрайтом (фаза, di, вектор): там пара под SP в isr_pair
+	ld l,c
+	ld (isr_pair),hl
+	jp dsp_leave
+dtb_ei_end:
     endif
 dt_direct:
 	; бюджет DI: тайл прямо в VRAM, цена 19 (calib по ОКНУ DI, blitcalib: 13.3 ед. + запас 5.5).
@@ -949,6 +980,9 @@ dt_blk_go:
 	ld de,128
 	add hl,de		; push идёт вниз — начинаем с конца слота
 	ex de,hl
+	ld a,(vec_col_f)
+	cp 3
+	jp z,dbk_full
 	ld a,6			; бюджет DI: окно 64 push + пролог ≈ 1.2 тыс. тактов = 4.7 ед.
 	call vec_budget
 	di
@@ -1014,6 +1048,56 @@ dt_blkr_l:
 	dec a
 	jp nz,dt_blkr_l
 	jp vec_stk_leave
+; Весь слот — с РАЗРЕШЁННЫМИ ПРЕРЫВАНИЯМИ (как dtb_enter). push идёт вниз, под SP — ещё не
+; записанная часть слота, и адрес возврата прерывания затрётся следующими push. Ценна только пара под
+; началом слота (конец соседнего): её снимаем на входе в isr_pair, починка кладёт её под SP всегда —
+; внутри слота это тоже лишь будущее место нулей. Одна колонка (под SP — нужная вторая) — под DI выше.
+dbk_full:
+	ld hl,-128
+	add hl,de
+	dec hl
+	dec hl			; HL = начало слота - 2
+	ld a,KV_STK_P3
+	ld (vec_spr_curport),a
+	call vec_phase
+	cp VEC_PH_EDGE
+	jp c,dbk_enter
+	halt
+dbk_enter:
+	di
+	ex de,hl
+	ld hl,isr_spr
+	ld ($0039),hl
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl
+	ex de,hl
+	ld sp,hl
+	ld a,KV_STK_P3
+	out (KV_PORT),a
+	pop hl
+	ld (isr_pair),hl
+	ld hl,128
+	add hl,sp
+	ld sp,hl		; конец слота
+	ld bc,0
+	ld a,8
+dbk_ei:
+	ei
+; ---- [isr_pair] до dbk_ei_end
+dbk_l:
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	push bc
+	dec a
+	jp nz,dbk_l
+	jp dsp_leave
+dbk_ei_end:
     endif
 
 ; ---------------------------------------------------------------------------
@@ -1057,9 +1141,6 @@ dft_found:
 	ld a,c
 	rlca
 	jp c,dft_opaque
-	ld a,35 - C8*10		; FG: окно DI 16ц медиана 30.9 / макс 34.7 (blitcalib 2026-09-03, ур.3 1,0);
-				; цена 31 была занижена ещё до пула, а с пулом FG-тайлов на тик стало больше
-	call vec_budget
 	pop bc			; координаты B, C: перебор пар их портил (B — счётчик, C — число пар),
 	push bc			; и тайл ложился в верхний левый угол вместо своего места (вода на уровне 2)
     if !DEMO
@@ -1075,15 +1156,34 @@ dft_found:
 	ld (vec_col_f),a
 	ld a,d
 	call vec_pool_addr
-	ex de,hl
+	ex de,hl		; DE = слот
+	; С РАЗРЕШЁННЫМИ ПРЕРЫВАНИЯМИ, как тайл фона в слот (dtb_enter): под SP всегда пара из BC.
+	; Выход общий со спрайтом (dsp_leave -> vec_stk_leave), его ret приходит в dft_exit.
+	ld a,KV_POOL_WIN|KV_STK_P0	; FG-тайлы — страница 0 ($5D00)
+	ld (vec_spr_curport),a
+	call vec_phase
+	cp VEC_PH_EDGE
+	jp c,dfb_enter
+	halt
+dfb_enter:
 	di
+	ld hl,dft_exit
+	push hl
+	ld hl,isr_spr
+	ld ($0039),hl
 	ld hl,0
 	add hl,sp
 	ld (vec_sp_save),hl
 	ld hl,(vec_blit_src)
+	dec hl
+	dec hl
 	ld sp,hl
-	ld a,KV_POOL_WIN|KV_STK_P0	; FG-тайлы — страница 0 ($5D00)
+	ld a,KV_POOL_WIN|KV_STK_P0
 	out (KV_PORT),a
+	pop bc			; пара под началом источника
+dfb_ei:
+	ei
+; ---- [BC] до dfb_ei_end
 	ex de,hl
 	ld a,16 - C8*4		; C8: 192 Б = 12 итераций
 	ld (vec_row_cnt),a
@@ -1098,43 +1198,49 @@ dftb_loop:
 	dec a
 	ld (vec_row_cnt),a
 	jp nz,dftb_loop
-	jp dft_end
+	jp dfb_leave
+; Ненужная колонка: 16 Б слота и 32 Б источника (данные+маска) перешагиваем, источник — pop'ами
+; (см. dtb_left).
 dftb_left:
 	ld a,4 - C8
 	ld (vec_row_cnt),a
 dftbl_loop:
 	DFTB8
 	DFTB8
-	ex de,hl		; ненужная колонка: 16 Б слота и 32 Б источника (данные+маска) перешагиваем
-	ld hl,32
-	add hl,sp
-	ld sp,hl
-	ld hl,16
+	ld de,16
 	add hl,de
+	DTSK16
+	DTSK16
 	ld a,(vec_row_cnt)
 	dec a
 	ld (vec_row_cnt),a
 	jp nz,dftbl_loop
-	jp dft_end
+	jp dfb_leave
 dftb_right:
 	ld a,4 - C8
 	ld (vec_row_cnt),a
 dftbr_loop:
-	ex de,hl		; ненужная колонка: 16 Б слота и 32 Б источника (данные+маска) перешагиваем
-	ld hl,32
-	add hl,sp
-	ld sp,hl
-	ld hl,16
+	ld de,16
 	add hl,de
+	DTSK16
+	DTSK16
 	DFTB8
 	DFTB8
 	ld a,(vec_row_cnt)
 	dec a
 	ld (vec_row_cnt),a
 	jp nz,dftbr_loop
-	jp dft_end
+dfb_leave:
+	ld h,b
+	ld l,c
+	ld (isr_pair),hl
+	jp dsp_leave
+dfb_ei_end:
     endif
 dft_direct:
+	ld a,35 - C8*10		; FG: окно DI 16ц медиана 30.9 / макс 34.7 (blitcalib 2026-09-03, ур.3 1,0);
+				; цена 31 была занижена ещё до пула, а с пулом FG-тайлов на тик стало больше
+	call vec_budget
 	ld a,b
 	rrca
 	rrca
@@ -1697,12 +1803,12 @@ drawSprite_pool:
 	; Тело строки выбирается флагом «банк в двух плоскостях» (бит 0 порта): пролог сегмента,
 	; цикл колонок, бюджет DI и разбор cx — общие, различается только разбор данных строки
 	; (четыре плоскости — 6 Б на строку, две — 3 Б на строку, читаются парами).
-	ld hl,dsp_row
+	ld hl,dsp_row_e
 	ld de,dspm_row
 	ld a,(vec_spr_port)
 	rrca
 	jp nc,dsp_body
-	ld hl,b2p_row
+	ld hl,b2p_row_e
 	ld de,b2pm_row
 	ld a,(vec_spr_skip2)	; хвост колонки короче вдвое: (32-NY)*3
 	ld (vec_spr_skip),a
@@ -1731,21 +1837,40 @@ dsp_body:
 	rrca
 	rrca
 	ld (dsp_coff+1),a
+	ld a,(vec_spr_port)
+	or KV_POOL_WIN
+	ld (vec_spr_curport),a
+	; СПРАЙТ В ПУЛ ИДЁТ С РАЗРЕШЁННЫМИ ПРЕРЫВАНИЯМИ (2026-10-22). Раньше каждая колонка просила бюджет
+	; DI (vec_spr_colbud) и у края кадра ждала прерывания: на големе так простаивало 0,5 кадра на тик.
+	; Прерывание в стековом режиме кладёт адрес возврата в квазидиск — в два байта данных кадра под SP.
+	; На время блита вектор RST7 смотрит на isr_spr: та забирает адрес, уходит на настоящий стек, зовёт
+	; обычную ISR и кладёт два байта на место. Откуда их брать, решает таблица isr_fix_tab по адресу
+	; возврата: из BC/DE (только что снятые pop), из HL или из ячейки isr_pair. Отсюда правило для кода
+	; ниже: в каждой точке под SP лежит пара, которая есть в регистре или в isr_pair, и диапазоны в
+	; таблице описывают, где какая. Короткие DI остались на входе, выходе и прыжке SP через хвост
+	; колонки (там пару под новым SP не знает никто) — перед каждым проверяется фаза кадра.
+	call vec_phase
+	cp VEC_PH_EDGE
+	jp c,dsp_enter
+	halt
+dsp_enter:
 	di
+	ld hl,isr_spr
+	ld ($0039),hl
 	ld hl,0
 	add hl,sp
 	ld (vec_sp_save),hl
 	ld hl,(vec_spr_src)
+	dec hl
+	dec hl
 	ld sp,hl
-	ld a,(vec_spr_port)
-	or KV_POOL_WIN
-	ld (vec_spr_curport),a
+	ld a,(vec_spr_curport)
 	out (KV_PORT),a
-dsp_col:			; бюджет DI — на колонку целиком (как у прямого пути ds_col), а не на сегмент:
-	ld hl,dsp_col_go	; окно DI то же (сегменты идут подряд), а проверка одна вместо двух и
-	ld (vec_blit_ret),hl	; адрес сегмента больше не надо прятать в память через vec_spr_dst
-	jp vec_spr_colbud
-dsp_col_go:
+	pop hl			; пара под началом источника
+	ld (isr_pair),hl
+	ei
+; ---- [isr_pair] пролог колонки и сегмента
+dsp_col:
 	ld a,(vec_spr_ny)
 	ld (vec_rows_left),a
 	ld a,(vec_spr_ybot)
@@ -1756,7 +1881,7 @@ dsp_seg:
 	ld d,a
 	and $f0
 dsp_sx:
-	or 0			; самомодификация (dsp_col_go/dsp_seg_end): (cx>>1)&15
+	or 0			; самомодификация (drawSprite_pool/dsp_tail_done): (cx>>1)&15
 	ld l,a
 	ld h,vec_slot_tab/256
 	ld a,(hl)
@@ -1796,13 +1921,23 @@ dsp_n_ok:
 	ld (vec_rows_left),a
 	ld a,(vec_spr_row)
 	sub b
-	ld (vec_spr_row),a	; бюджет колонки взят в dsp_col (vec_spr_colcost = NY + NY/4 + 8 из drawSprite)
+	ld (vec_spr_row),a
 dsp_go:
-	jp dsp_row		; самомодификация (drawSprite_pool): dsp_row — четыре плоскости,
-				; b2p_row/b2p_rowb — две (пара строк может разорваться сегментом)
+	jp dsp_row_e		; самомодификация (drawSprite_pool): dsp_row_e — четыре плоскости,
+				; b2p_row_e/b2p_cont — две (пара строк может разорваться сегментом)
+dsp_row_e:			; вход в тело: первая пара снимается здесь, дальше она в BC
+	pop bc
+; ---- [BC]
+dsp_row_e1:
+	jp dsp_row+1
+; ---- [DE] (пара от третьего pop прошлой строки)
 dsp_row:
 	pop bc			; C = p0, B = маска
+; ---- [BC]
+dsp_row_pd:
 	pop de			; E = p1, D = p2
+; ---- [DE] до прыжка SP в пропуске включительно
+dsp_row_de:
 	ld a,b
 	and (hl)
 	or c
@@ -1855,32 +1990,82 @@ dsp_rem:
 	jp c,dsp_k
 	ld a,d
 dsp_k:
-	ld d,a
+	; ПРОПУСК k пустых строк прыжком SP. D и E не трогаем до самого прыжка (пара под SP — в DE),
+	; k держит C. Под новым SP окажется хвост последней пропущенной строки: [p3 или 0, её пропуск].
+	; Строка пустая, а цвет 0 на всех уровнях остаётся нулём, поэтому первый байт — 0; пропуск
+	; build_edd считает как «пустых строк выше» = D - k (меньше двух — ноль).
+	ld c,a
+	ld a,d
+	sub c
+	cp 2
+	jp nc,dsp_k2
+	xor a
+dsp_k2:
+	ld b,a
 	ld a,l
-	sub d
+	sub c
 	ld l,a			; k строк вверх (в пуле строка = -1)
 	ld (vec_spr_p01),hl
-	ld a,d
+	ld h,b
+	ld l,0
+	ld (isr_pair),hl
+	ld a,c
 	add a,a
-	ld e,a
+	ld l,a
 	add a,a
-	add a,e
+	add a,l			; 6k байт источника
 	ld l,a
 	ld h,0
 	add hl,sp
 	ld sp,hl
+; ---- [isr_pair]
+dsp_sk_m:
 	ld hl,(vec_spr_p01)
-	jp dsp_row
+	pop bc
+; ---- [BC]
+dsp_sk_b:
+	jp dsp_row+1
+; ---- [DE]
 dsp_seg_end:
+	ex de,hl
+; ---- [HL]
+dsp_seg_end_h:
+	ld (isr_pair),hl
+; ---- [isr_pair] до DI выхода; сюда же приходят сегменты двухплоскостного тела
+dsp_seg_end_m:
 	ld a,(vec_rows_left)
 	or a
 	jp nz,dsp_seg
-	; следующая колонка
+	; следующая колонка: прыжок через хвост (32-NY строк). Пару под новым SP не знает никто, поэтому
+	; прыжок и чтение этой пары — под DI, не у края кадра.
 	ld a,(vec_spr_skip)
+	or a
+	jp z,dsp_tail_done
 	ld l,a
 	ld h,0
 	add hl,sp
+	dec hl
+	dec hl
+	ex de,hl		; DE = новый SP - 2 (D и E в прологе сегмента перезаписываются)
+	xor a
+	out ($08),a
+	in a,($0B)
+	in a,($0B)
+	cpl
+	add a,a
+	jp c,dsp_tg_w
+	cp VEC_PH_EDGE
+	jp c,dsp_tg_ok
+dsp_tg_w:
+	halt
+dsp_tg_ok:
+	di
+	ex de,hl
 	ld sp,hl
+	pop hl
+	ld (isr_pair),hl
+	ei
+dsp_tail_done:
 	ld a,(dsp_coff+1)	; cx+1: смещение колонки переключается, слот по x растёт на нечётной cx
 	xor 16
 	ld (dsp_coff+1),a
@@ -1893,6 +2078,24 @@ dsp_col_next:
 	dec a
 	ld (vec_col_cnt),a
 	jp nz,dsp_col
+dsp_leave:			; вход и для тайла в слот (dtb_leave)
+	xor a
+	out ($08),a
+	in a,($0B)
+	in a,($0B)
+	cpl
+	add a,a
+	jp c,dsp_lg_w
+	cp VEC_PH_EDGE
+	jp c,dsp_lg_ok
+dsp_lg_w:
+	halt
+dsp_lg_ok:
+dsp_leave_di:
+	di
+; ---- [нет] дальше прерываний нет до ei в vec_stk_leave
+	ld hl,vec_isr
+	ld ($0039),hl
 	jp vec_stk_leave
 dsp_mirror:
 	; Цена колонки в пуле СВОЯ: зеркальная строка пула стоит 381 такт (было 490), окно DI на NY=32
@@ -2113,9 +2316,18 @@ dspm_col_next:
 ; как обычно, и новый сегмент начинается сразу со строки B (b2p_cont -> b2p_rowb).
 ; Разрыв пары на границе КОЛОНКИ невозможен: NY у двухплоскостных кадров чётное (нечётное разъехалось
 ; бы и в прямом блите — там на строку A тратится четыре байта источника вместо трёх).
-b2p_row:
+; Под EI (см. dsp_enter): диапазоны пары под SP для isr_fix_tab отмечены «---- [..]».
+b2p_row_e:			; вход из dsp_go: первая пара снимается здесь
+	pop bc
+; ---- [BC]
+b2p_row_e1:
+	jp b2p_row+1
+b2p_row:			; [BC] сюда приходят только из b2p_endB — пара от pop bc строки B
 	pop bc			; C = плоскость 2 строки A, B = её маска
+b2p_row_pd:
 	pop de			; E = плоскость 3 строки A, D = плоскость 2 строки B
+; ---- [DE] до pop bc строки B включительно
+b2p_row_de:
 	; ПУСТАЯ СТРОКА (маска $FF — все восемь точек прозрачны, данные нулевые): четыре «прочитать-и-или»
 	; ничего не меняют. У великанов таких строк 16-28 % (tools: empty_rows 2026-10-12), у четырёхплоскостных
 	; спрайтов пропуск строк уже есть в самих данных. Проверка стоит 28 тактов на строку, пропуск экономит ~170.
@@ -2153,6 +2365,8 @@ b2p_endA:
 	jp z,b2p_split
 b2p_rowb:			; D = плоскость 2 строки B
 	pop bc			; C = маска строки B, B = её плоскость 3
+; ---- [BC]
+b2p_rowb_bc:
 	ld a,c
 	inc a
 	jp z,b2p_skipB		; пустая строка B
@@ -2185,27 +2399,44 @@ b2p_rowb:			; D = плоскость 2 строки B
 b2p_endB:
 	cp 0			; самомодификация (dsp_n_ok): L конца сегмента
 	jp nz,b2p_row
-	ld hl,b2p_row		; сегмент кончился на границе пары
+	ld h,b			; сегмент кончился на границе пары: пара под SP — в BC, переносим в isr_pair
+	ld l,c
+	ld (isr_pair),hl
+	ld hl,b2p_row_e
 	ld (dsp_go+1),hl
-	jp dsp_seg_end
+	jp dsp_seg_end_m
+; ---- [DE]
 b2p_skipA:			; строка A пустая: только шаг на строку выше
 	dec l
 	ld a,l
 	jp b2p_endA
+; ---- [BC]
 b2p_skipB:
 	dec l
 	ld a,l
 	jp b2p_endB
+; ---- [DE]
 b2p_split:			; сегмент кончился МЕЖДУ строками пары
 	ld a,d
 	ld (vec_b2_carry),a
+	ex de,hl
+; ---- [HL]
+b2p_split_h:
+	ld (isr_pair),hl
+; ---- [isr_pair]
+b2p_split_m:
 	ld hl,b2p_cont
 	ld (dsp_go+1),hl
-	jp dsp_seg_end
-b2p_cont:
+	jp dsp_seg_end_m
+b2p_cont:			; вход из dsp_go
 	ld a,(vec_b2_carry)
 	ld d,a
-	jp b2p_rowb
+	pop bc
+; ---- [BC]
+b2p_cont_b:
+	jp b2p_rowb_bc
+b2p_cont_end:
+; ---- [нет]
 
 ; ---- зеркальный вариант: те же три байта, но каждый разворачивается через rev256 (страница
 ; выровнена, индекс в E, страница в D — как в dspm_row).
