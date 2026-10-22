@@ -16,6 +16,12 @@ vec_start:
 	out ($02),a
 	ld a,$FF
 	out ($03),a
+	ld a,$83		; ВВ55 №2 — джойстик «П» (как в ядре MiSTer, Vector-06C.sv joyP): оба устройства
+	out (PPI2_CW),a
+	ld a,$9F
+	out (PPI2_C),a
+	in a,(PPI2_A)		; покой: нажатием дальше считается отклонение от него (без джойстика
+	ld (joy_idle),a		; порт читается константой — $FF или мусор шины)
     if !DEMO
 	xor a
 	out (KV_PORT),a		; квазидиск выкл

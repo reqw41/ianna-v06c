@@ -116,6 +116,11 @@ def make_cpu(keys):
             elif val == 0x58: st['trk'] += 1; st['busy'] = False       # STEP-IN с обновлением трека
             elif val == 0x80: fdd_seek_read()                           # READ SECTOR
     def in_handler(port):
+        if port == 0x06:                    # джойстик «П»: покой $FF, нажатие — сброшенный бит (клавиши jright/jleft/jup/jdown/jfire/jfire2)
+            v = 0xFF
+            for k, b in (('jright', 1), ('jleft', 2), ('jup', 4), ('jdown', 8), ('jfire', 0x40), ('jfire2', 0x80)):
+                if k in keys: v &= ~b
+            return v
         if port == 0x0B:
             v = pit['latched'] if pit['latched'] is not None else pit_val()
             if pit['rd'] == 0: pit['rd'] = 1; return v & 0xFF
