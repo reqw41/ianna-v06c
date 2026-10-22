@@ -19,7 +19,7 @@ FRAME = 59904.0
 MUSIC_FR = 0.28          # ~17К т/тик / FRAME из mus_reg_bench
 MUSIC_T = MUSIC_FR * FRAME
 
-# великаны + известные тяжёлые из gates/ANALYSIS (уровни с snap)
+# великаны + известные тяжёлые из gates/docs/ANALYSIS (уровни с snap)
 SCENES = [
     (1, '4,5', 'мумии'),
     (1, '0,6', 'мумии×2'),
