@@ -52,9 +52,7 @@ wl_go:
 	; и звал загрузчик, которому неоткуда читать: картинка разрушалась, а страница не менялась.
 	ld a,$34
 	ld (vec_fdd_ctl),a
-	call vfl_ctl
-	in a,($1B)
-	and $80
+	call vfl_ready		; vec_turbo.asm: FORCE INTERRUPT и ожидание READY
 	jp nz,wl_bail
 	; --- экран гасим палитрой: дальше VRAM работает буфером ---
 	ld c,0

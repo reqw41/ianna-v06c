@@ -10,6 +10,8 @@ build_vec.py [--demo] — сборка ROM для Вектор-06Ц.
 """
 import subprocess, sys, pathlib, re, os
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import disk_layout as DL   # раскладка дискеты (дорожки меню и слайдов)
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = ROOT / 'ref/msx2/src'
 TR = ROOT / 'build/tr'
@@ -249,6 +251,12 @@ def make_vars():
     text = text.replace('MUSIC_CODE: ds 2000', 'MUSIC_CODE: ds 2')
     # string_area: как в оригинале 2048 (уровень 7 — 1994 Б; с 1536 уровень 2 затирал OBJECT_DATA); OBJECT_DATA на границе страницы
     if DEMO: text = text.replace('string_area: ds 2048', 'string_area: ds 512')
+    else:
+        # одноразовый код старта для Турбо+ живёт в string_area: образ грузится целиком, а string_area до
+        # меню не используется (vec_start зовёт turbo_init первым делом); в резиденте до $6A00 места нет
+        boot = (VEC / 'vec_turbo_boot.asm').read_text(encoding='utf-8', errors='replace')
+        assert 'string_area: ds 2048' in text
+        text = text.replace('string_area: ds 2048', 'string_area:\n' + boot + '\n\tds 2048 - ($ - string_area)')
     # неиспользуемые буферы VDP-команд (кроме vdpCmdSprite: там NY для drawSprite) и палитры
     text = re.sub(r'^(tileDat|fgtileDat|dirtyTileDat|cmdDat|charDat|charDat2|charDat3|fillDat|vdpCmdWeapon|lineMoveDat|vdpCopyDat|scoreDat): ds 15', r'\1: ds 0', text, flags=re.M)
     text = text.replace('currentPal: ds 32', 'currentPal: ds 0')
@@ -499,6 +507,8 @@ def main():
     order.append(TR / 'z80rt_used.asm')
     order.append(VEC / 'vec_mirr.asm')
     order.append(VEC / 'vec_blit2.asm')   # прямой блит двухплоскостных банков
+    if not DEMO:
+        order.append(VEC / 'vec_turbo.asm')   # Вектор Турбо+ и ожидания контроллера дисковода
     order.append(VEC / 'vec_hi.asm')        # org $6AB0 (окно в vec_col_tab), кроме демо
     order += [TR / 'vars.asm', VEC / 'vec_vars.asm']   # org VARS_ADDR
     parts = [f'DEMO\tequ {1 if DEMO else 0}\n']
@@ -565,7 +575,7 @@ def main():
 
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
-    need = ['depack', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl',
+    need = ['depack', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl', 'vfl_ready',
             'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', 'vec_fade_out', 'vec_fade_in', 'vec_slc_clear', 'vec_slc_unp', 'vec_txt_clear', 'vec_palsave', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
@@ -599,7 +609,7 @@ def build_menu_bins(lst):
         out.append(f'{n}\tequ ${v:04X}')
     out += [f'FB_ORG\tequ ${syms["string_area"] + 1216:04X}'   # загрузчик банков: за буфером сектора,
             ,                                                   # таблицей длин и рецептом
-            f'MB_ORG\tequ ${syms["string_area"]:04X}', 'MB_TRK_MENU\tequ 3', 'MB_SEC_MENU\tequ 3', 'MB_TRK_SLIDES\tequ 73',
+            f'MB_ORG\tequ ${syms["string_area"]:04X}', f'MB_TRK_MENU\tequ {DL.MENU_TRACK}', f'MB_SEC_MENU\tequ {DL.MENU_SEC}', f'MB_TRK_SLIDES\tequ {DL.PIC_TRACK}',
             f'MB_CREDITS\tequ ${CREDITS_ADDR:04X}']
     (ROOT / 'build/menu_syms.asm').write_text('\n'.join(out) + '\n')
     sys.path.insert(0, str(ROOT / 'tools/data'))

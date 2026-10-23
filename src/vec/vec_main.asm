@@ -36,7 +36,7 @@ vec_start:
 	call vec_fdd_load	; загрузка с дискеты, если квазидиск пуст (маркер 'IA' в стр.3 $C800)
 	ld hl,vfl_dirtab	; таблицу дорожек уровней прошивает build_fdd прямо в образ ROM, а в
 	ld de,vec_dirtab	; копии загрузчика внутри набора она нулевая — сохраняем, пока цела
-	ld bc,16
+	ld bc,10		; уровни 1..8 и секретный (индекс 9)
 	call z_ldir
 	call vec_load_leveltab	; палитра, банки спрайтов и передние тайлы — из набора уровня
     endif
@@ -137,7 +137,7 @@ vec_reload_set:
 	ei
 	ld hl,vec_dirtab	; вернуть таблицу дорожек: в копии из набора она нулевая
 	ld de,vfl_dirtab
-	ld bc,16
+	ld bc,10
 	call z_ldir
 	call vfl_go		; загрузка без проверки маркера: набор в квазидиске уже чужой
 	call vec_init_rev256

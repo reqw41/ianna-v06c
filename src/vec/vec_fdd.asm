@@ -21,6 +21,7 @@ KV_WIN_BANKS	equ $63		; окно $8000-$9FFF, страница 3: там леж�
 ; в build_edd (PAUSE_ADDR/FDD_BANKCODE/WPN_SRC), чтобы адрес не расходился с укладчиком набора.
 
 vec_fdd_load:
+	call turbo_init		; Вектор Турбо+: порты 40h..43h до первой записи в порт 10h (vec_turbo_boot.asm)
 	ld a,KV_WIN_MUSIC	; маркер уже есть — квазидиск заполнен снаружи, читать нечего
 	out (KV_PORT),a
 	ld a,(FDD_MARK)
@@ -34,9 +35,7 @@ vfl_go:
 	; запуск «ПЗУ + квазидиск» без дискеты (Emu80, стенды) на любом перечитывании набора читал
 	; $FF вместо данных, распаковывал мусор в квазидиск и вешал машину (жалоба 2026-09-08).
 	; Эхо регистра сектора для этого не годится: контроллер отвечает и без дискеты.
-	call vfl_ctl
-	in a,($1B)
-	and $80
+	call vfl_ready		; vec_turbo.asm: FORCE INTERRUPT и ожидание READY
 	jp nz,vfl_done		; дискеты нет — набор в квазидиске уже загружен, читать нечего
 	xor a
 	out (KV_PORT),a
@@ -302,30 +301,51 @@ vfr_end:
 	ei
 	ret
 
-vfl_ctl:
-	ld a,(vec_fdd_ctl)
-	out ($1C),a
+; vfl_ctl — в резиденте (vec_turbo.asm)
+; Готов ли дисковод: NZ = NOT READY (нет дискеты или привода). FORCE INTERRUPT (D0h) переводит статус
+; в тип I, где бит 7 — линия READY привода; готовности ждём (мотор после простоя раскручивается, на
+; Турбо+ после CP/M — так же, как у Tony).
+vfl_ready:
+	call vfl_ctl
+	ld a,$D0
+	out ($1B),a
+	ld a,$80
+	call vfl_waitm
 	in a,($1B)
-	rrca
-	jp c,vfl_ctl
-	ld a,(vec_fdd_ctl)
+	and $80
 	ret
-vfl_wait:			; ожидание готовности со СЧЁТЧИКОМ: без него сбой контроллера или
-	push bc			; отсутствие дискеты вешали машину намертво
+; Ожидание конца команды типа I (RESTORE, STEP) со СЧЁТЧИКОМ: без него сбой контроллера или
+; отсутствие дискеты вешали машину намертво. Сначала пауза: ВГ93 поднимает BUSY не сразу, и на 12 МГц
+; опрос сразу за командой видел «свободен» — следующая команда терялась (ошибка из порта Tony).
+; Счётчик 4 x 65536: ~4 с на 3 МГц и ~1 с на 12 МГц (RESTORE с дальней дорожки идёт до 0,5 с).
+vfl_wait:
+	ld a,1			; бит 0 статуса — BUSY
+vfl_waitm:			; A = маска «ещё ждём»
+	push bc
+	push de
+	ld e,a
+	ld a,40
+vfw_p:
+	dec a
+	jp nz,vfw_p
+	ld d,4
 	ld bc,0
 vfl_w1:
 	in a,($1B)
-	rrca
-	jp nc,vfl_w_ok
+	and e
+	jp z,vfl_w_ok
 	dec bc
 	ld a,b
 	or c
 	jp nz,vfl_w1
+	dec d
+	jp nz,vfl_w1
 vfl_w_ok:
+	pop de
 	pop bc
 	ret
 
 vfl_blk:	db 0
 ; дорожка начала набора для уровней 1..16 (индекс = current_level); 0 = набора нет.
 ; Прошивает build_fdd.py по адресу из листинга — дорожку не приходится читать с дискеты.
-vfl_dirtab:	ds 16
+vfl_dirtab:	ds 10

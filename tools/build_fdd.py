@@ -2,12 +2,9 @@
 """Сборка загрузочного ianna.fdd: [дескриптор ПЗУ][ROM][сжатые наборы уровней][экран меню][слайды].
 Конвенция штатного ПЗУ Вектора (снята с loader.rom / boots): дескриптор 32 Б в начале дорожки 0
 (байт 4 = число КБ для загрузки в $0080.., байт 31 = сумма байтов 0..30 с сеедом $66), вход $0100.
-Геометрия 80x2x5x1024 = 800 КБ; дорожка = 10 КБ.
-
-Раскладка дорожек:
-   0..3   ROM (32 КБ) + экран меню в хвосте дорожки 3
-   4..72  сжатые наборы уровней (build/levels/level{N}.pak) и библиотека банков
-   73..79 семь слайдов интро/концовки (по одной дорожке на слайд)
+Дискета — МикроДОС на 82 дорожки (2x5x1024 на дорожку, 839 680 Б): раскладка и каталог — в
+tools/disk_layout.py. Первый файл каталога — IANNA.COM (копия ROM): с ним игру запускают из CP/M 4.0 и
+со стартового экрана ПЗУ Вектора Турбо+.
 Картинки (экран меню и семь слайдов) лежат СЖАТЫМИ и по одной на дорожку: дамп VRAM — это 32 КБ,
 и вшестером они занимали 24 дорожки из 80, из-за чего девять наборов уровней (660 КБ) на дискету
 не помещались. Каждая плоскость жмётся отдельно (aPLib, 1-2.6 КБ), в начале дорожки — заголовок
@@ -18,11 +15,12 @@
 """
 import pathlib, re, sys, json, hashlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SEC = 1024
-TRACK = 10 * SEC
-LEVEL_TRACKS = list(range(4, 73))   # один непрерывный блок: наборы уровней по 5-9 дорожек каждый
-MENU_TRACK, MENU_SEC = 3, 3         # экран меню — в хвосте дорожек ROM (образ кончается на 32-м секторе)
-PIC_TRACK = 73                      # семь слайдов — по дорожке на каждый (73..79)
+sys.path.insert(0, str(ROOT / 'tools'))
+import disk_layout as DL            # раскладка дискеты МикроДОС — см. tools/disk_layout.py
+SEC, TRACK = DL.SEC, DL.TRACK
+LEVEL_TRACKS = DL.LEVEL_TRACKS       # один непрерывный блок: наборы уровней по 5-9 дорожек каждый
+MENU_TRACK, MENU_SEC = DL.MENU_TRACK, DL.MENU_SEC   # экран меню — в хвосте загрузочной области
+PIC_TRACK = DL.PIC_TRACK             # семь слайдов — по дорожке на каждый
 
 rom = bytearray((ROOT / 'build/ianna.rom').read_bytes())
 assert len(rom) <= 32 * 1024 - 0x80
@@ -52,11 +50,11 @@ def check_overlays(n, pak):
                  f'python3 tools/build_vec.py && python3 tools/build_fdd.py')
 
 # --- разложить наборы уровней и собрать таблицу дорожек ---
-dirtab = bytearray(16)
+dirtab = bytearray(10)          # vfl_dirtab: ds 10 (уровни 1..8, attract-демо, секретный)
 free = list(LEVEL_TRACKS)
 placed = []
 level_data = []
-for n in range(1, 17):
+for n in range(1, 10):
     pak = ROOT / f'build/levels/level{n}.pak'
     if not pak.exists(): continue
     data = pak.read_bytes()
@@ -81,14 +79,15 @@ if m and placed:
     addr = int(m.group(1), 16)
     off = addr - 0x100           # образ ассемблирован с org $0100
     assert 0 <= off < len(rom), (hex(addr), off, len(rom))
-    rom[off:off+16] = dirtab
+    rom[off:off+len(dirtab)] = dirtab
     print(f'таблица дорожек уровней прошита в ROM по ${addr:04X}: {list(dirtab[:10])}')
 elif placed:
     print('!! vfl_dirtab не найден в листинге — таблица не прошита')
 
-img = bytearray(80 * 2 * 5 * SEC)
+img = bytearray(DL.DISK)
 desc = bytearray(32)
 desc[4] = 32                      # 32К -> $0080-$807F (вход $0100)
+desc[5:31] = DL.DPB               # блок параметров диска МикроДОС (для CP/M и плагина FAR)
 s = 0x66
 for i in range(31): s = (s + desc[i]) & 0xFF
 desc[31] = s
@@ -108,6 +107,7 @@ for start, data in level_data:
 import json
 lib_at = {}
 track_free = {tr: 10 for tr in free}     # свободных секторов в дорожке (счёт с сектора 1)
+track_free[DL.LIB_TAIL[0]] = DL.LIB_TAIL[1]  # хвост дорожки за IANNA.COM
 # Хвост ПОСЛЕДНЕЙ дорожки каждого набора тоже свободен: наборы кратны сектору, а не дорожке, и
 # в сумме девять хвостов дают 56 КБ. Без них четыре страницы героя (22 сект.) в библиотеку уже
 # не помещались: целых свободных дорожек в области уровней остаётся всего пара.
@@ -217,6 +217,18 @@ if menu.exists():
         blob = pack_center(vrm, (ROOT / 'build/slide0.vrm').read_bytes()) if i in CENTER_SLIDES else pack_picture(vrm)
         img[(PIC_TRACK + i)*TRACK:(PIC_TRACK + i)*TRACK + len(blob)] = blob
         placed_pics.append((i + 1, PIC_TRACK + i, len(blob)))
+
+# --- каталог МикроДОС: IANNA.COM (копия ROM уже с прошитыми таблицами) и IANNA.DAT поверх всего остального ---
+com = bytes(img[0x80:0x80 + len(rom)])
+ca = DL.COM_LBA * SEC
+assert not any(img[ca:ca + len(com)]), 'IANNA.COM наехал на данные'
+img[ca:ca + len(com)] = com
+assert DL.COM_LBA * SEC + len(com) <= DL.DAT_LBA * SEC, 'IANNA.COM не влез до IANNA.DAT'
+assert not any(img[DL.DIR_LBA * SEC:DL.DATA_LBA * SEC]), 'каталог наехал на данные'
+img[DL.DIR_LBA * SEC:DL.DATA_LBA * SEC] = DL.msdos_dir([
+    (('IANNA', 'COM'), DL.COM_LBA, len(com)),
+    (('IANNA', 'DAT'), DL.DAT_LBA, (2 * (DL.DSM + 1) + DL.DIR_LBA - DL.DAT_LBA) * SEC),
+])
 
 out = ROOT / 'build/ianna.fdd'
 out.write_bytes(img)
