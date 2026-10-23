@@ -16,3 +16,6 @@ ref/msx2
 ref/msx2_rom
 tools/apultra
 tools/pasmo-src
+tools/msxemu/msxjs
+node_modules/
+tools/bin/pasmo

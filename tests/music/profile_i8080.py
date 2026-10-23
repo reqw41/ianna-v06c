@@ -1,6 +1,7 @@
+import os
 # Профиль переведённого плеера Arkos на i8080 (emu8080 + таблица тактов): такты/кадр по функциям.
 import sys, re, bisect, collections, json
-sys.path.insert(0,'/Users/boris/projects/knightmare-v06c/tools')
+sys.path.insert(0,os.path.join(os.path.dirname(os.path.abspath(__file__)),'../../tools/vendor'))
 from emu8080 import I8080
 src=open('../../tools/profile_vec.py').read(); i=src.index('# Такты ВЕКТОРА'); j=src.index('keys = []'); exec(src[i:j])
 syms={}

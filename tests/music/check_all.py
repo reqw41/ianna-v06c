@@ -1,6 +1,6 @@
 # Гейт по всем мелодиям: Z80-оригинал против нативного i8080-плеера, 6200 кадров + эффекты (как FX_Play).
 import sys, os, json, subprocess, glob
-sys.path.insert(0,'/Users/boris/projects/knightmare-v06c/tools')
+sys.path.insert(0,os.path.join(os.path.dirname(os.path.abspath(__file__)),'../../tools/vendor'))
 from emu8080 import I8080
 sp='../../ref/msx2/src/'
 songs=sorted(os.path.basename(f) for f in glob.glob(sp+'music-*.mus'))

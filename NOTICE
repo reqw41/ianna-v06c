@@ -1,0 +1,26 @@
+The Sword of Ianna → Vector-06C
+Copyright 2026 Boris Likhachev
+
+This is a port of "The Sword of Ianna" (RetroWorks, 2017), MSX2 version.
+Original game: code by Utopian (fjpena), graphics by Pagantipaco,
+music by McAlby. Original source code and artwork:
+https://github.com/fjpena/sword-of-ianna-msx2 — licensed under the Apache
+License, Version 2.0.
+
+Changes made in this port: the game logic is translated from the original Z80
+source to Intel 8080 by tools/z80to8080.py and patched for the Vector-06C;
+the screen output, input, floppy loader, quasi-disk layout and the Arkos
+Tracker player for i8080 (src/vec/) are written anew; graphics, maps and
+texts are converted by tools/data/; the menu, intro and level texts are
+translated into Russian.
+
+The port is distributed under the same Apache License, Version 2.0 (see
+LICENSE). Graphics, music and texts belong to the authors of the original
+game.
+
+Third-party files:
+- tools/vendor/Z80.js — Z80 emulator by Molly Howell, MIT License.
+- tools/bin/apultra — aPLib-format compressor by Emmanuel Marty and spke,
+  zlib License.
+- ref/cpc/ — release of the Amstrad CPC version by RetroWorks, with its own
+  LICENSE file.

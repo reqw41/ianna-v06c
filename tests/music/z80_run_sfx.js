@@ -1,7 +1,7 @@
-const fs=require('fs'); const Z80=require('/Users/boris/projects/knightmare-v06c/tools/vendor/Z80.js');
+const fs=require('fs'); const Z80=require(__dirname+'/../../tools/vendor/Z80.js');
 const mem=new Uint8Array(0x10000);
 mem.set(fs.readFileSync('z80_drv_sfx.bin'),0xDDCC);
-const src='/Users/boris/projects/ianna-v06c/ref/msx2/src/';
+const src=__dirname+'/../../ref/msx2/src/';
 mem.set(fs.readFileSync(src+(process.env.SONG||'music-level1.mus')),0xC980); mem.set(fs.readFileSync(src+'iannafx.mus'),0xD980);
 const sym=fs.readFileSync('z80_drv_sfx.sym','utf8'); const m=sym.match(/^start\s+EQU\s+([0-9A-F]+)H/mi); const start=parseInt(m[1],16);
 const frames=[[]]; let reg=null; let halted=false;

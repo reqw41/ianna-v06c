@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 node z80_run.js | head -1
 ../../tools/bin/sjasm --8080 -uwy i8080_drv.asm i8080_drv.lst i8080_drv.bin 2>&1 | grep -i "error" || true
 python3 - <<'PY'
-import sys,json; sys.path.insert(0,'/Users/boris/projects/knightmare-v06c/tools')
+import sys,json; sys.path.insert(0,'../../tools/vendor')
 from emu8080 import I8080
 cpu=I8080(); rom=open('i8080_drv.bin','rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom
 sp='../../ref/msx2/src/'
@@ -29,7 +29,7 @@ PY
 node z80_run_sfx.js | head -1
 ../../tools/bin/sjasm --8080 -uwy i8080_drv_sfx.asm i8080_drv_sfx.lst i8080_drv_sfx.bin 2>&1 | grep -i "error" || true
 python3 - <<'PY'
-import sys,json; sys.path.insert(0,'/Users/boris/projects/knightmare-v06c/tools')
+import sys,json; sys.path.insert(0,'../../tools/vendor')
 from emu8080 import I8080
 cpu=I8080(); rom=open('i8080_drv_sfx.bin','rb').read(); cpu.mem[0x100:0x100+len(rom)]=rom
 sp='../../ref/msx2/src/'

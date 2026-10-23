@@ -6,8 +6,7 @@
 Печатает состояние игрока (entity/sprite), PC и такты.
 """
 import sys, re, os, pathlib
-sys.path.insert(0, str(pathlib.Path.home() / 'projects/metalgear-v06c/tools'))
-sys.path.insert(0, str(pathlib.Path.home() / 'projects/knightmare-v06c/tools'))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / 'vendor'))   # эмулятор i8080 + квазидиск
 from emu_kvaz import I8080Kvaz as I8080
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]

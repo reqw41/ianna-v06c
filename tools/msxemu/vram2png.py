@@ -4,7 +4,7 @@ import sys
 from PIL import Image
 vram=open(sys.argv[1],'rb').read(); out=sys.argv[2]
 page=int(sys.argv[3]) if len(sys.argv)>3 else 0
-palf=sys.argv[4] if len(sys.argv)>4 else '/Users/boris/projects/ianna-v06c/ref/msx2/src/test.plt'
+palf=sys.argv[4] if len(sys.argv)>4 else str(__import__('pathlib').Path(__file__).resolve().parents[2]/'ref/msx2/src/test.plt')
 p=open(palf,'rb').read()[:32]
 pal=[]
 for i in range(16):

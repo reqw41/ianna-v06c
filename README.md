@@ -65,8 +65,8 @@ Arkos Tracker 1, переписанный под i8080 (поток AY совпа
 
 ## Сборка
 
-Нужны Python 3 и ассемблер **sjasm** с ключом `--8080` (гейт «только команды i8080»): бинарник кладётся в
-`tools/bin/sjasm`. Исходники оригинала (Apache 2.0) — клон
+Нужны Python 3 (с Pillow) и ассемблер **sjasm** с ключом `--8080` (гейт «только команды i8080»): бинарник
+кладётся в `tools/bin/sjasm`. Остальные утилиты и откуда они — в [tools/bin/README.md](tools/bin/README.md). Исходники оригинала (Apache 2.0) — клон
 [fjpena/sword-of-ianna-msx2](https://github.com/fjpena/sword-of-ianna-msx2) в `ref/msx2`: из них берутся
 логика, графика, карты и музыка. Релизный ROM оригинала в `ref/msx2_rom/ianna.rom` нужен только стендам сверки.
 
@@ -83,8 +83,10 @@ python3 tools/build_fdd.py           # дискета build/ianna.fdd
 
 ## Проверки
 
-Стенды — headless-эмулятор i8080 с квазидиском (`tools/run_vec.py`, такты по таблице, кадр 59904 тактов);
-оригинал — headless WebMSX (`tools/msxemu/`).
+Стенды — headless-эмулятор i8080 с квазидиском (`tools/run_vec.py` на `tools/vendor/emu8080.py`, такты по
+таблице, кадр 59904 тактов). Стенды с оригиналом (`lockstep.py`, `measure_msx.js`) идут на headless WebMSX
+под Node.js: ядро `wmsx.js` и стабы окружения в репозиторий не входят — их кладут в `tools/msxemu/msxjs`
+(или указывают каталог в `WMSX_DIR`), плюс `npm install jszip@2`. Сверке плеера (`tests/music`) нужен `pasmo`.
 
 ```sh
 python3 tools/lockstep.py --level=2 --start=4,6 --route=none:30,left:40,fire+left:30   # порт против оригинала тик в тик
@@ -110,5 +112,6 @@ tests/music/check.sh                             # поток AY плеера п
 ## Источники и права
 
 Оригинал — **The Sword of Ianna**, RetroWorks, 2017: код Utopian, графика Pagantipaco, музыка McAlby; исходники MSX2-версии — [github.com/fjpena/sword-of-ianna-msx2](https://github.com/fjpena/sword-of-ianna-msx2),
-лицензия Apache 2.0. Порт на Вектор-06Ц — Борис Лихачёв, 2026. Графика, музыка и тексты принадлежат
+лицензия Apache 2.0. Порт на Вектор-06Ц — Борис Лихачёв, 2026; распространяется на тех же условиях — Apache 2.0
+([LICENSE](LICENSE), что изменено и чьи сторонние файлы — в [NOTICE](NOTICE)). Графика, музыка и тексты принадлежат
 авторам оригинала.

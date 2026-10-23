@@ -1,7 +1,9 @@
 // emu.js — переиспользуемый headless MSX-эмулятор (WebMSX в Node) с отладкой.
 // Ядро для MCP-инструментов и копания кода игр. Требует jszip@2 + tools/msxjs/wmsx.js.
 const fs = require('fs');
-const B = '/Users/boris/projects/knightmare-v06c/tools/msxjs'; // ядро WebMSX и стабы берём из knightmare-v06c/tools/msxjs
+// Ядро WebMSX (wmsx.js) и стабы окружения (env.js) в репозиторий не входят: положите их в tools/msxemu/msxjs
+// или укажите каталог переменной WMSX_DIR. Нужен ещё jszip@2 (npm install jszip@2).
+const B = process.env.WMSX_DIR || require('path').join(__dirname, 'msxjs');
 
 function setupEnv() {
   console.log = (...a) => process.stderr.write(a.join(' ') + '\n');  // WebMSX логи → stderr (stdout = JSON-RPC MCP)
@@ -14,7 +16,7 @@ function setupEnv() {
   // если занулить, powerOn стартует БЕЗ картриджа и bus.read отдаёт пустой слот/BIOS, а не наш ROM.
   global.setTimeout=(f)=>{ if(typeof f==="function"){ try{f()}catch(e){} } return 0; };
   global.window.setInterval=()=>0; global.window.clearInterval=()=>{}; global.window.setTimeout=global.setTimeout;
-  global.JSZip = require(B + '/../../node_modules/jszip');   // v2 API
+  global.JSZip = (() => { try { return require('jszip'); } catch (e) { return require(fs.realpathSync(B) + '/../../node_modules/jszip'); } })();   // v2 API
   const se = global.document.createElement('div');
   global.document.getElementById = () => se;
   global.WMSX = { SCREEN_ELEMENT_ID:'s', screenElement:se, MACHINE:process.env.MSX_MACHINE||'MSX2E', CARTRIDGE1_FORMAT:process.env.MSX_ROM_FORMAT||'ASCII16', AUTO_POWER_ON:true };

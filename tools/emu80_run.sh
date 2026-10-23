@@ -7,7 +7,7 @@
 # MCP-сервер экземпляра — порт 19783 (EMU80_MCP_PORT), чтобы не делить 19781 с чужими.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP=~/projects/emu80v4/Emu80qt-mcp.app/Contents/MacOS
+APP="${EMU80_APP:-$HOME/projects/emu80v4/Emu80qt-mcp.app/Contents/MacOS}"   # сборка Emu80 с MCP; путь — переменной EMU80_APP
 TMP="${TMPDIR:-/tmp}/ianna_emu80"; mkdir -p "$TMP"
 pkill -f "Emu80qt-mcp.*ianna" 2>/dev/null || true
 if [ "$1" = "--demo" ]; then

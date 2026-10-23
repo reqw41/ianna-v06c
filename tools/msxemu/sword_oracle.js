@@ -9,10 +9,10 @@
 //  - титул -> «JUGAR» одним нажатием; вступление пропускается: в waitloop_loop intro_var :=
 //    number_screens-1 и принудительный ret; стартовый экран уровня 1 = (0,1);
 //  - на старте два сообщения, каждое закрывается «огнём» (wait_till_read).
-const M=require('/Users/boris/projects/ianna-v06c/tools/msxemu/emu_ianna.js'); const fs=require('fs');
+const M=require(__dirname+'/emu_ianna.js'); const fs=require('fs');
 const S='/private/tmp/claude-501/-Users-boris/6043f58d-525e-4e56-9451-1177913a730d/scratchpad/';
 const KIND=process.argv[2]||'left';
-const e=new M(); e.loadCartridge('/Users/boris/projects/ianna-v06c/ref/msx2_rom/ianna.rom');
+const e=new M(); e.loadCartridge(__dirname+'/../../ref/msx2_rom/ianna.rom');
 const kb=e.W.room.keyboard; const MK={fire:'Z',action:'X',left:'LEFT',right:'RIGHT',up:'UP',down:'DOWN'}; let held=new Set();
 function setKeys(k){ const want=new Set(k); for(const n of held) if(!want.has(n)) kb.processMSXKey(MK[n],false); for(const n of want) if(!held.has(n)) kb.processMSXKey(MK[n],true); held=want; }
 const cpu=e.m.cpu; const pc=()=>cpu.saveState().PC&0xffff;

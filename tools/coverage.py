@@ -74,7 +74,7 @@ if '--report' in OPTS:
 OUT = opt('out')
 if not OUT or '--' not in sys.argv: sys.exit(__doc__)
 k = sys.argv.index('--'); target = sys.argv[k + 1]; args = sys.argv[k + 2:]
-for p in (pathlib.Path.home() / 'projects/metalgear-v06c/tools', pathlib.Path.home() / 'projects/knightmare-v06c/tools', ROOT / 'tools'):
+for p in (ROOT / 'tools/vendor', ROOT / 'tools'):
     sys.path.insert(0, str(p))
 import emu8080
 HIT = bytearray(65536)

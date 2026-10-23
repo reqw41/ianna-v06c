@@ -1,6 +1,6 @@
-const fs=require('fs'); const Z80=require('/Users/boris/projects/knightmare-v06c/tools/vendor/Z80.js');
+const fs=require('fs'); const Z80=require(__dirname+'/../../tools/vendor/Z80.js');
 const mem=new Uint8Array(0x10000); mem.set(fs.readFileSync('z80_drv.bin'),0xDDCC);
-const src='/Users/boris/projects/ianna-v06c/ref/msx2/src/';
+const src=__dirname+'/../../ref/msx2/src/';
 mem.set(fs.readFileSync(src+'music-level1.mus'),0xC980); mem.set(fs.readFileSync(src+'iannafx.mus'),0xD980);
 const sym=fs.readFileSync('z80_drv.sym','utf8'); const S={};
 for (const m of sym.matchAll(/^(\S+)\s+EQU\s+([0-9A-F]+)H/gmi)) S[m[1]]=parseInt(m[2],16);

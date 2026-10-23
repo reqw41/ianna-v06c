@@ -13,7 +13,7 @@ import sys, os, re, bisect, pathlib, collections, tempfile, subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-sys.path.insert(0, str(pathlib.Path('/Users/boris/projects/tony-v06c/jukebox/tools')))
+sys.path.insert(0, os.environ.get('PSGPACK_DIR', str(ROOT / 'tools/vendor')))   # psgpack.py (упаковщик потока AY) — внешний, не входит в репозиторий
 import arkos_model as am
 from psgpack import pack
 
