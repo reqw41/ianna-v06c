@@ -101,7 +101,7 @@ LEVEL_BANKS = {
     9: [(2, 0, 0x9800, 0xF440), (10, 1, 0x0000, 0x5C40), (16, 1, 0x9900, 0xF540),
         (17, 2, 0x0000, 0x5C40), (3, 2, 0x5D00, 0x9E40)],
 }
-LEVEL_MUSIC = [1, 5, 3, 4, 5, 6, 7, 8, 8]   # music_levels (music.asm): уровень N -> music-level{M}.mus
+LEVEL_MUSIC = [1, 5, 3, 4, 5, 6, 7, 8, 4]   # music_levels (music.asm): уровень N -> music-level{M}.mus; секретный 9-й — music4
 STRING_AREA_DEMO = 0x7400   # демо: string_area 512 Б, vars короче (до $8000 ровно)
 DEMO_DATA_ADDR = 0x0200     # блок данных демо-ROM сразу за jp по $0100
 DEMO_FRAMES = 10            # idle, gira, camina x6, cae x2 (см. sprites.asm)

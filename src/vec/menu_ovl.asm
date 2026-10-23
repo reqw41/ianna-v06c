@@ -684,6 +684,36 @@ ovl_p_check:
 	ld a,(ovl_pn)
 	cp 10
 	jp nz,ovl_p_fail	; введено меньше 10 знаков
+	; секретный уровень (menu.asm secret_pass / DECODE_SECRETLEVEL): индекс 9, герой 2-го уровня,
+	; всё оружие, кроме клинка
+	ld hl,ovl_pbuf
+	ld de,ovl_secret
+	ld b,10
+ovl_p_sec:
+	ld a,(de)
+	cp (hl)
+	jp nz,ovl_p_nosec
+	inc hl
+	inc de
+	dec b
+	jp nz,ovl_p_sec
+	ld a,9
+	ld (current_level),a
+	ld hl,player_available_weapons
+	ld (hl),1
+	inc hl
+	ld (hl),1
+	inc hl
+	ld (hl),1
+	inc hl
+	ld (hl),0
+	ld a,2
+	ld (player_level),a
+	xor a
+	ld (player_experience),a
+	ld (player_current_weapon),a
+	jp ovl_p_acc
+ovl_p_nosec:
 	ld hl,ovl_pbuf
 	ld de,ovl_pval
 	ld b,5
@@ -769,6 +799,7 @@ ovl_p_wp1:
 	ld (player_experience),a
 	ld a,(ovl_pval+3)
 	ld (player_current_weapon),a
+ovl_p_acc:
 	ld hl,ovl_p_ok_en
 	ld a,(language)
 	or a
@@ -855,6 +886,7 @@ ovl_pbuf:	ds 10
 ovl_pval:	ds 5
 ovl_p_ask_en:	db "PASSWORD:",0
 ovl_p_ok_en:	db "  PASSWORD OK  ",0
+ovl_secret:	db "0CAFECAFE0"
 ovl_p_bad_en:	db "INVALID PASSWORD",0
 	include "menu_ru.asm"
 	include "menu_stripes.asm"

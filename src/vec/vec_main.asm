@@ -70,7 +70,10 @@ vec_start:
 	ld (vec_end_flag),a
 	ei
     if !DEMO
-	call vec_menu_phase	; меню/интро (оверлей в окне квазидиска; без дисковода — сразу игра) (оверлей в окне квазидиска; без дисковода — сразу игра)
+	call vec_menu_phase	; меню/интро (оверлей в окне квазидиска; без дисковода — сразу игра)
+	ld a,(current_level)	; пароль выбрал не первый уровень: в квазидиске набор первого — перечитать
+	or a			; набор с дискеты (как при смене уровня)
+	call nz,vec_reload_set
     endif
 	; ---- begin_level (ianna.asm), без интро/музыки ----
 vec_begin_level:
@@ -323,9 +326,13 @@ vct_l:
 	and $10			; L: следующий уровень
 	jp z,vct_i
 	ld a,(current_level)
-	cp 8			; дальше девятого некуда
+	cp 9			; индекс 9 — секретный уровень, дальше некуда
 	jp nc,vct_i
 	inc a
+	cp 8			; индекс 8 — attract-демо оригинала, набора нет: с восьмого уровня — на секретный
+	jp nz,vct_l1
+	inc a
+vct_l1:
 	ld (current_level),a
 	ld a,3
 	ld (player_dead),a	; как скрипт finish_level: vec_main перечитает набор с дискеты

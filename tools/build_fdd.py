@@ -68,7 +68,9 @@ for n in range(1, 17):
             start = free[i]; del free[i:i+ntr]; break
     if start is None:
         print(f'!! уровень {n} не влез: нужно {ntr} дорожек подряд'); continue
-    dirtab[n-1] = start          # индекс = current_level (0 = уровень 1)
+    # индекс = current_level: level1..8 -> 0..7; индекс 8 — attract-демо оригинала (набора нет),
+    # секретный level9 -> 9 (LEVEL_PAGE в ianna.asm: level1..8, level0, level9)
+    dirtab[9 if n == 9 else n-1] = start
     level_data.append((start, data))
     placed.append((n, start, len(data)))
 
@@ -80,7 +82,7 @@ if m and placed:
     off = addr - 0x100           # образ ассемблирован с org $0100
     assert 0 <= off < len(rom), (hex(addr), off, len(rom))
     rom[off:off+16] = dirtab
-    print(f'таблица дорожек уровней прошита в ROM по ${addr:04X}: {list(dirtab[:8])}')
+    print(f'таблица дорожек уровней прошита в ROM по ${addr:04X}: {list(dirtab[:10])}')
 elif placed:
     print('!! vfl_dirtab не найден в листинге — таблица не прошита')
 
