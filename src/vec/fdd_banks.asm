@@ -102,6 +102,9 @@ fb_part:
 	ld de,FDD_BDST
 	call depack
 	call fb_store
+	ld hl,vfl_blk		; полоса прогресса при старте (vec_ld_hook): правая половина — куски банков
+	inc (hl)
+	inc (hl)
 	ld hl,(fb_ulen)		; следующий кусок ложится за предыдущим
 	ex de,hl
 	ld hl,(fb_dst)

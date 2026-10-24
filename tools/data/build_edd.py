@@ -726,7 +726,7 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
     assert flen('wpn_load.bin') <= WPN_SRC_END - WPN_SRC, 'подкачка страницы героя переросла свой блок'
     if level_no == 1:                 # фаза меню живёт только в наборе первого уровня
         r += [(2, a, a + upto(flen(m, SRC)), f'песня {m}') for a, m in SONG_SLOTS]
-        r += [(3, 0x8440, 0x8440 + upto(flen('menu_ovl.bin')), 'оверлей меню'),
+        r += [(3, 0x8440, min(0x8440 + upto(flen('menu_ovl.bin')), PAUSE_ADDR), 'оверлей меню'),   # до оверлея паузы впритык (лимит — build_vec)
               (3, CREDITS_ADDR, CREDITS_ADDR + upto(flen('credits.bin')), 'титры'),
               (3, 0x9800, 0x9800 + upto(flen('menu_ram.bin')), 'блок меню в ОЗУ'),
               (3, 0xE000, 0xF000, 'шрифт меню')]

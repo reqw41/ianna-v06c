@@ -3,7 +3,9 @@
 Обычный fdd_boot_test подаёт прерывание только на halt, а в загрузчике набора halt нет — обработчик
 прерывания во время загрузки там не исполняется вовсе.
   python3 tools/fddrt.py [--junk] [--frames=3000] [--drq=N] [--strict]   (--strict: окна квазидиска как на железе; --junk: квазидиск заполнен мусором, как на MiSTer
-  после другой игры; --drq=N: байт сектора появляется через N тактов после чтения предыдущего)"""
+  после другой игры; --drq=N: байт сектора появляется через N тактов после чтения предыдущего)
+  --rot: дискета вращается: оборот 200 мс (600000 тактов), 5 секторов по 1 КБ, байт раз в 96 тактов (32 мкс),
+  READ ждёт свой сектор (опоздал к заголовку — следующий оборот); счётчик ВИ53 идёт по тактам, а не по командам"""
 import sys, os, pathlib, re, bisect, collections, random
 OPTS=[a for a in sys.argv[1:] if a.startswith('--')]
 ROOT=pathlib.Path(__file__).resolve().parents[1]
@@ -43,6 +45,29 @@ SHOTDIR=next((o[7:] for o in OPTS if o.startswith('--shot=')),None); SHOTS=(set(
 if SHOTDIR: os.makedirs(SHOTDIR,exist_ok=True)
 INTRO='--intro' in OPTS; dark=[]; CHEAT='--cheat' in OPTS or INTRO; st=[]
 FRAME=59904; cyc=0; nxt=FRAME; fr=0; ev=[]; lost=0; hist=collections.Counter()
+ROT='--rot' in OPTS
+if ROT:
+    # модель вращения поверх ВГ93 стенда: данные — те же, но DRQ и конец команды — по времени
+    REV, SLOT, DOFF, BYTE = 600000, 120000, 6000, 96
+    _rd = {'start': None, 'n': 0, 'sec': 1}
+    _oin, _oout = cpu.in_handler, cpu.out_handler
+    def _rot_out(port, val):
+        if port == 0x19: _rd['sec'] = val
+        if port == 0x1B and val == 0x80:
+            ph = (_rd['sec'] - 1) % 5 * SLOT + DOFF          # фаза начала данных сектора
+            t = cyc + 3000                                   # заголовок нужно успеть поймать
+            k = (t - ph + REV - 1) // REV
+            _rd['start'] = k * REV + ph; _rd['n'] = 0
+        _oout(port, val)
+    def _rot_in(port):
+        if _rd['start'] is not None:
+            if port == 0x1B:
+                if cyc < _rd['start'] + _rd['n'] * BYTE: return 0x01      # занят, байта ещё нет
+                if _rd['n'] >= 1024: _rd['start'] = None; return _oin(port)
+            if port == 0x18:
+                _rd['n'] += 1
+        return _oin(port)
+    cpu.in_handler, cpu.out_handler = _rot_in, _rot_out
 names={sym[k]:k for k in ('vec_to_menu','vec_start','vfl_done','vec_menu_phase','MUSIC_Load','MUSIC_Stop','vec_reload_set','RunScripts','vec_begin_level','vfl_go') if k in sym}
 seen=collections.Counter()
 while fr<FR:
@@ -56,6 +81,7 @@ while fr<FR:
         cyc+=CYC[mem[pc]]
         try: cpu.step()
         except RuntimeError as e: ev.append((fr,'КРАХ pc=%04X %s'%(pc,str(e)[:60]))); break
+        if ROT: cpu.icount = cyc // 8      # ВИ53 (1,5 МГц) = такты / 2; run_vec считает его по icount*4
     if cyc>=nxt:
         nxt+=FRAME; fr+=1
         if CHEAT:

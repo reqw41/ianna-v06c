@@ -158,27 +158,14 @@ vfr_r:
 	jp nz,vfr_p
 	ret
 
-; Стереть середину слайда (в чёрный) — рамка и подложка текста остаются.
-vec_slc_clear:
-	ld hl,vsl_black
-	ld d,VI_COL0
-	ld e,VI_L0
-	ld bc,VI_NCOL*256+VI_NROW
-	jp vec_frect4
-; Стереть текст: подложка под ним однотонная — плоскость 1 залита, остальные пусты
-; (колонки 1..30, строки символов 17..22).
-vec_txt_clear:
-	ld hl,vsl_box
-	ld d,1
-	ld e,223-17*8
-	ld bc,30*256+48
-	jp vec_frect4
-vsl_black:	db 0,0,0,0
-vsl_box:	db 0,$FF,0,0
+; Стирание середины слайда и подложки текста (обёртки над vec_frect4) — в блобе меню (menu_ram.asm).
 
-; Вывести середину слайда из прочитанной дорожки: плоскость распаковывается в буфер в квазидиске
-; и оттуда переносится в экран (источник и $A000-$DFFF экрана делят одни адреса, поэтому окно
-; открывается на чтение каждого байта — под коротким DI, чтобы прерывание его не закрыло).
+; Вывести середину слайда из прочитанной дорожки: плоскость распаковывается в буфер в квазидиске, оттуда
+; переносится в экран СТЕКОМ: порт $1C (стек -> стр.3, окно закрыто), pop читает буфер, (hl) пишет в экран.
+; Прерывания разрешены: ISR сохраняет стековые биты порта (vec_kv_shadow) и кладёт свои байты ниже SP —
+; в $B400-$B7FF (дорожка 5 КБ кончается на $B3FF). Раньше байт шёл под коротким DI, и кадровое прерывание,
+; попавшее в DI, терялось (ядро ставит запрос только при разрешённых): ~7 пропусков музыки на слайд (24.10).
+; На Турбо+ подтверждение прерывания снимает стековый режим — там перенос под DI.
 vec_slc_unp:
 	xor a
 vsu_p:
@@ -186,7 +173,8 @@ vsu_p:
 	add a,a
 	ld l,a
 	ld h,VI_PICBUF/256
-	call vsu_on
+	ld a,$23
+	call vsu_port
 	ld a,(hl)
 	inc hl
 	ld h,(hl)
@@ -195,53 +183,52 @@ vsu_p:
 	add hl,de		; сжатая плоскость
 	ld de,VI_SCR
 	call depack
-	call vsu_off
+	ld hl,0
+	add hl,sp
+	ld (vec_sp_save),hl	; в меню isr_spr не работает — ячейка свободна
 vsu_pl:
 	ld a,0			; плоскость -> старший байт первой колонки
 	rrca
 	rrca
 	rrca
 	add a,$80+VI_COL0
-	ld h,a
-	ld de,VI_SCR
-	ld b,VI_NCOL
-vsu_c:
-	ld l,VI_L0
-	ld c,VI_NROW
-vsu_r:
+	ld b,a
 	di
-	ld a,$23
+	ld a,$1C
 	out (KV_PORT),a
-	ld a,(de)
-	push af
-	xor a
-	out (KV_PORT),a
-	pop af
+	ld (vec_kv_shadow),a
+	ld sp,VI_SCR
+	ld a,(vec_turbo)
+	or a
+	jp nz,vsu_c
 	ei
-	ld (hl),a
-	inc de
+vsu_c:
+	ld h,b
+	ld l,VI_L0
+	ld c,VI_NROW/2
+vsu_r:
+	pop de
+	ld (hl),e
+	dec l
+	ld (hl),d
 	dec l
 	dec c
 	jp nz,vsu_r
-	inc h
-	dec b
+	inc b
+	ld a,b
+	and $1F
+	cp VI_COL0+VI_NCOL
 	jp nz,vsu_c
+	di
+	xor a
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	ld hl,(vec_sp_save)
+	ld sp,hl
+	ei
 	ld a,(vsu_pl+1)
 	inc a
 	cp 4
 	jp nz,vsu_p
 	ret
-vsu_on:
-	di
-	ld a,$23
-	out (KV_PORT),a
-	ld (vec_kv_shadow),a
-	ei
-	ret
-vsu_off:
-	di
-	xor a
-	out (KV_PORT),a
-	ld (vec_kv_shadow),a
-	ei
-	ret
+; vsu_port — в окне vec_hi.asm (резидент полон)

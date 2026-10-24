@@ -2,7 +2,7 @@
 ; vec_palsave ($6AA0, 16 Б) и с $6AF9 ячейки читов и флагов колонок (vec_vdp.asm). Середина свободна, а
 ; код до $6A00 исчерпан — сюда ложатся данные и код, которым всё равно, где жить. Образ ROM грузится
 ; целиком, поэтому код здесь есть с самого старта; vec_slot_init чистит только первые 160 Б.
-; Границу окна проверяет build_vec.py (vec_hi_end <= $6AF9). В демо (vars с $7400) — просто подряд.
+; Границу окна проверяет build_vec.py (vec_hi_end <= $6AF8: с $6AF8 — joy_idle и ячейки читов). В демо (vars с $7400) — просто подряд.
     if !DEMO
 	org $6AB0
     endif
@@ -14,6 +14,13 @@
 ; а список живёт от раздачи слотов до сброса внутри одного тика.
 VEC_GR_N	equ 16
 vec_turbo:	db 0		; 1 = Вектор Турбо+ (turbo_init, vec_turbo_boot.asm)
+; A -> порт квазидиска и его тень (vec_slc_unp, vec_intro.asm)
+vsu_port:
+	di
+	out (KV_PORT),a
+	ld (vec_kv_shadow),a
+	ei
+	ret
 vec_gr_list	equ vec_palsave
 vec_gr_lp:	dw 0		; конец списка (выводится с конца к началу)
 ; Раздача (vpb_sxl): слот не героя — в список. HL — указатель в таблицу слотов, цел.
@@ -53,11 +60,8 @@ isb_r4:
 	and 4
 	ld a,l
 	ret z
-	push de
-	ld e,l
-	ld d,rev256/256
-	ld a,(de)
-	pop de
+	ld h,rev256/256		; HL портить можно
+	ld a,(hl)
 	ret
 
 vec_hi_end:

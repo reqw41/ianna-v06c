@@ -116,8 +116,12 @@ def make_cpu(keys):
             if val & 0xC0 == 0x80: cpu.vi53_log.append((cpu.icount, 8, val))
             if val == 0: pit['latched'] = pit_val(); pit['rd'] = 0
         elif port == 0x0B:
-            if pit['wr'] == 0: pit['wr'] = 1
-            else: pit['wr'] = 0; pit['reload'] = cpu.icount
+            if pit['wr'] == 0: pit['wr'] = 1; pit['lo'] = val
+            else:
+                # загруженное значение учитывается (догонялка меню сдвигает счётчик на целые кадры);
+                # 0 = 65536 — как перезарядка в ISR
+                n = pit['lo'] | (val << 8)
+                pit['wr'] = 0; pit['reload'] = cpu.icount - (((0x10000 - n) & 0xFFFF) * 100 // (4 * pit_scale))
         elif port == 0x1C: st['side'] = 0 if (val & 4) else 1   # бит 2 инвертирован (проверено сверкой с образом)
         elif port == 0x1A: st['trk'] = val
         elif port == 0x19: st['sec'] = val

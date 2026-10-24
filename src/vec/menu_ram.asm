@@ -6,6 +6,8 @@ KV_PORT		equ $10
 KV_WIN_OVL	equ $63	; биты 6 и 5: на железе бит 6 только расширяет окно $A000-$DFFF вниз до $8000, включает его бит 5
 MB_KV_BUF	equ $23		; окно $A000-$DFFF, страница 3: буфер сжатой картинки (пул в игре, в меню свободен)
 MB_PICBUF	equ $A000	; 8 КБ ($A000-$BFFF) — сжатая картинка; с $C000 лежит код плеера Arkos, с $C980 музыка
+OVL_CATCH	equ $8443	; входы оверлея меню (menu_ovl.asm): после сектора / в конце дорожки
+OVL_PAY		equ $8446
 KV_STK_P3	equ $1C		; стековый режим, страница 3 (чтение шрифта из квазидиска)		; окно b6 ($8000-$9FFF) -> страница 3: там оверлей меню
 	org MB_ORG
 
@@ -25,6 +27,8 @@ mb_stripes:	jp mb_stripes_w	; B = колонка, D = колонок, C = стр
 mb_scroll:	jp mb_scroll_w	; окно титров (колонки 10..24, строки экрана 120..239) вверх на 1 точку
 mb_slrd:	jp mb_slrd_w	; A = 0..6: только ПРОЧИТАТЬ дорожку слайда в буфер (экран не трогает); NZ = дисковода нет
 mb_unp:		jp mb_unp_w	; распаковать прочитанную картинку из буфера в VRAM
+mb_slcclr:	jp mb_slc_clear	; (через MB_CALL) стереть середину слайда в чёрный
+mb_txtclr:	jp mb_txt_clear	; (через MB_CALL) стереть подложку текста
 
 ; обёртки: после работы ВЕРНУТЬ окно оверлея (возврат идёт в код, живущий в окне!)
 mb_chr_w:
@@ -100,56 +104,87 @@ mb_go:
 	ld hl,(mb_target)
 	jp (hl)
 
-; --- копия блока квазидиск(окно) <-> VRAM/квазидиск через отскок ---
-; вход: A = порт окна источника, HL = src, DE = dst (ОЗУ/VRAM вне окна), BC = длина
-mb_copy:
-	di
-	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
-mbc_l:
-	ld a,(hl)
-	ld (de),a
-	inc hl
-	inc de
-	dec bc
-	ld a,b
-	or c
-	jp nz,mbc_l
-	xor a
-	out (KV_PORT),a
-	ei
-	ret
+; --- стирание слайда (из vec_intro.asm: в резиденте нет места); зовутся через MB_CALL — окно закрыто ---
+; Стереть середину слайда (в чёрный) — рамка и подложка текста остаются.
+mb_slc_clear:
+	ld hl,vsl_black
+	ld d,8		; VI_COL0 (vec_intro.asm)
+	ld e,223		; VI_L0
+	ld bc,16*256+128	; VI_NCOL, VI_NROW
+	jp vec_frect4
+; Стереть текст: подложка под ним однотонная — плоскость 1 залита, остальные пусты
+; (колонки 1..30, строки символов 17..22).
+mb_txt_clear:
+	ld hl,vsl_box
+	ld d,1
+	ld e,223-17*8
+	ld bc,30*256+48
+	jp vec_frect4
+vsl_black:	db 0,0,0,0
+vsl_box:	db 0,$FF,0,0
 
-; --- песня уровня: стр.3 $C980-$D97F -> отскок VRAM $E000 -> стр.1 $E000 ---
-mb_savelvl_i:
-	ld a,$23		; окно $A000-$DFFF стр.3
-	ld hl,$C980
-	ld de,$E000
-	ld bc,$1000
-	call mb_copy
-	; песню, лежащую в VRAM $E000 (отскок), пишем в страницу 2 СТЕКОМ: окно $E000 подменило бы сам источник
-	di
-	ld hl,0
-	add hl,sp
-	ld (mb_spsave),hl
-	ld a,$18		; стек -> страница 2 (у 16ц-набора $BC40+ свободна)
-	out (KV_PORT),a
-	ld sp,$F000		; push вниз от $F000 до $E000 страницы 2
-	ld hl,$EFFF
-mbs_l:
+; --- песни: квазидиск -> квазидиск НАПРЯМУЮ. Раньше копия шла отскоком через VRAM $E000-$EFFF — это левая
+; половина экрана: при каждой смене мелодии (меню, интро, концовка) там мелькал мусор (24.10). Теперь
+; источник читается через окно $A000-$DFFF, приёмник пишется стеком (или наоборот): порт = окно (b5,
+; страница в b1-0) + стек (b4, страница в b3-2). Прерывания запрещены — стек целиком в квазидиске.
+; Порт пишется прямым out: rst 1 положил бы адрес возврата ещё в обычный стек, а снял — уже из квазидиска.
+; mb_push: A = порт, HL = конец источника + 1 (окно), DE = конец приёмника + 1 (стек), 4 КБ.
+mb_push:
+	call mbx_open
+mbx_l:
+	dec hl
 	ld d,(hl)
 	dec hl
 	ld e,(hl)
-	dec hl
 	push de
-	ld a,h
-	cp $DF
-	jp nz,mbs_l
+	dec bc
+	ld a,b
+	or c
+	jp nz,mbx_l
+mbx_end:
 	xor a
 	out (KV_PORT),a
 	ld hl,(mb_spsave)
 	ld sp,hl
 	ei
 	ret
+; mb_pop: A = порт, HL = начало приёмника (окно), DE = начало источника (стек), 4 КБ.
+mb_pop:
+	call mbx_open
+mbp_l:
+	pop de
+	ld (hl),e
+	inc hl
+	ld (hl),d
+	inc hl
+	dec bc
+	ld a,b
+	or c
+	jp nz,mbp_l
+	jp mbx_end
+; запомнить SP вызывающего, открыть порт, SP = DE, BC = 2048 слов; возврат — уже со старого стека
+mbx_open:
+	di
+	ld (mb_target),hl
+	pop hl			; адрес возврата в mb_push/mb_pop
+	ld (mbx_ret+1),hl
+	ld hl,0
+	add hl,sp
+	ld (mb_spsave),hl
+	out (KV_PORT),a
+	ex de,hl
+	ld sp,hl
+	ld hl,(mb_target)
+	ld bc,2048
+mbx_ret:
+	jp 0
+
+; --- песня уровня: стр.3 $C980-$D97F -> стр.2 $E000-$EFFF (перед меню) ---
+mb_savelvl_i:
+	ld a,$3B		; окно стр.3 (источник), стек стр.2 (приёмник)
+	ld hl,$D980
+	ld de,$F000
+	jp mb_push
 
 ; --- песня в $C980 по номеру A (таблица mb_songtab: порт окна + адрес источника) ---
 ; 0 меню, 1 интро, 2 песня уровня (сохранённая mb_savelvl), 3 концовка, 4 титры.
@@ -169,63 +204,18 @@ mb_song_i:
 	inc hl
 	ld d,(hl)
 	ex de,hl		; HL = адрес песни
-mbg_go:
-	; источник -> отскок VRAM $E000 (при окне источника; если источник сам в $E000 (порт $81) —
-	; отскок в VRAM невозможен, копируем стеком: чтение POP из стр.1)
-	cp $82			; песня уровня лежит в стр.2 $E000 — только через стек (окно $E000 = та же VRAM)
-	jp z,mbg_stack
+	cp $82			; песня уровня: стр.2 $E000 — читаем стеком, пишем в окно стр.3
+	jp z,mbg_lvl
+	or $1C			; + стек на стр.3: $22 -> $3E
+	ld de,$1000
+	add hl,de		; конец источника (за $DFFF читается VRAM — хвост песни не нужен)
+	ld de,$D980
+	jp mb_push
+mbg_lvl:
+	ld a,$3B		; окно стр.3 (приёмник $C980), стек стр.2 (источник $E000)
+	ld hl,$C980
 	ld de,$E000
-	ld bc,$1000
-	call mb_copy
-	jp mbg_put
-mbg_stack:
-	di
-	ld hl,0
-	add hl,sp
-	ld (mb_spsave),hl
-	ld a,$18
-	out (KV_PORT),a
-	ld sp,$E000		; pop вверх от $E000 страницы 2
-	ld hl,$E000		; dst VRAM
-mbgs_l:
-	pop de
-	xor a
-	out (KV_PORT),a		; окно закрыть на время записи в VRAM $E000
-	ld (hl),e
-	inc hl
-	ld (hl),d
-	inc hl
-	ld a,$18
-	out (KV_PORT),a
-	ld a,h
-	cp $F0
-	jp nz,mbgs_l
-	xor a
-	out (KV_PORT),a
-	ld hl,(mb_spsave)
-	ld sp,hl
-	ei
-mbg_put:
-	; отскок VRAM $E000 -> стр.3 $C980 (окно $23; чтение VRAM $E000 при открытом b5 — можно, b7 закрыт)
-	di
-	ld a,$23
-	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
-	ld hl,$E000
-	ld de,$C980
-	ld bc,$1000
-mbp_l:
-	ld a,(hl)
-	ld (de),a
-	inc hl
-	inc de
-	dec bc
-	ld a,b
-	or c
-	jp nz,mbp_l
-	xor a
-	out (KV_PORT),a
-	ei
-	ret
+	jp mb_pop
 
 ; --- дискета: наличие, поиск дорожки, чтение N секторов в VRAM ---
 mb_fdc_ok:			; Z = дисковод отвечает (эхо регистра сектора)
@@ -286,8 +276,9 @@ mbl_next:
 	call mb_read
 	pop bc
 	jp nz,mbl_err
-	ei			; отдать кадр прерыванию: иначе плеер молчит всю загрузку (ноты «зависают»)
-	halt
+	; сектора подряд, без halt: после halt следующий сектор уже уходил из-под головки, и ВГ93 ждал
+	; оборот (200 мс под DI) — музыка вставала на 11 кадров из 12 (24.10). Пропущенные кадры считает
+	; OVL_CATCH (в mb_read), доигрывает OVL_PAY в конце дорожки.
 	ld a,(mb_sec)
 	inc a
 	ld (mb_sec),a
@@ -339,6 +330,7 @@ mbr_d:
 	dec hl
 	in a,($1B)
 	and $9C
+	call OVL_CATCH		; ещё под DI: пропущенные прерывания -> долг музыки (оверлей, окно $63)
 	ei
 	ret
 mb_ctl_w:
@@ -399,12 +391,14 @@ mb_pic_rd:
 	ei
 	call mb_seek
 	ret nz
-	call mb_kv_on
+	ld a,KV_WIN_OVL		; буфер $A000 стр.3 и оверлей ($8440, OVL_CATCH/OVL_PAY) — оба в окне
+	call mbk_on
 	ld hl,MB_PICBUF
 	ld b,8
 	ld a,(mb_sec)
 	ld c,a
 	call mb_sectors
+	call OVL_PAY		; доиграть пропущенные тики (плеер по $C010 в том же окне)
 	push af
 	call mb_kv_off
 	pop af
@@ -456,8 +450,9 @@ mb_pic_cp:
 	jp z_ldir
 
 mb_kv_on:
-	di
 	ld a,MB_KV_BUF
+mbk_on:
+	di
 	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
 	ld (vec_kv_shadow),a
 	ei

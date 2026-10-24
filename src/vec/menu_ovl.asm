@@ -17,9 +17,88 @@ MB_STRIPES	equ MB_ORG+33
 MB_SCROLL	equ MB_ORG+36
 MB_SLRD		equ MB_ORG+39
 MB_UNP		equ MB_ORG+42
+MB_SLCCLR	equ MB_ORG+45
+MB_TXTCLR	equ MB_ORG+48
 	org $8440
+	jp ovl_entry		; $8440 — вход фазы меню (vec_main)
+	jp ovl_catch		; $8443 — mb_read: конец сектора, ещё под DI
+	jp ovl_pay		; $8446 — mb_pic_rd: конец дорожки
+
+; Чтение дорожки идёт под DI посекторно (DRQ-петля не терпит ISR), кадровые прерывания пропадают.
+; Сколько — по счётчику 0 ВИ53: ISR перезаряжает его нулём (65536, 1,5 МГц), кадр = 29952 тика. Сектор
+; передаётся ровно 1024 x 32 мкс = 49152 тика, и с последней перезарядки прошло не меньше — так 16 бит
+; счётчика читаются однозначно до 114688 тиков (3,8 кадра): меньше 49152 значит, что он уже обернулся.
+; Пропущенные кадры копятся в ovl_debt, счётчик сдвигается на столько же кадров вперёд (следующий сектор
+; меряется от последнего «виртуального» прерывания). Первый сектор после шага головки может ждать
+; дольше — тогда долг занижен, но не завышен.
+ovl_catch:
+	push af
+	push hl
+	push de
+	xor a
+	out ($08),a		; латч счётчика 0
+	in a,($0B)
+	ld e,a
+	in a,($0B)
+	ld d,a			; DE = V, прошло 65536 - V (по модулю 65536)
+	cpl			; A ~ старший байт прошедшего
+	ld h,1
+	cp $C0
+	jp c,oc_wrap		; < 49152 — обернулся: прошло 65536 + это
+	cp $EA			; 59904 = 2 кадра
+	jp c,oc_n
+	inc h
+	jp oc_n
+oc_wrap:
+	inc h
+	cp $5F			; 65536 + 24320 = 89856 = 3 кадра
+	jp c,oc_n
+	inc h
+oc_n:
+	ld a,(ovl_debt)
+	add a,h
+	ld (ovl_debt),a
+	ld a,h
+	ex de,hl		; HL = V
+	ld de,$7500		; 29952
+oc_l:
+	add hl,de		; V + кадры*29952: отсчёт от последнего пропущенного прерывания
+	dec a
+	jp nz,oc_l
+	ld a,$30
+	out ($08),a
+	ld a,l
+	out ($0B),a
+	ld a,h
+	out ($0B),a
+	pop de
+	pop hl
+	pop af
+	ret
+; Доиграть долг: плеер (оверлей Arkos по $C010, стр.3) — под DI, чтобы ISR не вошёл в него же.
+ovl_pay:
+	push af
+opy_l:
+	ld a,(ovl_debt)
+	or a
+	jp z,opy_x
+	dec a
+	ld (ovl_debt),a
+	ld a,(music_playing)
+	or a
+	jp z,opy_l
+	di
+	call $C013		; atPlay (ARK_ADDR+3)
+	ei
+	jp opy_l
+opy_x:
+	pop af
+	ret
+ovl_debt:	db 0
 
 ovl_entry:
+	ld hl,0
+	ld (vec_key_hook),hl	; снять хук полосы загрузки (vec_ld_hook): дальше там таблица слотов
 	; скопировать блоб порт-примитивов из окна ($9800..$9FFF) в ОЗУ string_area
 	ld hl,$9800
 	ld de,MB_ORG
@@ -151,11 +230,11 @@ ovl_sl:
 	call MB_CALL
 	jp ovl_sl_t
 ovl_sl_c:			; следующие: рамка и подложка текста те же — меняем только середину
-	ld hl,vec_slc_clear
+	ld hl,MB_SLCCLR
 	call MB_CALL
 	ld hl,vec_slc_unp
 	call MB_CALL
-	ld hl,vec_txt_clear
+	ld hl,MB_TXTCLR
 	call MB_CALL
 ovl_sl_t:
 	; текст слайда (по языку)

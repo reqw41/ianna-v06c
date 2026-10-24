@@ -542,15 +542,15 @@ def main():
         for line in lst.split('\n'):
             if 'vars наверху ОЗУ' in line: break
             mm = re.match(r'^([0-9A-F]{4}): ([0-9A-F]+)\s', line)     # байты в листинге без пробелов
-            if mm and not DEMO and 0x6AB0 <= int(mm.group(1), 16) < 0x6AF9: continue   # окно vec_hi.asm
+            if mm and not DEMO and 0x6AB0 <= int(mm.group(1), 16) < 0x6AF8: continue   # окно vec_hi.asm
             if mm: code_end = max(code_end, int(mm.group(1), 16) + len(mm.group(2)) // 2)
         assert code_end <= VARS_ADDR, f'код до ${code_end:04X} НАЕХАЛ на переменные ${VARS_ADDR:04X}'
         assert code_end <= 0x6A00, f'код дошёл до ${code_end:04X}: в $6A00-$6AFF лежит vec_col_tab (vec_vdp.asm)'
         mh = re.search(r'^vec_hi_end\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert mh, 'нет vec_hi_end'
         if not DEMO:
-            assert int(mh.group(1), 16) <= 0x6AF9, f'окно vec_hi.asm дошло до ${mh.group(1)}: с $6AF9 — ячейки читов (vec_vdp.asm)'
-            print(f'окно $6AB0: до ${int(mh.group(1), 16)-1:04X} (свободно {0x6AF9-int(mh.group(1), 16)} Б)')
+            assert int(mh.group(1), 16) <= 0x6AF8, f'окно vec_hi.asm дошло до ${mh.group(1)}: с $6AF8 — joy_idle и ячейки читов (vec_vdp.asm)'
+            print(f'окно $6AB0: до ${int(mh.group(1), 16)-1:04X} (свободно {0x6AF8-int(mh.group(1), 16)} Б)')
             # Индекс isr_fix_tab (vec_isr.asm ISR_IDX_PAGE0/PAGES, isr_idx_init): записи таблицы обязаны лежать в
             # страницах индекса, иначе поиск идёт с начала таблицы — верно, но в разы медленнее (сторож, не ошибка)
             mi = re.search(r'^ISR_IDX_PAGE0\s+=\s+\$([0-9A-F]+)', lst, re.M); mn = re.search(r'^ISR_IDX_PAGES\s+=\s+\$([0-9A-F]+)', lst, re.M)
@@ -575,8 +575,8 @@ def main():
 
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
-    need = ['depack', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl', 'vfl_ready', 'vec_fdd_rdy',
-            'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', 'vec_fade_out', 'vec_fade_in', 'vec_slc_clear', 'vec_slc_unp', 'vec_txt_clear', 'vec_palsave', 'language', 'joystick_state', 'music_playing',
+    need = ['depack', 'vfl_blk', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl', 'vfl_ready', 'vec_fdd_rdy',
+            'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', 'vec_fade_out', 'vec_fade_in', 'vec_frect4', 'vec_slc_unp', 'vec_palsave', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
             'get_player_max_exp',
