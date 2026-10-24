@@ -74,14 +74,14 @@ wl_pal:
 	call z_ldir
 	; --- загрузчик банков из набора в string_area ---
 	ld a,KV_WIN_BANKS
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42)
 	ld (vec_kv_shadow),a
 	ld hl,FDD_BANKCODE
 	ld de,FB_ORG
 	ld bc,512
 	call z_ldir
 	xor a
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42)
 	ld (vec_kv_shadow),a
 	; --- рецепт: банков нет (они на месте), только страница героя. Шаблон записи собираем из
 	; таблицы банков в ОЗУ: при загрузке уровня её ещё нет и там шаблон кладёт build_levels ---

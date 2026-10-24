@@ -83,21 +83,24 @@ setROM2_DI:
     else
 	ld a,KV_WIN_LEVEL
 	ld (vec_kv_shadow),a
-	out (KV_PORT),a
+tp_sr_lvl:
+	out (KV_PORT),a		; на Турбо+ заплатка: rst 1, nop (маска 42h); на 06Ц — без rst: +2 Б стека
 	ret
     endif
 setrom_music:
     if !DEMO
 	ld a,KV_WIN_MUSIC
 	ld (vec_kv_shadow),a
-	out (KV_PORT),a
+tp_sr_mus:
+	out (KV_PORT),a		; на Турбо+ заплатка: rst 1, nop (маска 42h); на 06Ц — без rst: +2 Б стека
     endif
 	ret
 setrom_close:
     if !DEMO
 	xor a
 	ld (vec_kv_shadow),a
-	out (KV_PORT),a
+tp_sr_cls:
+	out (KV_PORT),a		; на Турбо+ заплатка: rst 1, nop
     endif
 	ret
 setrom_sprite:
@@ -397,6 +400,7 @@ vec_blit128_fl:
 	VBCOL
 	ld l,e
 	VBCOL
+tp_b128_ei:
 	ei
 	jp vb_rest
 vec_blit64l:			; только из сброса пула: вход под DI
@@ -404,6 +408,7 @@ vec_blit64l:			; только из сброса пула: вход под DI
 	ld l,e
 	VBCOL
 	VBSKIP
+tp_b64l_ei:
 	ei
 	VBNEXTP
 	ld h,d
@@ -436,6 +441,7 @@ vec_blit64r:			; только из сброса пула: вход под DI
 	inc h
 	ld l,e
 	VBCOL
+tp_b64r_ei:
 	ei
 	VBSKIP
 	VBNEXTP
@@ -582,6 +588,7 @@ vbg_ok:
 ; порт и снимает пару под SP. Портит A, HL и флаги.
 vec_ei_enter:
 	call vec_phase
+tp_vee_cp:
 	cp VEC_PH_EDGE
 	jp c,vee_go
 	halt
@@ -1839,6 +1846,7 @@ dsp_body_d:
 	out (KV_PORT),a
 	pop hl			; пара под началом источника
 	ld (isr_pair),hl
+tp_dsp_ei:
 	ei
 ; ---- [isr_pair] пролог колонки и сегмента
 dsp_col:
@@ -2041,6 +2049,7 @@ dsp_tg_ok:
 	ld sp,hl
 	pop hl
 	ld (isr_pair),hl
+tp_dsptg_ei:
 	ei
 dsp_tail_j:
 	jp dsp_tail_done	; самомодификация (drawSprite_pool / dsp_mirror): dsp_tail_done / dspm_tail_done
@@ -2991,6 +3000,7 @@ vec_pool_flush:
 	add hl,sp
 	ld (vec_sp_save),hl	; настоящий SP
 	call vec_phase		; у края кадра (> 205 ед.) — дождаться прерывания: переход режима не должен
+tp_vpf_cp:
 	cp 206			; совпасть с обратным ходом
 	jp c,vpf_go
 	halt
@@ -3003,6 +3013,7 @@ vpf_go:
 				; call/ISR в сбросе — настоящий стек в стековом режиме портил бы квазидиск.
 				; Ставится ДО ei: раньше между ei и этой командой стояли ещё две, и прерывание
 				; в них клало 14-18 байт в страницу 3 по адресам игрового стека ($7Dxx).
+tp_vpf_ei:
 	ei
 	ld hl,vpf_x_next	; адрес возврата блита на весь сброс один — не на каждый слот
 	ld (vec_blit_ret),hl
@@ -3098,9 +3109,11 @@ vpf_slot:
 	; Тогда через кадр-другой на экран уходила колонка с мусором в нижних строках (tools/rtcheck.py).
 	; Поэтому первые 32 байта слота читаются под DI, а чтобы запрет не съел прерывание кадра — у края
 	; кадра его сначала дожидаемся (как в vpf_go). Здесь SP ещё в конце прошлого выведенного слота, call можно.
+tp_vps_call:
 	call vec_phase
 	cp 228
 	jp c,vpf_ph_ok
+tp_vps_h:
 	halt
 vpf_ph_ok:
 	di
@@ -3131,6 +3144,7 @@ vpf_x_next:
 	ld a,(vec_hr_lp)	; герой не выведен: новый круг луча — герой вперёд, пока влезает, потом обратно сюда
 	cp vec_hr_list & $ff
 	jp z,vpf_x_adv
+tp_vxn_call:
 	call vec_hr_lap
 	or a
 	jp z,vpf_x_adv
@@ -3155,7 +3169,9 @@ vpf_hr_wait:			; чужие кончились, герой ждёт луча: п
 	ld a,(vec_hr_lp)	; список пуст — герой выведен (или его не было)
 	cp vec_hr_list & $ff
 	jp z,vpf_fin
+tp_hrw_ph:
 	call vec_phase
+tp_hrw_fit:
 	call vec_hr_fits
 	or a
 	jp z,vpf_hr_wait
@@ -3168,9 +3184,11 @@ vpf_fin:
 	; а короткий DI вокруг порта стоял без проверки фазы и изредка съедал прерывание кадра (стенд
 	; 2026-10-12, ур.6 6,1: потеря в vpf_fin, пропущенный тик музыки). Теперь у края кадра прерывание
 	; сначала дожидаемся — здесь SP ещё в пуле, call и halt безопасны.
+tp_vpff_call:
 	call vec_phase
 	cp 230
 	jp c,vpf_fin_go
+tp_vpff_h:
 	halt
 vpf_fin_go:
 	di

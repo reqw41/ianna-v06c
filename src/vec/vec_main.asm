@@ -4,6 +4,7 @@
 vec_start:
 	di
 	ld sp,vec_stack_top
+    if DEMO
 	; RST7 -> vec_isr
 	ld a,$C3
 	ld ($0038),a
@@ -22,17 +23,10 @@ vec_start:
 	out (PPI2_C),a
 	in a,(PPI2_A)		; покой: нажатием дальше считается отклонение от него (без джойстика
 	ld (joy_idle),a		; порт читается константой — $FF или мусор шины)
+    else
+	call vec_boot_init	; одноразовая часть старта — в string_area (vec_turbo_boot.asm)
+    endif
     if !DEMO
-	xor a
-	out (KV_PORT),a		; квазидиск выкл
-	ld (current_level),a	; уровень 1: загрузчик читает эту ячейку (инициализация ниже — уже поздно)
-	ld (vec_cheat),a	; читы выключены (ячейки в зазоре ROM, начальное значение не задано)
-	ld (vec_god),a
-	ld (vec_ckprev),a
-	ld (vec_ckeys),a
-	ld (music_playing),a	; в образе здесь $FF (ds): прерывание звало плеер всю загрузку набора, ещё до
-				; MUSIC_Init. Пока плеер жил в ROM, он «играл» незагруженную страницу 3 (в эмуляторах
-				; там нули, на MiSTer — остатки прошлой игры); плеер-оверлей при этом ещё не загружен
 	call vec_fdd_load	; загрузка с дискеты, если квазидиск пуст (маркер 'IA' в стр.3 $C800)
 	ld hl,vfl_dirtab	; таблицу дорожек уровней прошивает build_fdd прямо в образ ROM, а в
 	ld de,vec_dirtab	; копии загрузчика внутри набора она нулевая — сохраняем, пока цела
@@ -246,13 +240,13 @@ vir_b:
 vec_pause_phase:
 	di
 	ld a,$63
-	out ($10),a
+	rst 1			; out ($10),a + маска 42h на Турбо+ (vec_kv42)
 	ld (vec_kv_shadow),a
 	ei
 	call $9000
 	di
 	xor a
-	out ($10),a
+	rst 1			; out ($10),a + маска 42h на Турбо+ (vec_kv42)
 	ld (vec_kv_shadow),a
 	ei
 	ret
@@ -263,7 +257,7 @@ vec_ovl_call:
 	push af
 	di
 	xor a
-	out ($10),a
+	rst 1			; out ($10),a + маска 42h на Турбо+ (vec_kv42)
 	ld (vec_kv_shadow),a
 	ei
 	pop af
@@ -271,7 +265,7 @@ vec_ovl_call:
 	push af
 	di
 	ld a,$63
-	out ($10),a
+	rst 1			; out ($10),a + маска 42h на Турбо+ (vec_kv42)
 	ld (vec_kv_shadow),a
 	ei
 	pop af
@@ -358,13 +352,13 @@ vct_i:
 vec_menu_phase:
 	di
 	ld a,$63
-	out ($10),a
+	rst 1			; out ($10),a + маска 42h на Турбо+ (vec_kv42)
 	ld (vec_kv_shadow),a
 	ei
 	call $8440		; оверлей меню (сам копирует блоб из окна в string_area)
 	di
 	xor a
-	out ($10),a
+	rst 1
 	ld (vec_kv_shadow),a
 	ei
 	ret

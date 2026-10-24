@@ -45,6 +45,149 @@ ti_0:
 	out ($43),a
 	ld a,$60
 	out ($42),a
+	ld a,$F5		; push af вместо ret: vec_kv42 начинает выставлять маску 42h
+	ld (vec_kv42),a
+	; Вывод в пул и сброс пула на Турбо+ — под DI (docs/TURBO.md, «Стековый режим»): на Турбо+ адрес
+	; возврата прерывания и call/ret в стековом режиме идут в обычную память, а не в квазидиск. Поэтому
+	; ei и halt внутри стекового режима -> nop, call vec_phase в стековом режиме -> xor a («успеваем»),
+	; а пороги фазы перед входом ниже: DI-участок на 12 МГц должен кончиться до прерывания кадра.
+	ld hl,tp_tab
+tp_lp:
+	ld e,(hl)
+	inc hl
+	ld d,(hl)
+	inc hl
+	ld a,d
+	or e
+	jp z,tp_done
+	ld a,(hl)
+	inc hl
+	ld (de),a
+	jp tp_lp
+tp_done:
+	xor a
+	out ($44),a		; 12 МГц (биты 7..6 — замедление), сдвиг строки 0: темп игры держит frames_lock
 	ld a,1
 	ld (vec_turbo),a
 	ret
+
+; ---- Одноразовая часть vec_start: вектор RST7, ППИ, джойстик, обнуление ячеек. Перенесена сюда из
+; резидента ради места; turbo_init — первым, до первой записи в порт 10h.
+vec_boot_init:
+	ld a,$D3		; rst 1 ($0008): out ($10),a / jp vec_kv42 — запись порта 10h с маской 42h для Турбо+
+	ld ($0008),a
+	ld a,$10
+	ld ($0009),a
+	ld a,$C3
+	ld ($000A),a
+	ld hl,vec_kv42
+	ld ($000B),hl
+	call turbo_init
+	; RST7 -> vec_isr
+	ld a,$C3
+	ld ($0038),a
+	ld hl,vec_isr
+	ld ($0039),hl
+	; ППИ: A,B,C выходы; PB=0 (режим 256), PA=$FF (скролл норма)
+	ld a,$80
+	out ($00),a
+	xor a
+	out ($02),a
+	ld a,$FF
+	out ($03),a
+	ld a,$83		; ВВ55 №2 — джойстик «П» (как в ядре MiSTer, Vector-06C.sv joyP): оба устройства
+	out (PPI2_CW),a
+	ld a,$9F
+	out (PPI2_C),a
+	in a,(PPI2_A)		; покой: нажатием дальше считается отклонение от него (без джойстика
+	ld (joy_idle),a		; порт читается константой — $FF или мусор шины)
+	xor a
+	out (KV_PORT),a		; квазидиск выкл
+	ld (current_level),a	; уровень 1: загрузчик читает эту ячейку (инициализация ниже — уже поздно)
+	ld (vec_cheat),a	; читы выключены (ячейки в зазоре ROM, начальное значение не задано)
+	ld (vec_god),a
+	ld (vec_ckprev),a
+	ld (vec_ckeys),a
+	ld (music_playing),a	; в образе здесь $FF (ds): прерывание звало плеер всю загрузку набора, ещё до
+				; MUSIC_Init. Пока плеер жил в ROM, он «играл» незагруженную страницу 3 (в эмуляторах
+				; там нули, на MiSTer — остатки прошлой игры); плеер-оверлей при этом ещё не загружен
+	ret
+
+; Заплатки для Турбо+: адрес, новый байт. «Герой позади луча» на Турбо+ выключен: его проверки зовутся
+; call в стековом режиме, а на 12 МГц сброс вчетверо короче и разрыв меньше. ei/halt -> nop (00), call vec_phase -> xor a, nop, nop; пороги фазы.
+tp_tab:
+	dw dtb_ei
+	db 0
+	dw dbk_ei
+	db 0
+	dw dfb_ei
+	db 0
+	dw tp_dsp_ei
+	db 0
+	dw tp_dsptg_ei
+	db 0
+	dw dspm_ei
+	db 0
+	dw dsp_tg_w
+	db 0
+	dw dsp_lg_w
+	db 0
+	dw tp_vpf_ei
+	db 0
+	dw tp_vps_h
+	db 0
+	dw tp_vpff_h
+	db 0
+	dw tp_vps_call
+	db $AF
+	dw tp_vps_call+1
+	db 0
+	dw tp_vps_call+2
+	db 0
+	dw tp_vpff_call
+	db $AF
+	dw tp_vpff_call+1
+	db 0
+	dw tp_vpff_call+2
+	db 0
+	dw tp_vee_cp+1
+	db 200
+	dw tp_vpf_cp+1
+	db 150
+	dw tp_b128_ei
+	db 0
+	dw tp_b64l_ei
+	db 0
+	dw tp_b64r_ei
+	db 0
+	dw tp_vxn_call
+	db $AF
+	dw tp_vxn_call+1
+	db 0
+	dw tp_vxn_call+2
+	db 0
+	dw tp_hrw_ph
+	db 0
+	dw tp_hrw_ph+1
+	db 0
+	dw tp_hrw_ph+2
+	db 0
+	dw tp_hrw_fit
+	db $3E
+	dw tp_hrw_fit+1
+	db 1
+	dw tp_hrw_fit+2
+	db 0
+	dw tp_sr_lvl
+	db $CF
+	dw tp_sr_lvl+1
+	db 0
+	dw tp_sr_mus
+	db $CF
+	dw tp_sr_mus+1
+	db 0
+	dw tp_sr_cls
+	db $CF
+	dw tp_sr_cls+1
+	db 0
+	dw 0

@@ -70,7 +70,7 @@ mb_reopen:			; сохранить флаги результата (Z у mb_slide
 	push af
 	di
 	ld a,KV_WIN_OVL
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
 	ld (vec_kv_shadow),a
 	ei
 	pop af
@@ -82,7 +82,7 @@ mb_call_i:
 	push af
 	di
 	xor a
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
 	ld (vec_kv_shadow),a
 	ei
 	pop af
@@ -90,7 +90,7 @@ mb_call_i:
 	push af
 	di
 	ld a,KV_WIN_OVL
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
 	ld (vec_kv_shadow),a
 	ei
 	pop af
@@ -104,7 +104,7 @@ mb_go:
 ; вход: A = порт окна источника, HL = src, DE = dst (ОЗУ/VRAM вне окна), BC = длина
 mb_copy:
 	di
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
 mbc_l:
 	ld a,(hl)
 	ld (de),a
@@ -209,7 +209,7 @@ mbg_put:
 	; отскок VRAM $E000 -> стр.3 $C980 (окно $23; чтение VRAM $E000 при открытом b5 — можно, b7 закрыт)
 	di
 	ld a,$23
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
 	ld hl,$E000
 	ld de,$C980
 	ld bc,$1000
@@ -317,6 +317,7 @@ mbl_err:
 mb_read:			; сектор C -> (HL), Z = успех; DI на время сектора (DRQ-петля не терпит ISR)
 	di
 	call mb_ctl_w
+	call vec_fdd_rdy	; мотор раскручен (vec_turbo.asm)
 	ld a,c
 	out ($19),a
 	ld de,$0103
@@ -348,10 +349,15 @@ mb_ctl_w:
 	jp c,mb_ctl_w
 	ld a,(mb_ctl)
 	ret
-mb_wait:
+mb_wait:			; пауза после команды: ВГ93 поднимает BUSY не сразу, на 12 МГц (Турбо+) опрос
+	ld a,40			; сразу за командой видел «свободен», и следующая команда терялась
+mbw_p:
+	dec a
+	jp nz,mbw_p
+mbw_l:
 	in a,($1B)
 	rrca
-	jp c,mb_wait
+	jp c,mbw_l
 	ret
 
 ; Картинка (экран меню = 0, слайды = 1..5) лежит на дискете СЖАТОЙ, по одной дорожке на картинку:
@@ -452,7 +458,7 @@ mb_pic_cp:
 mb_kv_on:
 	di
 	ld a,MB_KV_BUF
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
 	ld (vec_kv_shadow),a
 	ei
 	ret
@@ -837,7 +843,7 @@ mbv_row:
 	ld hl,(mb_bgp)
 	ld c,a
 	ld a,KV_WIN_KV3
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
 	ld (hl),c
 	xor a
 	out (KV_PORT),a
@@ -847,7 +853,7 @@ mbv_rest:
 	ld b,h			; BC = адрес VRAM
 	ld hl,(mb_bgp)
 	ld a,KV_WIN_KV3
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42 в ROM)
 	ld a,(hl)		; копия -> VRAM
 	ld e,a
 	xor a

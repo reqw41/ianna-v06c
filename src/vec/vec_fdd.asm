@@ -21,7 +21,6 @@ KV_WIN_BANKS	equ $63		; окно $8000-$9FFF, страница 3: там леж�
 ; в build_edd (PAUSE_ADDR/FDD_BANKCODE/WPN_SRC), чтобы адрес не расходился с укладчиком набора.
 
 vec_fdd_load:
-	call turbo_init		; Вектор Турбо+: порты 40h..43h до первой записи в порт 10h (vec_turbo_boot.asm)
 	ld a,KV_WIN_MUSIC	; маркер уже есть — квазидиск заполнен снаружи, читать нечего
 	out (KV_PORT),a
 	ld a,(FDD_MARK)
@@ -91,24 +90,24 @@ vfl_next:
 	; (строки уровня попадут туда позже) и зовём — примитивы этого загрузчика ему ещё доступны.
 	di				; ISR играет музыку из своего окна и вернул бы ТЕНЬ порта,
 	ld a,KV_WIN_BANKS		; закрыв наше окно посреди копирования — держим прерывания
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42)
 	ld hl,FDD_BANKCODE
 	ld de,string_area+1216		; за буфером сектора (1К), таблицей длин и рецептом
 	ld bc,512
 	call z_ldir
 	xor a
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42)
 	ei
 	call string_area+1216
 	ld a,KV_WIN_MUSIC	; маркер: набор загружен
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42)
 	ld a,'I'
 	ld (FDD_MARK),a
 	ld a,'A'
 	ld (FDD_MARK+1),a
 vfl_done:
 	xor a
-	out (KV_PORT),a
+	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42)
 	ret
 
 
@@ -348,4 +347,9 @@ vfl_w_ok:
 vfl_blk:	db 0
 ; дорожка начала набора для уровней 1..16 (индекс = current_level); 0 = набора нет.
 ; Прошивает build_fdd.py по адресу из листинга — дорожку не приходится читать с дискеты.
+; $7FF0 = vec_kb_ph (vec_slot_tab+240): прерывание прибавляет к ней единицу каждый кадр и во время
+; загрузки — байт под ней загрузчику не принадлежит. Таблица дорожек — строго за ним (24.10: при
+; таблице на $7FEF её второй элемент рос, и смена уровня читала набор не с той дорожки).
+	ds $7FF0 - $		; код загрузчика обязан кончиться до $7FF0 (иначе ассемблер даст ошибку)
+vfl_kbpad:	db 0		; $7FF0 — место vec_kb_ph
 vfl_dirtab:	ds 10
