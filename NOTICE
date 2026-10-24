@@ -12,8 +12,8 @@ source to Intel 8080 by tools/z80to8080.py and patched for the Vector-06C;
 the screen output, input, floppy loader, quasi-disk layout and the Arkos
 Tracker player for i8080 (src/vec/) are written anew; graphics, maps and
 texts are converted by tools/data/; the menu, intro and level texts are
-translated into Russian. The floppy loading screen is the loading screen by MAC
-(as captured on idpixel.ru) redrawn for the Vector-06C 16-colour palette, with
+translated into Russian. The floppy loading screen is the loading screen of the
+ZX Spectrum version (by MAC) redrawn for the Vector-06C 16-colour palette, with
 the RetroWorks logo taken from the original menu screen.
 
 The port is distributed under the same Apache License, Version 2.0 (see
