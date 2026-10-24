@@ -84,6 +84,9 @@ while fr<FR:
         if ROT: cpu.icount = cyc // 8      # ВИ53 (1,5 МГц) = такты / 2; run_vec считает его по icount*4
     if cyc>=nxt:
         nxt+=FRAME; fr+=1
+        # после стартовой загрузки меню ждёт огня («НАЖМИ ПРОБЕЛ», ovl_press): короткое нажатие, если кадр свободен
+        if fr==int(os.environ.get("PRESSF","1990")) and not keys: keys[:]=['fire']; _pressed=True
+        elif fr==int(os.environ.get("PRESSF","1990"))+6 and keys==['fire']: keys[:]=[]
         if CHEAT:
             # сценарий проверки читов: F1+F3 в меню, старт, затем I, G, L
             plan={2300:['f1','f3'],2320:[],2400:['fire'],2420:[],2600:['fire'],2620:[],2800:['fire'],2820:[],3000:['fire'],3020:[],3250:['fire'],3270:[],3400:['fire'],3420:[],

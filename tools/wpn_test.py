@@ -106,14 +106,15 @@ def make_cpu(keys, before_fdd=None):
         if bytes(cpu.mem[a:a + 3]) == call: cpu.mem[a:a + 3] = b'\x00\x00\x00'
     track_palette(cpu)
     if before_fdd is not None:
-        # player_current_weapon движок читает в fb_wpn ПОСРЕДИ загрузки набора, а инициализирует
-        # позже — подкладываем значение на входе в vec_fdd_load, как это делает переход на
-        # следующий уровень с оружием в руках.
-        fdd = SYM['vec_fdd_load']; cw = SYM['player_current_weapon']
+        # player_current_weapon движок читает в fb_wpn (bl_wpn) ПОСРЕДИ загрузки набора, а
+        # инициализирует позже — подкладываем значение на входе в загрузчик, как это делает
+        # переход на следующий уровень с оружием в руках.
+        # Стартовая загрузка с заставкой идёт через bl_load (vec_bootload.asm) — ловим оба входа.
+        fdd = {SYM['vec_fdd_load'], SYM.get('bl_load', -1)}; cw = SYM['player_current_weapon']
         done = [False]
         orig = cpu.step
         def step():
-            if not done[0] and cpu.pc == fdd:
+            if not done[0] and cpu.pc in fdd:
                 cpu.mem[cw] = before_fdd; done[0] = True
             orig()
         cpu.step = step

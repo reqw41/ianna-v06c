@@ -102,7 +102,7 @@ fb_part:
 	ld de,FDD_BDST
 	call depack
 	call fb_store
-	ld hl,vfl_blk		; полоса прогресса при старте (vec_ld_hook): правая половина — куски банков
+	ld hl,vfl_blk		; полоса заставки загрузки (vec_lscreen.asm): 32..72 — куски банков
 	inc (hl)
 	inc (hl)
 	ld hl,(fb_ulen)		; следующий кусок ложится за предыдущим

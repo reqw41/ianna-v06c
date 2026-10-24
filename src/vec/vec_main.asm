@@ -27,6 +27,7 @@ vec_start:
 	call vec_boot_init	; одноразовая часть старта — в string_area (vec_turbo_boot.asm)
     endif
     if !DEMO
+vst_load:			; при заставке загрузки vec_boot_init ставит сюда bl_load (vec_bootload.asm)
 	call vec_fdd_load	; загрузка с дискеты, если квазидиск пуст (маркер 'IA' в стр.3 $C800)
 	ld hl,vfl_dirtab	; таблицу дорожек уровней прошивает build_fdd прямо в образ ROM, а в
 	ld de,vec_dirtab	; копии загрузчика внутри набора она нулевая — сохраняем, пока цела
@@ -34,6 +35,7 @@ vec_start:
 	call z_ldir
 	call vec_load_leveltab	; палитра, банки спрайтов и передние тайлы — из набора уровня
     endif
+vst_cls:			; после заставки загрузки здесь nop (vec_boot_init): экран стирает оверлей меню
 	call cls
 	call vec_init_rev256
     if !DEMO
@@ -173,6 +175,7 @@ vec_load_leveltab:
 	out (KV_PORT),a
 	ld (vec_kv_shadow),a
 	ld a,1
+vlt_dirty:			; после заставки загрузки здесь nop до входа в меню (vec_boot_init / ovl_entry)
 	ld (vec_pal_dirty),a
 	ei			; двухплоскостной блит и палитра экрана переехали в образ (vec_blit2.asm):
 	ret			; $7F00 нужен под таблицу слотов — пул работает на всех уровнях

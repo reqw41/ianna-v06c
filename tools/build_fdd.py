@@ -122,6 +122,7 @@ for pak in paks:
     data = pak.read_bytes()
     nsec = (len(data) + SEC - 1) // SEC
     assert nsec <= 10, f'банк {pak.name} больше дорожки: {len(data)} Б'
+    # Банк может начинаться и на стороне 1 (сектор 6..10): vfl_seek переводит его в сторону 1, сектор 1..5
     tr = next((t for t in sorted(track_free) if track_free[t] >= nsec), None)
     if tr is None:
         sys.exit(f'!! библиотека не влезла: {pak.name} ({nsec} сект.), свободно {sum(track_free.values())} сект.')
@@ -217,6 +218,13 @@ if menu.exists():
         blob = pack_center(vrm, (ROOT / 'build/slide0.vrm').read_bytes()) if i in CENTER_SLIDES else pack_picture(vrm)
         img[(PIC_TRACK + i)*TRACK:(PIC_TRACK + i)*TRACK + len(blob)] = blob
         placed_pics.append((i + 1, PIC_TRACK + i, len(blob)))
+
+# заставка стартовой загрузки (build_vec.cover_asm): вне наборов, на своей дорожке
+cover = (ROOT / 'build/cover.bin').read_bytes()
+ct = DL.COVER_TRACK * TRACK
+assert not any(img[ct:ct + 2 * TRACK]), 'дорожки заставки заняты'
+img[ct:ct + len(cover)] = cover
+print(f'заставка    дорожки {DL.COVER_TRACK}..{DL.COVER_TRACK + 1}, {len(cover)/1024:.1f} КБ (сжата)')
 
 # --- каталог МикроДОС: IANNA.COM (копия ROM уже с прошитыми таблицами) и IANNA.DAT поверх всего остального ---
 com = bytes(img[0x80:0x80 + len(rom)])

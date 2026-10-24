@@ -97,8 +97,15 @@ opy_x:
 ovl_debt:	db 0
 
 ovl_entry:
+	ld a,(vlt_dirty)	; nop вместо ld (vec_pal_dirty),a — была заставка загрузки (vec_boot_init):
+	or a			; надпись «НАЖМИ ПРОБЕЛ» на месте полосы — до копии блоба (код в хвосте string_area)
+	jp nz,ovl_nols
+	di
+	call ls_end
+	ei
+ovl_nols:
 	ld hl,0
-	ld (vec_key_hook),hl	; снять хук полосы загрузки (vec_ld_hook): дальше там таблица слотов
+	ld (vec_key_hook),hl	; снять хук полосы загрузки, если он ещё стоит: блоб ниже ляжет поверх его кода
 	; скопировать блоб порт-примитивов из окна ($9800..$9FFF) в ОЗУ string_area
 	ld hl,$9800
 	ld de,MB_ORG
@@ -112,6 +119,9 @@ ovl_cp:
 	ld a,b
 	or c
 	jp nz,ovl_cp
+	ld a,(vlt_dirty)	; заставка загрузки с «НАЖМИ ПРОБЕЛ» — ждём огня
+	or a
+	call z,ovl_press
 	call MB_SAVELVL		; песню уровня — в сторонку
 	ld a,(vec_end_flag)	; игра пройдена -> сперва концовка (end_game оригинала), потом меню
 	or a
@@ -504,6 +514,41 @@ ovl_w2:
 	ld b,1
 	inc c
 	jp ovl_w1
+; Заставка загрузки (vec_lscreen.asm) стоит с надписью «НАЖМИ ПРОБЕЛ»: ждём огня (пробел, Z, джойстик),
+; возвращаем vec_load_leveltab её ld (vec_pal_dirty),a и стираем экран (call cls в vec_start был снят).
+; Палитра уровня всё это время лежит в vec_palette — ovl_dark ниже сохранит её как обычно.
+ovl_press:
+	ld hl,ovl_ptxt		; «НАЖМИ ПРОБЕЛ» шрифтом меню на месте полосы (ls_end залил её чёрным)
+	ld bc,10*256+11		; колонка 10, строка 11 (y 120..127) — по центру полосы (build_vec.cover_asm)
+ovl_pt:
+	ld a,(hl)
+	or a
+	jp z,ovl_pt9
+	push hl
+	push bc
+	ld d,0			; одинарная высота, как в титрах и у соседних пунктов меню
+	call MB_MCHR
+	pop bc
+	pop hl
+	inc hl
+	inc b
+	jp ovl_pt
+ovl_pt9:
+	call ovl_wrel		; огонь, нажатый ещё во время загрузки, не в счёт
+ovl_pr1:
+	ei
+	halt
+	ld a,(joystick_state)
+	and $10
+	jp z,ovl_pr1
+	call ovl_wrel
+	ld a,$32
+	ld (vlt_dirty),a
+	ld hl,vec_pal_dirty
+	ld (vlt_dirty+1),hl
+	ld hl,cls
+	jp MB_CALL
+
 ovl_waitfire:			; ~340 кадров или fire (с отпусканием)
 	ld bc,340
 ovl_wf1:

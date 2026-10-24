@@ -86,6 +86,10 @@ def make_cpu(keys):
     # меню из ROM заменяем пустышкой — иначе игра уходит по $8440 в мусор и не стартует.
     patch_menu(cpu)
     def fdd_seek_read():
+        # на стороне 5 секторов: сектор 6..10 настоящий ВГ93 не найдёт (статус RNF, чтение висит — Emu80,
+        # 24.10); раньше стенд по формуле смещения молча читал сторону 1 и баг не видел
+        if fdd and not 1 <= st['sec'] <= 5:
+            raise RuntimeError(f"ВГ93: сектора {st['sec']} нет (дорожка {st['trk']}, сторона {st['side']})")
         off = ((st['trk'] * 2 + st['side']) * 5 + (st['sec'] - 1)) * 1024
         st['buf'] = fdd[off:off + 1024] if fdd and off + 1024 <= len(fdd) else b'\x00' * 1024
         st['pos'] = 0; st['busy'] = True

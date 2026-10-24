@@ -244,6 +244,89 @@ def make_music():
         'ark_stop:\n\tcall atStop\n\tjp atSfxStopAll\n'
         + code)
 
+def cover_asm():
+    """Заставка стартовой загрузки — загрузочный экран MAC (idpixel.ru, снимок 30) в раскраске «Лунное серебро»
+    (вариант 12 от Codex, 24.10; строки и столбцы — чётные из его 512x512): tools/data/art/cover_vector.png — 256x256, индексированный, номер точки =
+    слот палитры Вектора, палитра — в метаданных VectorPalette. Набор грузится мимо экрана (vec_bootload.asm).
+    Слоты с ролью: 0 — чёрный; 7 — пустая полоса (кремовый $B7); 15 — заливка полосы (красный $0E): хук ставит
+    бит плоскости $8000, 7 | 8 = 15. Надпись «НАЖМИ ПРОБЕЛ» печатает оверлей меню шрифтом меню (MB_MCHR): его
+    обводка — слот 0, тело — слоты 7 и 8 (PERM уровня 1), поэтому в 8 — оранжевый $27. Полоса — в центре,
+    строка надписи — строка 11 шрифта (y 120..127). Пишет build/cover.bin (aPLib экрана $8000-$FFFF) — его кладёт
+    на дорожки DL.COVER_TRACK.. build_fdd.py — и build/cover_preview.png; возвращает код и данные."""
+    from PIL import Image
+    import numpy as np
+    LS_COL, LS_Y = 10, 114                                # полоса: колонки 10..21 (x 80..175), строки y 114..133
+    img = Image.open(ROOT / 'tools/data/art/cover_vector.png')
+    assert img.mode == 'P' and img.size == (256, 256), (img.mode, img.size)
+    pal = [int(c, 16) for c in img.info['VectorPalette'].split()]
+    assert len(pal) == 16 and pal[0] == 0 and pal[7] == 0xB7 and pal[8] == 0x27 and pal[15] == 0x0E, pal
+    q = np.array(img)
+    # логотип RetroWorks — плашка с экрана меню (menu_screen оригинала, x 202..255, y 151..177) вместо логотипа MAC
+    # (x 0..63, y 224..254): серый — свободный слот 6, тёмно-красный — свободный 13; правее и выше плашки
+    # остатки старого логотипа (слоты 0, 4, 8, 15) зарисованы фоном: правее — копией столбцов на 8 точек правее,
+    # выше — точкой над ней
+    from build_edd import sr5_rows as _sr5
+    from pletter import depack as _pd
+    assert pal[6] == 0 and pal[13] == 0 and not ((q == 6) | (q == 13)).any(), 'слоты 6/13 заняты'
+    pal[6], pal[13] = 0x52, 0x05
+    MSX2V = {1: 0, 7: 6, 11: 5, 10: 8, 3: 13, 5: 7, 6: 10, 12: 6, 13: 6}   # цвет MSX -> слот заставки
+    menu = _sr5(_pd((SRC / 'menu_screen.SR5.plet1').read_bytes()), 192)
+    PX, PY, PW, PH = 3, 227, 55, 28                       # плашка 54x27 + чёрная тень справа и снизу
+    for y in range(PH):
+        for x in range(PW):
+            q[PY + y, PX + x] = 0 if x == PW - 1 or y == PH - 1 else MSX2V[menu[151 + y][202 + x]]
+    for y in range(224, 255):
+        for x in range(64):
+            if PX <= x < PX + PW and y >= PY or q[y, x] not in (0, 4, 8, 15): continue
+            if x >= PX + PW:
+                q[y, x] = q[y, x + 8]                     # правее — дали без логотипа: сдвиг сохраняет фактуру
+            else:
+                q[y, x] = q[y - 1, x]
+    def rgb(b): return ((b & 7) * 255 / 7, ((b >> 3) & 7) * 255 / 7, ((b >> 6) & 3) * 255 / 3)
+    vram = bytearray(32768)
+    def put(x, L, k):
+        off = (x >> 3) * 256 + L; bit = 0x80 >> (x & 7)
+        for p in range(4):
+            if k & (8 >> p): vram[p * 8192 + off] |= bit
+            else: vram[p * 8192 + off] &= ~bit & 0xFF
+    for y in range(256):
+        for x in range(256):
+            put(x, 255 - y, int(q[y, x]))
+    # рамка полосы: x LS_COL*8..+95, строки y LS_Y-1..LS_Y+20 — рамка цвета 0, внутри цвет 7; хук ставит бит
+    # $8000 — красный
+    x0, L0 = LS_COL * 8, 255 - LS_Y
+    ytop = int(re.search(r'^MB_YTOP\s+equ (\d+)', (VEC / 'menu_ram.asm').read_text(encoding='utf-8'), re.M).group(1))
+    assert 255 - (ytop - 11 * 8) == LS_Y + 6, 'строка 11 шрифта меню (ovl_press) — не по центру полосы'
+    for x in range(x0, x0 + 96):
+        for L in range(L0 - 20, L0 + 2):
+            put(x, L, 0 if x in (x0, x0 + 95) or L in (L0 - 20, L0 + 1) else 7)
+    prev = Image.new('RGB', (256, 256))                   # предпросмотр: build/cover_preview.png (512x512, как в Emu80)
+    for y in range(256):
+        for x in range(256):
+            k = sum(((vram[p * 8192 + (x >> 3) * 256 + 255 - y] >> (7 - (x & 7))) & 1) << (3 - p) for p in range(4))
+            prev.putpixel((x, y), tuple(int(t) for t in rgb(pal[k])))
+    prev.resize((512, 512), Image.NEAREST).save(ROOT / 'build/cover_preview.png')
+    tmp = ROOT / 'build/_cover'
+    tmp.write_bytes(bytes(vram))
+    r = subprocess.run([str(ROOT / 'tools/bin/apultra'), str(tmp), str(tmp.with_suffix('.ap'))], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    blob = tmp.with_suffix('.ap').read_bytes()
+    assert len(blob) <= 2 * 10240, f'обложка {len(blob)} Б: не влезает в две дорожки'
+    (ROOT / 'build/cover.bin').write_bytes(blob)
+    fdd = (VEC / 'vec_fdd.asm').read_text(encoding='utf-8')
+    assert re.search(r'^vfl_fill:\n\tld a,\(vec_fdd_sec\)', fdd, re.M), 'vfl_fill начинается не с ld a,(nn) (LS_OP0)'
+    m = re.search(r'^vec_fdd_load:(.*?)^vfl_fill:', fdd, re.M | re.S)
+    out = ['\n; --- стартовая загрузка с заставкой (сгенерировано build_vec.cover_asm) ---',
+           f'COVER_TRACK\tequ {DL.COVER_TRACK}', f'LS_COL\t\tequ {LS_COL}', f'LS_L0\t\tequ ${L0:02X}', f'LS_L1\t\tequ ${L0 - 20:02X}', 'LS_OP0\t\tequ $3A\t; ld a,(nn) — первый байт vfl_fill',
+           '\tds string_area+1024-$\t\t; за буфером сектора (1К)',
+           (VEC / 'vec_bootload.asm').read_text(encoding='utf-8'),
+           (VEC / 'vec_lscreen.asm').read_text(encoding='utf-8'),
+           'ls_pal:\tdb ' + ','.join(f'${v:02X}' for v in pal),
+           'bl_end:']
+    print(f'заставка: обложка {len(blob)} Б (дорожки {DL.COVER_TRACK}..{DL.COVER_TRACK + (len(blob) - 1) // 10240}), палитра '
+          + ' '.join(f'{v:02X}' for v in pal))
+    return '\n'.join(out) + '\n'
+
 def make_vars():
     text = (SRC / 'vars.asm').read_text(encoding='utf-8', errors='replace')
     text = text.replace('music_addr: ds 4096', 'music_addr: ds 2')
@@ -254,9 +337,9 @@ def make_vars():
     else:
         # одноразовый код старта для Турбо+ живёт в string_area: образ грузится целиком, а string_area до
         # меню не используется (vec_start зовёт turbo_init первым делом); в резиденте до $6A00 места нет
-        boot = (VEC / 'vec_turbo_boot.asm').read_text(encoding='utf-8', errors='replace')
+        boot = (VEC / 'vec_turbo_boot.asm').read_text(encoding='utf-8', errors='replace') + cover_asm()
         assert 'string_area: ds 2048' in text
-        text = text.replace('string_area: ds 2048', 'string_area:\n' + boot + '\n\tds 2048 - ($ - string_area)')
+        text = text.replace('string_area: ds 2048', 'string_area:\n' + boot + '\n\tds 2048 - ($ - string_area)\t; bl_end <= string_area+2048 (иначе ds отрицательный)')
     # неиспользуемые буферы VDP-команд (кроме vdpCmdSprite: там NY для drawSprite) и палитры
     text = re.sub(r'^(tileDat|fgtileDat|dirtyTileDat|cmdDat|charDat|charDat2|charDat3|fillDat|vdpCmdWeapon|lineMoveDat|vdpCopyDat|scoreDat): ds 15', r'\1: ds 0', text, flags=re.M)
     text = text.replace('currentPal: ds 32', 'currentPal: ds 0')
@@ -546,6 +629,13 @@ def main():
             if mm: code_end = max(code_end, int(mm.group(1), 16) + len(mm.group(2)) // 2)
         assert code_end <= VARS_ADDR, f'код до ${code_end:04X} НАЕХАЛ на переменные ${VARS_ADDR:04X}'
         assert code_end <= 0x6A00, f'код дошёл до ${code_end:04X}: в $6A00-$6AFF лежит vec_col_tab (vec_vdp.asm)'
+        def _sym(n):
+            m_ = re.search(r'^' + n + r'\s+=\s+\$([0-9A-F]{4})', lst, re.M)
+            return int(m_.group(1), 16) if m_ else None
+        if _sym('bl_end'):   # стартовая загрузка: таблица длин на месте главного цикла старого загрузчика
+            assert _sym('vfl_fill') - _sym('vec_fdd_load') >= 192, 'BL_TAB (192 Б) не влезает до vfl_fill'
+            assert _sym('bl_end') <= _sym('string_area') + 2048
+            print(f"стартовый загрузчик: string_area+{_sym('bl_gb') - _sym('string_area')}..+{_sym('bl_end') - _sym('string_area')} из 2048")
         mh = re.search(r'^vec_hi_end\s+=\s+\$([0-9A-F]{4})', lst, re.M)
         assert mh, 'нет vec_hi_end'
         if not DEMO:
@@ -575,7 +665,7 @@ def main():
 
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
-    need = ['depack', 'vfl_blk', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl', 'vfl_ready', 'vec_fdd_rdy',
+    need = ['depack', 'vfl_blk', 'vlt_dirty', 'ls_end', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl', 'vfl_ready', 'vec_fdd_rdy',
             'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', 'vec_fade_out', 'vec_fade_in', 'vec_frect4', 'vec_slc_unp', 'vec_palsave', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
@@ -601,6 +691,9 @@ def build_menu_bins(lst):
             syms[m.group(1)] = int(m.group(2), 16)
     missing = [n for n in need if n not in syms]
     assert not missing, f'нет символов для меню: {missing}'
+    # vfl_seek ставит сторону 1 через dec hl x2 от vec_fdd_sec; vfl_stream ловит конец буфера по старшему байту
+    assert syms['vec_fdd_sec'] - syms['vec_fdd_ctl'] == 2, 'vec_fdd_ctl должен лежать за 2 байта до vec_fdd_sec'
+    assert syms['string_area'] & 0xFF == 0, 'буфер сектора (string_area) должен быть выровнен по странице'
     out = ['; сгенерировано build_vec (символы игры для оверлея меню)']
     for line in lst.split('\n'):                      # константы набора уровня (SCRPAL, LEVELTAB_PORT...)
         m = re.match(r'^(SCRPAL|LEVELTAB_PORT|LEVELTAB|FDDCOPY|FDD_TAB|FDD_BANKCODE|WPN_SRC|WPN_ORG|WPN_LEN|FGC_CODE|FGC_PTRS|FGC_TILES|ZP_BLIT2M|ZPSRC)\s+=\s+\$([0-9A-F]{2,4})', line)
@@ -619,7 +712,8 @@ def build_menu_bins(lst):
           db('o_play_es', MENU['play']), db('o_pass_es', MENU['pass']), db('o_mus_es', MENU['music']),  # пункта языка нет
           db('t1s', INTRO[0]), db('t2s', INTRO[1]), db('t3s', INTRO[2]),
           db('e1s', ENDING[0]), db('e2s', ENDING[1]), db('e3s', ENDING[2]), db('oe_end_es', THE_END_RU),
-          db('p_ask_es', MENU['pass_ask']), db('p_ok_es', MENU['pass_ok']), db('p_bad_es', MENU['pass_bad'])]
+          db('p_ask_es', MENU['pass_ask']), db('p_ok_es', MENU['pass_ok']), db('p_bad_es', MENU['pass_bad']),
+          db('ovl_ptxt', 'НАЖМИ ПРОБЕЛ')]   # заставка загрузки: ovl_press, строка 11, колонки 10..21
     (ROOT / 'build/menu_ru.asm').write_text('\n'.join(ru) + '\n')
     # Титры (37 строк по 15 знаков) — отдельным блобом в квазидиске по MB_CREDITS: в окне оверлея
     # ($8440-$9000) на них нет места, а $9400 в странице 3 свободна (за загрузчиком банков).
