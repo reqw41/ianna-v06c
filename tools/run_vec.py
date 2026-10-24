@@ -101,10 +101,19 @@ def make_cpu(keys):
     pit_scale = int(os.environ.get('IANNA_PITSCALE', 100))
     def pit_val():
         return (0xFFFF - (((cpu.icount - pit['reload']) * 4 * pit_scale // 100) & 0xFFFF)) & 0xFFFF
+    # AY: регистры для чтения через 15h (проба ay_detect в плеере). IANNA_NOAY=1 — машина без AY: чтение
+    # отдаёт $FF, игра выводит эффекты на счётчик 2 ВИ53; записи в него — в vi53_log (кадр по icount).
+    ay = {'sel': 0, 'reg': [0] * 16}
+    noay = os.environ.get('IANNA_NOAY') == '1'
+    cpu.vi53_log = []
     def out_handler(port, val):
         if port == 0x03: cur[0] = val
+        elif port == 0x15: ay['sel'] = val & 15
+        elif port == 0x14: ay['reg'][ay['sel']] = val
+        elif port == 0x09: cpu.vi53_log.append((cpu.icount, 9, val))
         elif port == 0x10: cpu.kv_out(port, val)
         elif port == 0x08:
+            if val & 0xC0 == 0x80: cpu.vi53_log.append((cpu.icount, 8, val))
             if val == 0: pit['latched'] = pit_val(); pit['rd'] = 0
         elif port == 0x0B:
             if pit['wr'] == 0: pit['wr'] = 1
@@ -122,6 +131,8 @@ def make_cpu(keys):
             for k, b in (('jright', 1), ('jleft', 2), ('jup', 4), ('jdown', 8), ('jfire', 0x40), ('jfire2', 0x80)):
                 if k in keys: v &= ~b
             return v
+        if port == 0x01: return 0xDF if 'ss' in keys else 0xFF   # СС (PC5) — действие
+        if port == 0x15: return 0xFF if noay else ay['reg'][ay['sel']]
         if port == 0x0B:
             v = pit['latched'] if pit['latched'] is not None else pit_val()
             if pit['rd'] == 0: pit['rd'] = 1; return v & 0xFF

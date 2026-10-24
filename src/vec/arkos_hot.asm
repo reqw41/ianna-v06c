@@ -31,6 +31,7 @@
 ;;; tools/aydump.py + tools/arkos_model.py --check-game (то же в игре).
 
 _atDEF_R13Retrig	equ $FE		; значение-«замок» R13, заставляющее перезапустить огибающую
+VI_THR			equ 4		; ВИ53: кадры эффекта тише этой громкости — тишина
 
 ;;; ============================== atPlay: один кадр ==============================
 atPlay:
@@ -359,10 +360,85 @@ at_ay3update:
 	ld a,(hl)
 	ld hl,ps_r13lock
 	cp (hl)
-	ret z
+	jp z,vi_tick
 	ld (hl),a
 	out ($14),a
-	ret
+;;; ВИ53 вместо AY: только когда AY нет (ay_none, ark_init -> ay_detect). Звучит эффект канала 2 (B — на
+;;; нём играет FX_Play) на счётчике 2 ВИ53, музыка молчит. Громкости у ВИ53 нет: тихие кадры (ниже
+;;; VI_THR) — тишина. Тон — меандр той же высоты (делитель = период AY * 55/4), шум — меандр случайной
+;;; высоты (1,2–5,8 кГц), тем ниже, чем больше период шума. Счётчики 0 и 1 не трогаются.
+vi_tick:
+	ld a,(ay_none)
+	or a
+	ret z
+	ld a,(s2_instr+1)		; 0 = эффекта нет (адреса инструментов $D9xx и выше)
+	or a
+	jp z,vi_mute
+	ld a,(ay_r0+9)			; 0..15, 16 = огибающая (громко)
+	cp VI_THR
+	jp c,vi_mute
+	ld a,(ay_r0+7)
+	rra
+	rra				; CY = бит 1: тон канала B выключен
+	jp nc,vi_tone
+	and 4				; бит 4 (шум B выключен) — теперь бит 2
+	jp nz,vi_mute
+	ld a,(_atVAR_Reg6)		; шум: делитель = (период шума / 8 + 1) * 256 + случайный байт
+	rrca
+	rrca
+	rrca
+	and 3
+	inc a
+	ld h,a
+	ld a,(vi_rnd)			; x*5+1
+	ld b,a
+	add a,a
+	add a,a
+	add a,b
+	inc a
+	ld (vi_rnd),a
+	ld l,a
+	jp vi_out
+vi_tone:
+	ld hl,(ay_r0+2)
+	ld a,h
+	and $0f
+	ld h,a
+	ld d,h
+	ld e,l				; DE = P
+	add hl,hl
+	ld b,h
+	ld c,l				; BC = 2P
+	add hl,hl
+	add hl,hl
+	add hl,hl
+	ld a,l
+	sub c
+	ld l,a
+	ld a,h
+	sbc a,b
+	ld h,a				; HL = 14P
+	or a
+	ld a,d
+	rra
+	ld d,a
+	ld a,e
+	rra
+	ld e,a
+	or a
+	ld a,d
+	rra
+	ld d,a
+	ld a,e
+	rra
+	ld e,a				; DE = P/4
+	ld a,l
+	sub e
+	ld l,a
+	ld a,h
+	sbc a,d
+	ld h,a				; HL = 13,75P
+	jp vi_out
 
 ;;; ============================== звук одного канала ==============================
 ; Вход:  HL = указатель на данные инструмента, D = инвертированная громкость, E = нота,
@@ -1211,7 +1287,10 @@ ps_r7:		db 0		; сборка регистра 7
 ps_sfx:		db 0		; 1 = играем эффект (конец звука = адрес 0)
 ps_ifreq:	dw 0		; Independent: программная частота
 ps_ihasf:	db 0
-ps_r13lock:	db 255		; последнее записанное значение R13 (операнд `cp` оригинала)
+ps_r13lock:	db 255
+ay_none:	db 0		; 1 = AY нет, эффекты идут на ВИ53 (ay_detect)
+vi_on:		db 0		; счётчик 2 ВИ53 в режиме меандра
+vi_rnd:		db 0		; последнее записанное значение R13 (операнд `cp` оригинала)
 
 sfx_num:	dw 0		; разбор аргументов atSfxPlay
 sfx_note:	dw 0
@@ -1303,3 +1382,55 @@ s3_vol:		db 0
 s3_speed:	db 6
 s3_sctr:	db 1
 s3_instr:	dw 0
+
+;;; Хвост ВИ53 и проба AY — в куске данных: в коде ($C010-$C7FF) места нет.
+vi_out:
+	ld a,(vi_on)
+	or a
+	jp nz,vi_cnt
+	inc a
+	ld (vi_on),a
+	ld a,$B6			; счётчик 2, режим 3 (меандр); дальше только делитель — без щелчка
+	out ($08),a
+vi_cnt:
+	ld a,l
+	out ($09),a
+	ld a,h
+	out ($09),a
+	ret
+vi_mute:
+	ld a,(vi_on)
+	or a
+	ret z
+	xor a
+	ld (vi_on),a
+	ld a,$B0			; режим 0: выход стоит
+	out ($08),a
+	xor a
+	out ($09),a
+	out ($09),a
+	ret
+
+; ay_none = 0, если AY отвечает на чтение регистра 0 (порт 15h) двумя образцами, как в порте Tony
+; (чтение через 14h у vector06js не проверяется — места нет). Зовёт ark_init при каждой загрузке песни:
+; оверлей приезжает с набором уровня. Портит BC.
+ay_detect:
+	xor a
+	out ($15),a
+	ld b,$55
+	call ayd_rd
+	jp nz,ayd_set
+	ld b,$AA
+	call ayd_rd
+ayd_set:
+	ld (ay_none),a
+	ret
+; B = образец -> A = 0 (ответил) или 1, флаг Z — то же.
+ayd_rd:
+	ld a,b
+	out ($14),a
+	in a,($15)
+	sub b
+	ret z
+	ld a,1
+	ret

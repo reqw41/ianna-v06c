@@ -9,8 +9,6 @@ MUSIC_Play:
 FX_Play:
 	ret
     endif
-	ret
-	ret
 ; menu / pause (pause_menu = оверлей квазидиска)
 pause_menu:
     if !DEMO
@@ -19,18 +17,8 @@ pause_menu:
 mainmenu:
 intro:
 ending:
-	ret
-; memory.asm
-initROMbanks:
-	xor a
-	ld (ROMBank0),a
-	inc a
-	ld (ROMBank1),a
-	ret
 enableSLOT2:
 enableSLOT2_EI:
-	ret
-	ret
 ; font/menu: шрифт меню и прозрачные символы не нужны
 FONT:
 menu_font:
@@ -38,4 +26,11 @@ drawCharFront:
 drawCharTrans:
 drawCharTrans_Double:
 drawCharTrans_front:
+	ret
+; memory.asm
+initROMbanks:
+	xor a
+	ld (ROMBank0),a
+	inc a
+	ld (ROMBank1),a
 	ret
