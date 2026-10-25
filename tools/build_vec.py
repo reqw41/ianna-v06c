@@ -317,7 +317,7 @@ def cover_asm():
     assert re.search(r'^vfl_fill:\n\tld a,\(vec_fdd_sec\)', fdd, re.M), 'vfl_fill начинается не с ld a,(nn) (LS_OP0)'
     m = re.search(r'^vec_fdd_load:(.*?)^vfl_fill:', fdd, re.M | re.S)
     out = ['\n; --- стартовая загрузка с заставкой (сгенерировано build_vec.cover_asm) ---',
-           f'COVER_TRACK\tequ {DL.COVER_TRACK}', f'LS_COL\t\tequ {LS_COL}', f'LS_L0\t\tequ ${L0:02X}', f'LS_L1\t\tequ ${L0 - 20:02X}', 'LS_OP0\t\tequ $3A\t; ld a,(nn) — первый байт vfl_fill',
+           f'COVER_TRACK\tequ {DL.COVER_TRACK}', f'DIR_TRACK\tequ {DL.DIR_LBA // 10}', f'DAT_BLK\t\tequ {(DL.DAT_LBA - DL.DIR_LBA) // 2}', f'DAT_BLOCKS\tequ {DL.DSM + 1 - (DL.DAT_LBA - DL.DIR_LBA) // 2}', f'LS_COL\t\tequ {LS_COL}', f'LS_L0\t\tequ ${L0:02X}', f'LS_L1\t\tequ ${L0 - 20:02X}', 'LS_OP0\t\tequ $3A\t; ld a,(nn) — первый байт vfl_fill',
            '\tds string_area+1024-$\t\t; за буфером сектора (1К)',
            (VEC / 'vec_bootload.asm').read_text(encoding='utf-8'),
            (VEC / 'vec_lscreen.asm').read_text(encoding='utf-8'),

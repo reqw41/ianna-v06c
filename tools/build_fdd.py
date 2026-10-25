@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import disk_layout as DL            # раскладка дискеты МикроДОС — см. tools/disk_layout.py
 SEC, TRACK = DL.SEC, DL.TRACK
 LEVEL_TRACKS = DL.LEVEL_TRACKS       # один непрерывный блок: наборы уровней по 5-9 дорожек каждый
-MENU_TRACK, MENU_SEC = DL.MENU_TRACK, DL.MENU_SEC   # экран меню — в хвосте загрузочной области
+MENU_TRACK, MENU_SEC = DL.MENU_TRACK, DL.MENU_SEC   # экран меню — дорожка 70, внутри IANNA.DAT
 PIC_TRACK = DL.PIC_TRACK             # семь слайдов — по дорожке на каждый
 
 rom = bytearray((ROOT / 'build/ianna.rom').read_bytes())
@@ -96,6 +96,78 @@ img[0x80:0x80 + len(rom)] = rom
 for start, data in level_data:
     img[start*TRACK:start*TRACK + len(data)] = data
 
+def pack_picture(vrm):
+    """Дамп VRAM 32 КБ -> [4 смещения по 2 байта][сжатые плоскости подряд]. Плоскость жмётся
+    отдельно: распаковщик кладёт каждую по своему адресу VRAM, а целиком 32 КБ распаковывать
+    некуда — приёмник перекрыл бы буфер источника."""
+    import subprocess
+    tin, tout = ROOT / 'build/_pic.bin', ROOT / 'build/_pic.ap'
+    head, body = bytearray(), bytearray()
+    for pl in range(4):
+        tin.write_bytes(vrm[pl*8192:(pl+1)*8192])
+        r = subprocess.run([str(ROOT / 'tools/bin/apack'), str(tin), str(tout)], capture_output=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        blob = tout.read_bytes()
+        head += bytes((len(head) if False else (8 + len(body)) & 0xFF, (8 + len(body)) >> 8))
+        body += blob
+    out = bytes(head) + bytes(body)
+    assert len(out) <= TRACK, f'картинка не влезла в дорожку: {len(out)} Б'
+    return out
+
+# Слайды интро 1 и 2 отличаются от нулевого только серединой: рамка с колоннами и подложка текста те же.
+# На дискете от них лежит одна середина, а игра меняет её, не трогая остального (vec_intro.asm).
+CENTER_SLIDES = (1, 2)
+C_COL0, C_NCOL, C_ROW0, C_NROW = 8, 16, 32, 128      # колонки 8..23, строки экрана 32..159
+
+def pack_center(vrm, base):
+    """Середина слайда -> [4 смещения][4 сжатые плоскости по 2048 Б]: по колонкам, в колонке сверху вниз
+    (L = 255 - строка экрана, убывает). Вне середины слайд обязан совпадать с нулевым."""
+    import subprocess
+    inside = lambda k: C_COL0 <= ((k >> 8) & 31) < C_COL0 + C_NCOL and C_ROW0 <= 255 - (k & 255) < C_ROW0 + C_NROW
+    bad = [k for k in range(32768) if vrm[k] != base[k] and not inside(k)]
+    assert not bad, f'слайд отличается от нулевого вне середины: {len(bad)} Б, первый ${0x8000 + bad[0]:04X}'
+    tin, tout = ROOT / 'build/_pic.bin', ROOT / 'build/_pic.ap'
+    head, body = bytearray(), bytearray()
+    for pl in range(4):
+        raw = bytes(vrm[pl*8192 + c*256 + (255 - y)] for c in range(C_COL0, C_COL0 + C_NCOL) for y in range(C_ROW0, C_ROW0 + C_NROW))
+        tin.write_bytes(raw)
+        r = subprocess.run([str(ROOT / 'tools/bin/apack'), str(tin), str(tout)], capture_output=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        head += bytes(((8 + len(body)) & 0xFF, (8 + len(body)) >> 8))
+        body += tout.read_bytes()
+    out = bytes(head) + bytes(body)
+    assert len(out) <= 0x1800, f'середина слайда не влезла в 6 КБ перед буфером распаковки: {len(out)} Б'
+    return out
+
+# Картинки и заставка — на своих дорожках DL.PIC_ZONE (внутри IANNA.DAT), ДО библиотеки банков: банки
+# ложатся в хвосты этих дорожек. pic_used[дорожка] = занято секторов с первого.
+placed_pics = []
+pic_used = {}
+def put_pic(tr, sc, blob):
+    at = tr*TRACK + (sc - 1)*SEC
+    assert not any(img[at:at + len(blob)]), f'картинка наехала на данные: дор.{tr} сект.{sc}'
+    img[at:at + len(blob)] = blob
+    end = (sc - 1) + (len(blob) + SEC - 1) // SEC
+    for t in range(tr, tr + (end - 1) // 10 + 1):
+        assert t in DL.PIC_ZONE, f'картинка вышла из своих дорожек: {t}'
+        pic_used[t] = min(10, end - (t - tr) * 10)
+menu = ROOT / 'build/menu_screen.vrm'
+if menu.exists():
+    blob = pack_picture(menu.read_bytes())
+    assert len(blob) <= 8 * SEC, f'экран меню больше 8 секторов (mb_pic_rd читает 8): {len(blob)}'
+    put_pic(MENU_TRACK, MENU_SEC, blob)
+    placed_pics.append((0, MENU_TRACK, len(blob)))
+    for i in range(7):
+        vrm = (ROOT / f'build/slide{i}.vrm').read_bytes()
+        blob = pack_center(vrm, (ROOT / 'build/slide0.vrm').read_bytes()) if i in CENTER_SLIDES else pack_picture(vrm)
+        put_pic(PIC_TRACK + i, 1, blob)
+        placed_pics.append((i + 1, PIC_TRACK + i, len(blob)))
+
+# заставка стартовой загрузки (build_vec.cover_asm): вне наборов, на своей дорожке
+cover = (ROOT / 'build/cover.bin').read_bytes()
+put_pic(DL.COVER_TRACK, 1, cover)
+print(f'заставка    дорожки {DL.COVER_TRACK}..{DL.COVER_TRACK + 1}, {len(cover)/1024:.1f} КБ (сжата)')
+
 # --- библиотека банков: каждый банк лежит на дискете ОДИН раз, наборы ссылаются на него рецептом ---
 # Один и тот же тролль нужен пяти уровням; раньше он лежал в каждом наборе, потому что банк в наборе
 # стоит по своему для этого уровня адресу. Теперь наборы идут без банков (см. build_levels), а куда
@@ -108,6 +180,9 @@ import json
 lib_at = {}
 track_free = {tr: 10 for tr in free}     # свободных секторов в дорожке (счёт с сектора 1)
 track_free[DL.LIB_TAIL[0]] = DL.LIB_TAIL[1]  # хвост дорожки за IANNA.COM
+for tr in DL.PIC_ZONE:                    # хвосты дорожек картинок; дорожки 80..81 — вне IANNA.DAT
+    if pic_used.get(tr, 0) < 10:
+        track_free[tr] = 10 - pic_used.get(tr, 0)
 # Хвост ПОСЛЕДНЕЙ дорожки каждого набора тоже свободен: наборы кратны сектору, а не дорожке, и
 # в сумме девять хвостов дают 56 КБ. Без них четыре страницы героя (22 сект.) в библиотеку уже
 # не помещались: целых свободных дорожек в области уровней остаётся всего пара.
@@ -160,71 +235,6 @@ for n, start, ln in placed:                     # прошить позиции 
         tr, sc = lib_at[e['key']]
         at = start*TRACK + e['off']
         img[at] = tr; img[at + 1] = sc
-
-def pack_picture(vrm):
-    """Дамп VRAM 32 КБ -> [4 смещения по 2 байта][сжатые плоскости подряд]. Плоскость жмётся
-    отдельно: распаковщик кладёт каждую по своему адресу VRAM, а целиком 32 КБ распаковывать
-    некуда — приёмник перекрыл бы буфер источника."""
-    import subprocess
-    tin, tout = ROOT / 'build/_pic.bin', ROOT / 'build/_pic.ap'
-    head, body = bytearray(), bytearray()
-    for pl in range(4):
-        tin.write_bytes(vrm[pl*8192:(pl+1)*8192])
-        r = subprocess.run([str(ROOT / 'tools/bin/apack'), str(tin), str(tout)], capture_output=True)
-        assert r.returncode == 0, r.stdout + r.stderr
-        blob = tout.read_bytes()
-        head += bytes((len(head) if False else (8 + len(body)) & 0xFF, (8 + len(body)) >> 8))
-        body += blob
-    out = bytes(head) + bytes(body)
-    assert len(out) <= TRACK, f'картинка не влезла в дорожку: {len(out)} Б'
-    return out
-
-# Слайды интро 1 и 2 отличаются от нулевого только серединой: рамка с колоннами и подложка текста те же.
-# На дискете от них лежит одна середина, а игра меняет её, не трогая остального (vec_intro.asm).
-CENTER_SLIDES = (1, 2)
-C_COL0, C_NCOL, C_ROW0, C_NROW = 8, 16, 32, 128      # колонки 8..23, строки экрана 32..159
-
-def pack_center(vrm, base):
-    """Середина слайда -> [4 смещения][4 сжатые плоскости по 2048 Б]: по колонкам, в колонке сверху вниз
-    (L = 255 - строка экрана, убывает). Вне середины слайд обязан совпадать с нулевым."""
-    import subprocess
-    inside = lambda k: C_COL0 <= ((k >> 8) & 31) < C_COL0 + C_NCOL and C_ROW0 <= 255 - (k & 255) < C_ROW0 + C_NROW
-    bad = [k for k in range(32768) if vrm[k] != base[k] and not inside(k)]
-    assert not bad, f'слайд отличается от нулевого вне середины: {len(bad)} Б, первый ${0x8000 + bad[0]:04X}'
-    tin, tout = ROOT / 'build/_pic.bin', ROOT / 'build/_pic.ap'
-    head, body = bytearray(), bytearray()
-    for pl in range(4):
-        raw = bytes(vrm[pl*8192 + c*256 + (255 - y)] for c in range(C_COL0, C_COL0 + C_NCOL) for y in range(C_ROW0, C_ROW0 + C_NROW))
-        tin.write_bytes(raw)
-        r = subprocess.run([str(ROOT / 'tools/bin/apack'), str(tin), str(tout)], capture_output=True)
-        assert r.returncode == 0, r.stdout + r.stderr
-        head += bytes(((8 + len(body)) & 0xFF, (8 + len(body)) >> 8))
-        body += tout.read_bytes()
-    out = bytes(head) + bytes(body)
-    assert len(out) <= 0x1800, f'середина слайда не влезла в 6 КБ перед буфером распаковки: {len(out)} Б'
-    return out
-
-placed_pics = []
-menu = ROOT / 'build/menu_screen.vrm'
-if menu.exists():
-    blob = pack_picture(menu.read_bytes())
-    at = MENU_TRACK*TRACK + (MENU_SEC - 1)*SEC
-    assert len(blob) <= TRACK - (MENU_SEC - 1)*SEC, f'экран меню не влез в хвост дорожки ROM: {len(blob)}'
-    assert at >= 0x80 + len(rom), 'экран меню наехал на ROM'
-    img[at:at + len(blob)] = blob
-    placed_pics.append((0, MENU_TRACK, len(blob)))
-    for i in range(7):
-        vrm = (ROOT / f'build/slide{i}.vrm').read_bytes()
-        blob = pack_center(vrm, (ROOT / 'build/slide0.vrm').read_bytes()) if i in CENTER_SLIDES else pack_picture(vrm)
-        img[(PIC_TRACK + i)*TRACK:(PIC_TRACK + i)*TRACK + len(blob)] = blob
-        placed_pics.append((i + 1, PIC_TRACK + i, len(blob)))
-
-# заставка стартовой загрузки (build_vec.cover_asm): вне наборов, на своей дорожке
-cover = (ROOT / 'build/cover.bin').read_bytes()
-ct = DL.COVER_TRACK * TRACK
-assert not any(img[ct:ct + 2 * TRACK]), 'дорожки заставки заняты'
-img[ct:ct + len(cover)] = cover
-print(f'заставка    дорожки {DL.COVER_TRACK}..{DL.COVER_TRACK + 1}, {len(cover)/1024:.1f} КБ (сжата)')
 
 # --- каталог МикроДОС: IANNA.COM (копия ROM уже с прошитыми таблицами) и IANNA.DAT поверх всего остального ---
 com = bytes(img[0x80:0x80 + len(rom)])

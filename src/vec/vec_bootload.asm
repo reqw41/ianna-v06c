@@ -384,6 +384,77 @@ bl_ob_x:
 	pop hl
 	ret
 
+;;; --- IANNA.DAT по каталогу МикроДОС: всё, что игра читает после старта, лежит в этом файле, и номера
+; дорожек в ней зашиты от его начала. Поэтому файл обязан лежать подряд с блока DAT_BLK и целиком (так его
+; пишет build_fdd и CP/M на чистую дискету вслед за IANNA.COM). Считаем блоки записей IANNA.DAT, стоящие
+; на своём месте (DAT_BLK + 8*(EX + 32*S2) + номер в записи): их должно быть DAT_BLOCKS. Иначе — красный
+; фон и стоп вместо мусора. Атрибуты в старших битах имени (R/O, SYS) не мешают.
+bl_dir:
+	ld b,DIR_TRACK
+	call bl_seek1		; каталог: секторы 1..4 дорожки DIR_TRACK
+	ld hl,DAT_BLOCKS
+	ld (bl_src),hl		; bl_src — сколько блоков ещё не нашли (до загрузки он свободен)
+	ld a,128		; записей
+bld_ent:
+	push af
+	ld hl,bld_name
+	ld bc,12*256		; B = байты пользователя и имени, C = расхождения
+bld_nm:
+	call bl_gb
+	xor (hl)
+	and $7F
+	or c
+	ld c,a
+	inc hl
+	dec b
+	jp nz,bld_nm
+	call bl_gb		; EX
+	add a,a
+	add a,a
+	add a,a
+	add a,DAT_BLK
+	ld e,a
+	ld a,0
+	adc a,a
+	ld d,a
+	call bl_gb		; S1
+	call bl_gb		; S2: +256 блоков
+	add a,d
+	ld d,a			; DE = где должен стоять первый блок записи
+	call bl_gb		; RC
+	ld b,8
+bld_blk:
+	call bl_gb
+	xor e
+	or c			; чужая запись не совпадает никогда
+	ld l,a
+	call bl_gb
+	xor d
+	or l
+	jp nz,bld_nx
+	ld hl,(bl_src)
+	dec hl
+	ld (bl_src),hl
+bld_nx:
+	inc de
+	dec b
+	jp nz,bld_blk
+	pop af
+	dec a
+	jp nz,bld_ent
+	ld hl,(bl_src)
+	ld a,h
+	or l
+	jp z,bl_cover
+	ld a,$07		; красный фон (он же ненулевой флаг палитры) и стоп
+	ld (vec_palette),a
+	ld (vec_pal_dirty),a
+	ei
+bld_stop:
+	halt
+	jp bld_stop
+bld_name:	db 0,'IANNA   DAT'
+
 ; --- заставка: обложка с дорожки COVER_TRACK потоком прямо в экран ($8000-$FFFF, окно закрыто), затем
 ; её палитра и хук полосы. Зовёт vec_boot_init последним (jp): буфер сектора — это место его кода.
 bl_cover:
