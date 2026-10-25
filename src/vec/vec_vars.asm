@@ -111,7 +111,7 @@ vec_row0:	db 0		; ряд 0 клавиатуры (1 = нажата), снят get
 vec_row7:	db 0		; ряд 7, бит 0 = X или СС
 vec_key:	db 0		; ASCII нажатой клавиши (0 = ничего)
 vec_ovl_tgt:	dw 0		; адрес функции движка для vec_ovl_call (оверлей паузы)
-vec_in_game:	db 0		; 1 = идёт game (ISR разрешает выход по СТОП)
+vec_in_game:	db 0		; 1 = идёт game (ISR: читы F1+F3 включаются только вне игры)
 vec_end_flag:	db 0		; 1 = игра пройдена: оверлей меню сперва играет концовку (end_game)
 vec_pal_dirty:	db 1		; палитра: записать в ISR (старт / смена)
 vec_zsave:	ds 8		; z_ix..z_ret на время плеера в ISR		; сохранение z_ix..z_hl2 на время плеера в ISR

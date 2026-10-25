@@ -96,7 +96,7 @@ vil_attract:
 	xor a
 	ld (vec_in_game),a
 	ld a,(player_dead)
-	cp 2			; СТОП или attract -> главное меню (как game_loop оригинала)
+	cp 2			; X в паузе или attract -> главное меню (как game_loop оригинала)
 	jp z,vec_to_menu
 	cp 3			; скрипт «finish level»: current_level уже увеличен
 	jp z,vec_next_level
