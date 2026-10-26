@@ -23,10 +23,11 @@ KV_WIN_BANKS	equ $63		; окно $8000-$9FFF, страница 3: там леж�
 vec_fdd_load:
 	ld a,KV_WIN_MUSIC	; маркер уже есть — квазидиск заполнен снаружи, читать нечего
 	out (KV_PORT),a
-	ld a,(FDD_MARK)
+	ld hl,(FDD_MARK)
+	ld a,l
 	cp 'I'
 	jp nz,vfl_go
-	ld a,(FDD_MARK+1)
+	ld a,h
 	cp 'A'
 	jp z,vfl_done
 vfl_go:
@@ -39,10 +40,9 @@ vfl_go:
 	xor a
 	out (KV_PORT),a
 	ld a,(current_level)	; 0 = уровень 1 (vec_main обнуляет ячейку до вызова)
-	ld e,a
-	ld d,0
-	ld hl,vfl_dirtab
-	add hl,de
+	add a,vfl_dirtab&255	; таблица — в хвосте страницы $7F, переноса нет
+	ld l,a
+	ld h,vfl_dirtab>>8
 	ld a,(hl)
 	or a
 	jp z,vfl_done		; дорожка 0 = набора на дискете нет
@@ -93,7 +93,8 @@ vfl_next:
 	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42)
 	ld hl,FDD_BANKCODE
 	ld de,string_area+1216		; за буфером сектора (1К), таблицей длин и рецептом
-	ld bc,512
+	ld bc,352			; ровно блок загрузчика банков (build_edd FDD_BANKCODE..END): дальше, с
+					; +1600, лежит полоса загрузки (lbar.asm), и копия в 512 Б её затирала
 	call z_ldir
 	xor a
 	rst 1			; out (KV_PORT),a + маска 42h на Турбо+ (vec_kv42)
@@ -271,6 +272,10 @@ vfl_read:
 	; уровня висла на чёрном экране, 2026-10-12; эмуляторы отдают байты без срока и этого не видят).
 	; Один сектор — 1,6 кадра, так что плеер пропускает одно-два прерывания на сектор.
 	di
+    if VI53
+	ld a,$30		; счётчик 0 ВИ53 — стоп (режим без значения, выход низкий); прерывание после сектора
+	out ($08),a		; заведёт его снова. Иначе за DI сектора он досчитывает, выход поднимается — щелчок
+    endif
 	call vfl_ctl
 	ld a,c
 	out ($19),a

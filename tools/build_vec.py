@@ -36,7 +36,9 @@ sys.path.insert(0, str(ROOT / 'tools/data'))
 from build_edd import STRING_AREA_KVAZ, STRING_AREA_DEMO, STRING_AREA_C8
 VARS_ADDR = STRING_AREA_DEMO if DEMO else (STRING_AREA_C8 if C8 else STRING_AREA_KVAZ)
 from build_edd import CREDITS_ADDR       # блоб титров в странице 3 квазидиска (см. build_edd)
-from build_edd import PAUSE_ADDR, PAUSE_END, FDD_BANKCODE, FDD_BANKCODE_END, WPN_SRC, WPN_SRC_END
+from build_edd import PAUSE_ADDR, PAUSE_END, FDD_BANKCODE, FDD_BANKCODE_END, WPN_SRC, WPN_SRC_END, LB_SRC, LB_END
+assert FDD_BANKCODE_END - FDD_BANKCODE == 352, 'vec_fdd.asm копирует загрузчик банков ровно 352 Б'
+LB_ORG_OFS = 1600                         # полоса загрузки (lbar.asm) в string_area: за загрузчиком банков (+1216..+1567)
 
 def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
@@ -460,7 +462,8 @@ def main():
                                      f'NOMIRROR\tequ {1 if NOMIRROR else 0}\t; ЗАМЕРНЫЙ режим: зеркальный блит заменён прямым (картинка неверна)\n'
                                      f'SPR3CLR\tequ {1 if SPR3CLR else 0}\t; спрайт трёхплоскостной: плоскость 3 чистим маской, данных нет\n'
                                      f'SPR3\tequ {1 if SPR3 else 0}\t; ЗАМЕРНЫЙ режим: спрайты не пишут плоскость 3 (картинка неверна — под спрайтом остаются старшие биты фона)\n'
-                                     f'VI53\tequ {1 if VI53 else 0}\t; бюджет по счётчику 0 ВИ53\n' + consts_from('vdp.asm') + consts_from('sprites.asm') + consts_from('music.asm') + consts_from('input.asm'))
+                                     f'VI53\tequ {1 if VI53 else 0}\t; бюджет по счётчику 0 ВИ53\n'
+                                     f'LB_SRC\tequ ${LB_SRC:04X}\t; полоса загрузки в наборе (стр.3, build_edd)\nLB_LEN\tequ {LB_END - LB_SRC}\nLB_ORG_OFS\tequ {LB_ORG_OFS}\n' + consts_from('vdp.asm') + consts_from('sprites.asm') + consts_from('music.asm') + consts_from('input.asm'))
     # ВЕКТОР: цепочка пересечений спрайтов — нативно (src/vec/overlap_hot.asm) вместо перевода
     hot = (VEC / 'overlap_hot.asm').read_text(encoding='utf-8'); hot_t, hot_d = hot.split(';;;SPLIT;;;\n')
     def cut(text, start_pred, end_pred, repl):
@@ -665,7 +668,7 @@ def main():
 
 def build_menu_bins(lst):
     """Оверлей меню и RAM-блоб: собираются отдельно с импортом символов игры из .lst."""
-    need = ['depack', 'vfl_blk', 'vlt_dirty', 'ls_end', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl', 'vfl_ready', 'vec_fdd_rdy',
+    need = ['depack', 'vfl_blk', 'vfl_pal', 'vlt_dirty', 'ls_end', 'z_ldir', 'vfl_restore', 'vfl_seek', 'vfl_fill', 'vfl_stream', 'vfl_ctl', 'vfl_ready', 'vec_fdd_rdy',
             'vec_fdd_sec', 'vec_fdd_ctl', 'vec_fdd_dst', 'vec_fdd_sp', 'drawChar', 'fillArea', 'MUSIC_Load', 'MUSIC_Stop', 'MUSIC_Init', 'vec_fade_out', 'vec_fade_in', 'vec_frect4', 'vec_slc_unp', 'vec_palsave', 'language', 'joystick_state', 'music_playing',
             'vec_kv_shadow', 'string_area', 'vec_pal_dirty', 'current_level', 'cls',
             'player_available_weapons', 'player_level', 'player_experience', 'player_current_weapon',
@@ -703,7 +706,7 @@ def build_menu_bins(lst):
     out += [f'FB_ORG\tequ ${syms["string_area"] + 1216:04X}'   # загрузчик банков: за буфером сектора,
             ,                                                   # таблицей длин и рецептом
             f'MB_ORG\tequ ${syms["string_area"]:04X}', f'MB_TRK_MENU\tequ {DL.MENU_TRACK}', f'MB_SEC_MENU\tequ {DL.MENU_SEC}', f'MB_TRK_SLIDES\tequ {DL.PIC_TRACK}',
-            f'MB_CREDITS\tequ ${CREDITS_ADDR:04X}']
+            f'MB_CREDITS\tequ ${CREDITS_ADDR:04X}', f'LB_ORG\tequ ${syms["string_area"] + LB_ORG_OFS:04X}']
     (ROOT / 'build/menu_syms.asm').write_text('\n'.join(out) + '\n')
     sys.path.insert(0, str(ROOT / 'tools/data'))
     from texts_ru import encode, MENU, INTRO, ENDING, CREDITS, THE_END_RU
@@ -724,11 +727,14 @@ def build_menu_bins(lst):
         cred += encode(line) + b'\0'
     assert len(cred) == 37*16
     (ROOT / 'build/credits.bin').write_bytes(bytes(cred))
-    # строки меню паузы: рамочные коды как в оригинале (ianna.asm), текст EN/RU одной длины (17 знаков)
+    # строки меню паузы: рамочные коды как в оригинале (ianna.asm), текст EN/RU одной длины. Окно на знак
+    # шире оригинала (18): иначе не влезала подсказка «ВК ИГРА АР2 МЕНЮ»; строкам в 17 знаков недостающий
+    # знак добавляется перед правой рамкой — пробел или, в верхней и нижней рамке, ещё один штрих
     from texts_ru import encode as _enc
     def pstr(pre, text, post):
         b = list(pre) + list(_enc(text)) + list(post)
-        assert len(b) == 17, (text, len(b))
+        if len(b) == 17: b.insert(16, 40 if b[-1] == 41 else 32)
+        assert len(b) == 18, (text, len(b))
         return ','.join(str(x) for x in b)
     ps = ['; сгенерировано build_vec: строки меню паузы (рамка + подсказки)']
     EN = [([42,43,43,43,43,43], 'PAUSE',        [40,40,40,40,40,41]),
@@ -743,7 +749,7 @@ def build_menu_bins(lst):
           ([60,91,92,32],       'ПРЕДМЕТЫ',     [32,32,32,32,60]),
           ([60,32,32,32],       'ПРИМЕНИТЬ',    [32,32,32,60]),   # 93,94 в шрифте меню — картинка
           ([60,64,32,32],       'ОРУЖИЕ',       [32,32,32,32,32,32,60]),
-          ([61] + list(_enc('ВК')) + [32], 'ИГРА', [32, 32] + list(_enc('В МЕНЮ')) + [61]),   # клавиши Вектора: ВК — назад в игру, В — в главное меню
+          ([61] + list(_enc('ВК')) + [32], 'ИГРА', [32] + list(_enc('АР2 МЕНЮ')) + [61]),   # клавиши Вектора: ВК — назад в игру, АР2 — в главное меню
           ([42,43,43,43,43,43,43,43,32], '',    [40,40,40,40,40,40,40,41])]
     for i, (pre, t, post) in enumerate(EN): ps.append(f'pz_en{i}:\tdb ' + pstr(pre, t, post) + ',0')
     for i, (pre, t, post) in enumerate(RU): ps.append(f'pz_ru{i}:\tdb ' + pstr(pre, t, post) + ',0')
@@ -769,6 +775,7 @@ def build_menu_bins(lst):
                                 (VEC / 'pause_ovl.asm', 'pause_ovl.bin', PAUSE_END - PAUSE_ADDR),
                                 (VEC / 'fdd_banks.asm', 'fdd_banks.bin', FDD_BANKCODE_END - FDD_BANKCODE),
                                 (VEC / 'wpn_load.asm', 'wpn_load.bin', WPN_SRC_END - WPN_SRC),
+                                (VEC / 'lbar.asm', 'lbar.bin', min(LB_END - LB_SRC, 0x700 - LB_ORG_OFS)),   # до оверлея готовых тайлов ($7200)
                                 (VEC / 'zp_blit2m.asm', 'zp.bin', 0x100 - 0x3B),
                                 (ROOT / 'build/arkos_dat.asm', 'arkos_dat.bin', ARK_DAT_END - ARK_DAT),
                                 (ROOT / 'build/arkos_ovl.asm', 'arkos.bin', ARK_END - ARK_ADDR)):

@@ -610,7 +610,10 @@ WPN_SRC, WPN_SRC_END = 0x9420, 0x9500           # подкачка страни�
 # Титры концовки: 37 строк по 16 Б. Лежат в наборе уровня 1, в странице 3 за загрузчиком банков,
 # то есть ПРЯМО В ОКНЕ оверлея ($8000-$9FFF, порт $43) — оверлей читает их как обычную память.
 # В самом оверлее ($8440-$9000) 592 Б под них нет.
-CREDITS_ADDR = 0x9500
+CREDITS_ADDR = 0x95B0         # 592 Б — ровно до $9800
+# Полоса загрузки для vec_reload_set (lbar.asm) — в каждом наборе, в броне kvaz_pack $9000-$9600 за
+# подкачкой страницы героя. Копируется в string_area (LB_ORG), поэтому длина ограничена и там.
+LB_SRC, LB_END = 0x9500, 0x95B0
 # Песни фазы меню в странице 2 (окно $A000-$DFFF): mb_song переносит нужную в $C980 страницы 3.
 # Концовке нужны ещё две (music-end 2052 Б и music-credits 462 Б), поэтому интро съехало с $D000.
 SONG_SLOTS = ((0xC000, 'music-menu.mus'), (0xC900, 'music-intro.mus'),
@@ -715,6 +718,7 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
     r += [(3, PAUSE_ADDR, PAUSE_END, 'оверлей паузы'),
           (3, FDD_BANKCODE, FDD_BANKCODE_END, 'загрузчик банков'),
           (3, WPN_SRC, WPN_SRC_END, 'подкачка страницы героя'),
+          (3, LB_SRC, LB_END, 'полоса загрузки'),
           (3, ARK_ADDR, 0xC800, 'плеер Arkos: код (arkos.bin)'),
           (3, ARK_DAT, 0xE000, 'плеер Arkos: таблицы и состояние (arkos_dat.bin)'),
           (3, 0xC800, 0xC980, 'маркер набора'),
@@ -727,7 +731,7 @@ def kvaz_layout(level_no, banks, fg, lvl_end, pool_on):
     if level_no == 1:                 # фаза меню живёт только в наборе первого уровня
         r += [(2, a, a + upto(flen(m, SRC)), f'песня {m}') for a, m in SONG_SLOTS]
         r += [(3, 0x8440, min(0x8440 + upto(flen('menu_ovl.bin')), PAUSE_ADDR), 'оверлей меню'),   # до оверлея паузы впритык (лимит — build_vec)
-              (3, CREDITS_ADDR, CREDITS_ADDR + upto(flen('credits.bin')), 'титры'),
+              (3, CREDITS_ADDR, CREDITS_ADDR + flen('credits.bin'), 'титры'),
               (3, 0x9800, 0x9800 + upto(flen('menu_ram.bin')), 'блок меню в ОЗУ'),
               (3, 0xE000, 0xF000, 'шрифт меню')]
     if level_no in FGC_LEVELS and not C8MODE:
@@ -1074,6 +1078,10 @@ def build_kvaz(level_no=1, start=None):
         if wl.exists():
             b = wl.read_bytes(); assert len(b) <= WPN_SRC_END - WPN_SRC, len(b)
             pages[3][WPN_SRC:WPN_SRC+len(b)] = b
+        lb = BUILD / 'lbar.bin'                  # полоса загрузки: vec_reload_set копирует её в string_area
+        if lb.exists():
+            b = lb.read_bytes(); assert len(b) <= LB_END - LB_SRC, len(b)
+            pages[3][LB_SRC:LB_SRC+len(b)] = b
     if ovl.exists() and blob.exists() and not C8MODE and level_no == 1:
         b = ovl.read_bytes(); pages[3][0x8440:0x8440+len(b)] = b
         b = blob.read_bytes(); pages[3][0x9800:0x9800+len(b)] = b

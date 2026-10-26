@@ -127,15 +127,24 @@ vec_reload_set:
 	ld de,rev256
 	ld bc,512
 	call z_ldir
+	ld a,KV_WIN_BANKS	; полоса загрузки (lbar.asm) — из набора в хвост string_area
+	rst 1
+	ld hl,LB_SRC
+	ld de,string_area+LB_ORG_OFS
+	ld bc,LB_LEN
+	call z_ldir
 	xor a
-	out (KV_PORT),a
+	rst 1
 	ld (vec_kv_shadow),a
 	ei
+	call string_area+LB_ORG_OFS
 	ld hl,vec_dirtab	; вернуть таблицу дорожек: в копии из набора она нулевая
 	ld de,vfl_dirtab
 	ld bc,10
 	call z_ldir
 	call vfl_go		; загрузка без проверки маркера: набор в квазидиске уже чужой
+	ld hl,0
+	ld (vec_key_hook),hl	; снять полосу: string_area скоро займут строки уровня
 	call vec_init_rev256
 	call vec_slot_init
 	call isr_idx_init
